@@ -24,16 +24,16 @@ settings_col = db['settings']
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# --- FFmpeg.wasm Security Headers Middleware ထည့်သွင်းခြင်း ---
+# --- FFmpeg.wasm Security Headers Middleware ထည့်သွင်းခြင်း (Design မပျက်စေရန် credentialless သုံးထားသည်) ---
 class CrossOriginIsolationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
         return response
 
 app.add_middleware(CrossOriginIsolationMiddleware)
-# -------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------
 
 @app.get("/")
 async def serve_index():
