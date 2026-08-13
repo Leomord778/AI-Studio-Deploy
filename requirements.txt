@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+edge-tts
+httpx
+python-multipart
+imageio-ffmpeg
+pymongo
+python-dotenv
+dnspython

@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Studio - Ultimate Creator Tools</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class', theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'] } } } }
+    </script>
+    
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        textarea::-webkit-scrollbar, div::-webkit-scrollbar { width: 6px; height: 6px; }
+        textarea::-webkit-scrollbar-track, div::-webkit-scrollbar-track { background: transparent; }
+        textarea::-webkit-scrollbar-thumb, div::-webkit-scrollbar-thumb { background-color: #6366f1; border-radius: 10px; }
+        .neumorphic-card { box-shadow: 8px 8px 16px #c5c9d1, -8px -8px 16px #fbffff; }
+        .dark .neumorphic-card { box-shadow: 8px 8px 16px #131a25, -8px -8px 16px #29384f; }
+        .filter-btn { min-width: 80px; height: 80px; transition: all 0.2s; }
+        .filter-btn:hover { transform: scale(1.05); }
+        .marquee-container { width: 100%; overflow: hidden; white-space: nowrap; background: #ef4444; color: white; padding: 10px 0; font-weight: bold; position: sticky; top: 0; z-index: 50; }
+        .marquee-content { display: inline-block; animation: marquee 25s linear infinite; }
+        @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+    </style>
+</head>
+<body class="bg-[#e0e5ec] transition-colors duration-300">
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        const { useState, useRef, useEffect } = React;
+
+        // --- ICONS ---
+        const IconBase = ({ children, className }) => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{children}</svg>;
+        const Play = ({ className }) => <IconBase className={className}><polygon points="5 3 19 12 5 21 5 3"/></IconBase>;
+        const Upload = ({ className }) => <IconBase className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></IconBase>;
+        const Download = ({ className }) => <IconBase className={className}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></IconBase>;
+        const Loader2 = ({ className }) => <IconBase className={className}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></IconBase>;
+        const AlertCircle = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></IconBase>;
+        const CheckCircle = ({ className }) => <IconBase className={className}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></IconBase>;
+        const Film = ({ className }) => <IconBase className={className}><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></IconBase>;
+        const SubtitleIcon = ({ className }) => <IconBase className={className}><rect x="2" y="4" width="20" height="16" rx="2.18" ry="2.18"/><line x1="6" y1="16" x2="18" y2="16"/><line x1="10" y1="12" x2="14" y2="12"/></IconBase>;
+        const Sliders = ({ className }) => <IconBase className={className}><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></IconBase>;
+        const Sparkles = ({ className }) => <IconBase className={className}><path d="M12 3c.132 5.86 5.14 10.868 11 11-5.86.133-10.868 5.14-11 11-.133-5.86-5.14-10.868-11-11 5.86-.133 10.868-5.14 11-11Z"/><path d="M12 3v18"/><path d="M3 12h18"/></IconBase>;
+        const Moon = ({ className }) => <IconBase className={className}><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></IconBase>;
+        const Sun = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></IconBase>;
+        const Volume2 = ({ className }) => <IconBase className={className}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></IconBase>;
+        const Info = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></IconBase>;
+        const SettingsIcon = ({ className }) => <IconBase className={className}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73-.73l.15-.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconBase>;
+        const Trash2 = ({ className }) => <IconBase className={className}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></IconBase>;
+        const Plus = ({ className }) => <IconBase className={className}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></IconBase>;
+        const Type = ({ className }) => <IconBase className={className}><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></IconBase>;
+        const EyeOff = ({ className }) => <IconBase className={className}><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></IconBase>;
+        const Mic = ({ className }) => <IconBase className={className}><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></IconBase>;
+        const ChevronLeft = ({ className }) => <IconBase className={className}><polyline points="15 18 9 12 15 6"/></IconBase>;
+        const LogOut = ({ className }) => <IconBase className={className}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></IconBase>;
+        const Slash = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></IconBase>;
+        const CreditCard = ({ className }) => <IconBase className={className}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></IconBase>;
+        const Copy = ({ className }) => <IconBase className={className}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></IconBase>;
+
+        const LANGUAGES = [
+            { name: "မြန်မာ (Myanmar)", flag: "🇲🇲" }, { name: "English", flag: "🇬🇧" }, { name: "中文 (Chinese)", flag: "🇨🇳" },
+            { name: "हिन्दी (Hindi)", flag: "🇮🇳" }, { name: "ไทย (Thai)", flag: "🇹🇭" }, { name: "Bahasa Indonesia", flag: "🇮🇩" },
+            { name: "Tiếng Việt (Vietnamese)", flag: "🇻🇳" }, { name: "Español (Spanish)", flag: "🇪🇸" }, { name: "Français (French)", flag: "🇫🇷" },
+            { name: "Deutsch (German)", flag: "🇩🇪" }, { name: "Italiano (Italian)", flag: "🇮🇹" }, { name: "日本語 (Japanese)", flag: "🇯🇵" },
+            { name: "한국어 (Korean)", flag: "🇰🇷" }
+        ];
+
+        const GEMINI_VOICES = [
+            { id: "Achernar", gender: "Male" }, { id: "Achird", gender: "Female" }, { id: "Algenib", gender: "Male" }, { id: "Algieba", gender: "Female" },
+            { id: "Alnilam", gender: "Male" }, { id: "Aoede", gender: "Female" }, { id: "Autonoe", gender: "Female" }, { id: "Callirrhoe", gender: "Female" },
+            { id: "Charon", gender: "Male" }, { id: "Despina", gender: "Female" }, { id: "Enceladus", gender: "Male" }, { id: "Erinome", gender: "Female" },
+            { id: "Fenrir", gender: "Male" }, { id: "Gacrux", gender: "Female" }, { id: "Iapetus", gender: "Male" }, { id: "Kore", gender: "Female" },
+            { id: "Laomedeia", gender: "Female" }, { id: "Leda", gender: "Female" }, { id: "Orus", gender: "Male" }, { id: "Puck", gender: "Male" },
+            { id: "Pulcherrima", gender: "Female" }, { id: "Rasalgethi", gender: "Male" }, { id: "Sadachbia", gender: "Female" }, { id: "Sadaltager", gender: "Male" },
+            { id: "Schedar", gender: "Male" }, { id: "Sulafat", gender: "Male" }, { id: "Umbriel", gender: "Female" }, { id: "Vindemiatrix", gender: "Female" },
+            { id: "Zephyr", gender: "Male" }, { id: "Zubenelgenubi", gender: "Male" }
+        ];
+
+        const EDGE_VOICES = [
+            { id: "my-MM-ThihaNeural", name: "Thiha (သီဟ)", gender: "Male" },
+            { id: "my-MM-NilarNeural", name: "Nilar (နီလာ)", gender: "Female" },
+            { id: "en-US-ChristopherNeural", name: "Christopher (English - US)", gender: "Male" },
+            { id: "en-US-JennyNeural", name: "Jenny (English - US)", gender: "Female" },
+            { id: "en-GB-RyanNeural", name: "Ryan (English - UK)", gender: "Male" },
+            { id: "en-GB-SoniaNeural", name: "Sonia (English - UK)", gender: "Female" },
+            { id: "zh-CN-YunxiNeural", name: "Yunxi (Chinese)", gender: "Male" },
+            { id: "zh-CN-XiaoxiaoNeural", name: "Xiaoxiao (Chinese)", gender: "Female" },
+            { id: "th-TH-NiwatNeural", name: "Niwat (Thai)", gender: "Male" },
+            { id: "th-TH-PremwadeeNeural", name: "Premwadee (Thai)", gender: "Female" },
+            { id: "hi-IN-MadhurNeural", name: "Madhur (Hindi)", gender: "Male" },
+            { id: "hi-IN-SwaraNeural", name: "Swara (Hindi)", gender: "Female" },
+            { id: "ja-JP-KeitaNeural", name: "Keita (Japanese)", gender: "Male" },
+            { id: "ja-JP-NanamiNeural", name: "Nanami (Japanese)", gender: "Female" },
+            { id: "ko-KR-InJoonNeural", name: "InJoon (Korean)", gender: "Male" },
+            { id: "ko-KR-SunHiNeural", name: "SunHi (Korean)", gender: "Female" },
+            { id: "id-ID-ArdiNeural", name: "Ardi (Indonesian)", gender: "Male" },
+            { id: "id-ID-GadisNeural", name: "Gadis (Indonesian)", gender: "Female" }
+        ];
+
+        const VOICE_STYLES = [
+            { id: "storytelling", name: "ပုံပြင်ပြောစတိုင်", emoji: "📖", prompt: "Narrate like reading a captivating story." },
+            { id: "news", name: "သတင်းကြေညာသူ", emoji: "📰", prompt: "Speak formally and clearly like a news anchor." },
+            { id: "motivation", name: "စိတ်ခွန်အားပေး", emoji: "💪", prompt: "Speak with high energy, passion, and inspiration." },
+            { id: "comedy", name: "ဟာသ", emoji: "😂", prompt: "Speak with a funny, lighthearted, and humorous tone." },
+            { id: "horror", name: "သရဲတစ္ဆေ", emoji: "👻", prompt: "Speak in a creepy, whispering, and suspenseful tone." },
+            { id: "romance", name: "ရင်ခုန်ကြည်နူးဖွယ်", emoji: "💖", prompt: "Speak in a soft, sweet, and romantic tone." },
+            { id: "documentary", name: "မှတ်တမ်းရုပ်ရှင်", emoji: "🎥", prompt: "Speak informatively, smoothly, and professionally." },
+            { id: "education", name: "ပညာပေး", emoji: "🎓", prompt: "Speak clearly and patiently like a teacher explaining a concept." },
+            { id: "sad", name: "ဝမ်းနည်းကြေကွဲဖွယ်", emoji: "😢", prompt: "Speak with deep sorrow, emotional breaks, and a low tone." },
+            { id: "angry", name: "ဒေါသသံ", emoji: "😠", prompt: "Speak forcefully, aggressively, and loudly." }
+        ];
+
+        const CAPTION_COLORS = [
+            { name: "White", hex: "#ffffff" }, { name: "Red", hex: "#ef4444" }, { name: "Blue", hex: "#3b82f6" },
+            { name: "Green", hex: "#22c55e" }, { name: "Yellow", hex: "#eab308" }, { name: "Orange", hex: "#f97316" },
+            { name: "Black", hex: "#000000" }, { name: "Pink", hex: "#ec4899" }, { name: "Cyan", hex: "#06b6d4" }
+        ];
+
+        const FILTERS = [
+            { id: 'none', name: 'Original', css: 'none' },
+            { id: 'cinematic', name: 'Cinematic', css: 'contrast(110%) saturate(120%) sepia(10%)' },
+            { id: 'grayscale', name: 'Grayscale', css: 'grayscale(100%)' },
+            { id: 'sepia', name: 'Sepia', css: 'sepia(100%)' },
+            { id: 'invert', name: 'Invert', css: 'invert(100%)' },
+            { id: 'contrast', name: 'High Contrast', css: 'contrast(150%)' },
+            { id: 'brightness', name: 'Bright', css: 'brightness(130%)' },
+            { id: 'darken', name: 'Darken', css: 'brightness(70%)' },
+            { id: 'warm', name: 'Warm', css: 'sepia(40%) hue-rotate(-20deg) saturate(140%)' },
+            { id: 'cool', name: 'Cool', css: 'hue-rotate(180deg) saturate(120%)' },
+            { id: 'vintage', name: 'Vintage', css: 'sepia(60%) contrast(120%) brightness(90%)' },
+            { id: 'cyberpunk', name: 'Cyberpunk', css: 'hue-rotate(90deg) saturate(200%) contrast(120%)' },
+            { id: 'noir', name: 'Noir', css: 'grayscale(100%) contrast(150%) brightness(80%)' },
+            { id: 'faded', name: 'Faded', css: 'contrast(80%) brightness(120%) saturate(80%)' },
+            { id: 'dreamy', name: 'Dreamy', css: 'blur(1px) brightness(110%) saturate(120%)' },
+            { id: 'dramatic', name: 'Dramatic', css: 'contrast(140%) saturate(80%) brightness(90%)' },
+            { id: 'neon', name: 'Neon', css: 'saturate(250%) contrast(150%) hue-rotate(45deg)' },
+            { id: 'sunset', name: 'Sunset', css: 'sepia(40%) saturate(180%) hue-rotate(-15deg)' },
+            { id: 'ocean', name: 'Ocean', css: 'saturate(150%) hue-rotate(150deg) brightness(90%)' },
+            { id: 'forest', name: 'Forest', css: 'saturate(130%) hue-rotate(50deg) contrast(110%)' },
+            { id: 'ruby', name: 'Ruby', css: 'saturate(200%) hue-rotate(-50deg)' },
+            { id: 'emerald', name: 'Emerald', css: 'saturate(150%) hue-rotate(100deg) contrast(120%)' },
+            { id: 'sapphire', name: 'Sapphire', css: 'saturate(180%) hue-rotate(200deg)' },
+            { id: 'amethyst', name: 'Amethyst', css: 'saturate(150%) hue-rotate(280deg)' },
+            { id: 'gold', name: 'Gold', css: 'sepia(80%) saturate(200%) brightness(110%)' },
+            { id: 'silver', name: 'Silver', css: 'grayscale(100%) contrast(120%) brightness(130%)' },
+            { id: 'bronze', name: 'Bronze', css: 'sepia(60%) contrast(140%) hue-rotate(-10deg)' },
+            { id: 'matrix', name: 'Matrix', css: 'hue-rotate(100deg) saturate(200%) contrast(150%) brightness(90%)' },
+            { id: 'retro', name: 'Retro TV', css: 'contrast(120%) saturate(150%) sepia(30%) hue-rotate(-15deg)' },
+            { id: 'vibrant', name: 'Vibrant', css: 'saturate(250%) contrast(110%)' },
+            { id: 'washed', name: 'Washed Out', css: 'saturate(40%) contrast(90%) brightness(120%)' }
+        ];
+
+        const PACKAGES = [3000, 5000, 10000, 20000, 30000];
+
+        // --- UTILS ---
+        const getSafeStorage = (key, fallback) => { try { const item = window.localStorage.getItem(key); return item ? JSON.parse(item) : fallback; } catch (e) { return fallback; } };
+        const setSafeStorage = (key, val) => { try { window.localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} };
+        const formatTime = (seconds) => { const date = new Date(seconds * 1000); return `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}:${String(date.getUTCSeconds()).padStart(2, '0')},${String(date.getUTCMilliseconds()).padStart(3, '0')}`; };
+        const jsonToSrt = (segments) => { return segments.map((segment, index) => `${index + 1}\n${formatTime(segment.start)} --> ${formatTime(segment.end)}\n${segment.text.trim()}\n`).join('\n'); };
+        const parseSrtBlocks = (srt) => { if (!srt) return []; const blocks = srt.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().split(/\n\n+/); return blocks.map(block => { const lines = block.split('\n'); const timeLineIdx = lines.findIndex(l => l.includes('-->')); if (timeLineIdx === -1) return null; const timeMatch = lines[timeLineIdx].match(/(\d+):(\d{2}):(\d{2})[,.](\d+)\s*-->\s*(\d+):(\d{2}):(\d{2})[,.](\d+)/); if (!timeMatch) return null; const start = +timeMatch[1]*3600 + +timeMatch[2]*60 + +timeMatch[3] + +timeMatch[4]/(timeMatch[4].length === 2 ? 100 : 1000); const end = +timeMatch[5]*3600 + +timeMatch[6]*60 + +timeMatch[7] + +timeMatch[8]/(timeMatch[8].length === 2 ? 100 : 1000); return { start, end, text: lines.slice(timeLineIdx + 1).join(' ').replace(/<[^>]+>/g, '').trim() }; }).filter(b => b && b.text); };
+        const getSrtChunks = (srtBlocksObj) => { const chunks = []; let currentChunk = null; for (const block of srtBlocksObj) { if (!currentChunk) { currentChunk = { vStart: block.start, vEnd: block.end, text: block.text }; } else { if (currentChunk.text.length > 200 || (block.start - currentChunk.vEnd > 3)) { chunks.push(currentChunk); currentChunk = { vStart: block.start, vEnd: block.end, text: block.text }; } else { currentChunk.vEnd = block.end; currentChunk.text += " " + block.text; } } } if (currentChunk) chunks.push(currentChunk); return chunks; };
+        const writeString = (view, offset, string) => { for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i)); };
+        const exportWAV = (channelData, sampleRate) => { const buffer = new ArrayBuffer(44 + channelData.length * 2); const view = new DataView(buffer); writeString(view, 0, 'RIFF'); view.setUint32(4, 36 + channelData.length * 2, true); writeString(view, 8, 'WAVE'); writeString(view, 12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeString(view, 36, 'data'); view.setUint32(40, channelData.length * 2, true); let offset = 44; for (let i = 0; i < channelData.length; i++, offset += 2) { const s = Math.max(-1, Math.min(1, channelData[i])); view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); } return new Blob([view], { type: 'audio/wav' }); };
+        const blobToBase64 = (blob) => new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result.split(',')[1]); reader.onerror = rej; reader.readAsDataURL(blob); });
+        
+        // 🌟 Modified to support fast AI Blur fetching
+        const extractFrameAtTime = (videoFile, timeInSeconds) => new Promise((res, rej) => {
+            const video = document.createElement('video'); video.src = URL.createObjectURL(videoFile); video.crossOrigin = "anonymous"; video.muted = true;
+            video.onloadeddata = () => { video.currentTime = Math.min(timeInSeconds, video.duration / 2); };
+            video.onseeked = () => {
+                const canvas = document.createElement('canvas'); 
+                const scale = Math.min(640 / video.videoWidth, 1);
+                canvas.width = video.videoWidth * scale; 
+                canvas.height = video.videoHeight * scale;
+                canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                res(canvas.toDataURL('image/jpeg', 0.6).split(',')[1]); 
+                URL.revokeObjectURL(video.src);
+            };
+            video.onerror = () => rej(new Error("Video Frame Extract Failed"));
+        });
+
+        const generateEdgeTTS = async (text, voice) => { const response = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text, voice: voice }) }); if (!response.ok) throw new Error("Edge TTS Backend Error"); return await response.blob(); };
+        const decodeToPCM = async (audioBlob) => { const AudioContextClass = window.AudioContext || window.webkitAudioContext; const ctx = new AudioContextClass(); const audioBuffer = await ctx.decodeAudioData(await audioBlob.arrayBuffer()); const targetRate = 24000; const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, Math.ceil(audioBuffer.duration * targetRate), targetRate); const source = offlineCtx.createBufferSource(); source.buffer = audioBuffer; source.connect(offlineCtx.destination); source.start(0); const resampled = await offlineCtx.startRendering(); const channelData = resampled.getChannelData(0); const pcmBytes = new Uint8Array(channelData.length * 2); const view = new DataView(pcmBytes.buffer); for(let i = 0; i < channelData.length; i++) { let s = Math.max(-1, Math.min(1, channelData[i])); view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true); } return pcmBytes; };
+        const chunkTextForTTS = (text, maxLength) => { const chunks = []; const sentences = text.match(/[^.!?\n။၊]+[.!?\n။၊]*/g) || [text]; let current = ""; for (let s of sentences) { if ((current + s).length > maxLength) { if (current.trim()) chunks.push(current.trim()); current = s; } else { current += (current ? " " : "") + s; } } if (current.trim()) chunks.push(current.trim()); return chunks.length > 0 ? chunks : [text]; };
+
+        // --- MAIN APP COMPONENT ---
+        function App() {
+            const GOOGLE_CLIENT_ID = "135328538466-76vbcm81m07i03cqc105d5rrrt3967t4.apps.googleusercontent.com"; 
+            
+            const [user, setUser] = useState(() => getSafeStorage('userProfile', null));
+            const [userData, setUserData] = useState(null); 
+            
+            // UI States
+            const [currentView, setCurrentView] = useState('home');
+            const [isDark, setIsDark] = useState(() => getSafeStorage('theme', 'dark') === 'dark');
+            const [geminiKeys, setGeminiKeys] = useState(() => getSafeStorage('geminiKeys', ['']));
+            const [activeKeyIndex, setActiveKeyIndex] = useState(0);
+            const [showSettings, setShowSettings] = useState(false);
+            const [systemLogs, setSystemLogs] = useState([]); 
+            
+            // Admin States
+            const [adminStats, setAdminStats] = useState({ total_users: 0, monthly_profit: 0 });
+            const [transactions, setTransactions] = useState([]);
+            const [manualCredit, setManualCredit] = useState({ email: '', amount: 0 });
+            const [globalSettings, setGlobalSettings] = useState({ announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။", deduction_rate: '200', free_daily_mins: '2', trial_mins: '5' });
+            
+            // Buy States
+            const [buyModalOpen, setBuyModalOpen] = useState(false);
+            const [selectedPkg, setSelectedPkg] = useState(null);
+            const [paymentProof, setPaymentProof] = useState(null);
+            const [isUploadingPayment, setIsUploadingPayment] = useState(false);
+
+            // Tools States
+            const [videoFile, setVideoFile] = useState(null);
+            const [videoUrl, setVideoUrl] = useState('');
+            const [selectedLang, setSelectedLang] = useState(LANGUAGES[0].name);
+            const [isLangOpen, setIsLangOpen] = useState(false);
+            const [freezeInterval, setFreezeInterval] = useState(0); 
+            const [autoBlurCaption, setAutoBlurCaption] = useState(false);
+            const [autoCaption, setAutoCaption] = useState(true);
+            const [captionColor, setCaptionColor] = useState(CAPTION_COLORS[0].hex);
+            const [strokeColor, setStrokeColor] = useState(CAPTION_COLORS[6].hex); 
+            const [subPosition, setSubPosition] = useState(88); 
+            const [activeFilter, setActiveFilter] = useState(FILTERS[0].css);
+            const [videoRatio, setVideoRatio] = useState('16:9');
+            const [autoHook, setAutoHook] = useState(false);
+            const [recapEngine, setRecapEngine] = useState('gemini');
+            const [recapVoice, setRecapVoice] = useState('Kore');
+            const [isRecapProcessing, setIsRecapProcessing] = useState(false);
+            const [processStage, setProcessStage] = useState(''); 
+            const [renderProgress, setRenderProgress] = useState(0);
+            const [errorMsg, setErrorMsg] = useState('');
+            const [finalVideoUrl, setFinalVideoUrl] = useState('');
+            
+            // Social Media Kit
+            const [socialContent, setSocialContent] = useState(null);
+            const [activeSocialTab, setActiveSocialTab] = useState('youtube');
+            const [isGeneratingSocial, setIsGeneratingSocial] = useState(false);
+
+            // TTS States
+            const [ttsEngine, setTtsEngine] = useState('gemini');
+            const [ttsVoice, setTtsVoice] = useState('Kore');
+            const [ttsTextInput, setTtsTextInput] = useState('');
+            const [ttsStyleObj, setTtsStyleObj] = useState(VOICE_STYLES[0]);
+            const [isTtsGenerating, setIsTtsGenerating] = useState(false);
+            const [ttsAudioUrl, setTtsAudioUrl] = useState('');
+            const [ttsProgressTxt, setTtsProgressTxt] = useState('');
+            const [ttsProgressPct, setTtsProgressPct] = useState(0);
+            const [previewingAudio, setPreviewingAudio] = useState(false);
+            const [ttsError, setTtsError] = useState(''); 
+
+            // Refs
+            const previewAudioObjRef = useRef(null);
+            const videoRatioRef = useRef('16:9');
+            const autoHookRef = useRef(false);
+            const hookDataRef = useRef(null);
+            const extractionDataRef = useRef(null);
+            const translatedBlocksRef = useRef(null);
+            const syncTimelineRef = useRef(null);
+            const finalAudioUrlRef = useRef(null);
+            const totalAudioDurRef = useRef(0);
+            const aiBlurBoxRef = useRef(null);
+            const fileInputRef = useRef(null);
+            const editVideoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const animationRef = useRef(null);
+            const isRecordingRef = useRef(false);
+
+            useEffect(() => { videoRatioRef.current = videoRatio; }, [videoRatio]);
+            useEffect(() => { autoHookRef.current = autoHook; }, [autoHook]);
+            useEffect(() => { if (recapEngine === 'edge') setRecapVoice('my-MM-ThihaNeural'); else setRecapVoice('Kore'); }, [recapEngine]);
+            useEffect(() => { if (ttsEngine === 'edge') setTtsVoice('my-MM-ThihaNeural'); else setTtsVoice('Kore'); }, [ttsEngine]);
+            
+            useEffect(() => {
+                setSafeStorage('theme', isDark ? 'dark' : 'light');
+                document.documentElement.classList.toggle('dark', isDark);
+                document.body.style.backgroundColor = isDark ? '#1e293b' : '#e0e5ec';
+            }, [isDark]);
+
+            const loadAdminData = async () => { 
+                try { 
+                    const res = await fetch('/api/admin/transactions'); const data = await res.json(); setTransactions(data.transactions || []); 
+                    const statsRes = await fetch('/api/admin/stats'); const statsData = await statsRes.json(); setAdminStats(statsData);
+                } catch(e) {} 
+            };
+
+            const fetchUserData = (email) => {
+                fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email}) })
+                .then(r => r.json()).then(data => { 
+                    setUserData(data); 
+                    if(data.settings) setGlobalSettings({...globalSettings, ...data.settings});
+                    if (data.role === 'admin') loadAdminData(); 
+                })
+                .catch(e => { setUserData({ credits: 0, role: 'user', has_bought_3000: false }); }); 
+            };
+
+            const handleCredentialResponse = (response) => {
+                const base64Url = response.credential.split('.')[1];
+                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+                const payload = JSON.parse(decodeURIComponent(atob(base64).split('').map(function(c) { return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); }).join('')));
+                const uData = { name: payload.name, email: payload.email, picture: payload.picture };
+                setUser(uData); setSafeStorage('userProfile', uData); fetchUserData(payload.email);
+            };
+
+            useEffect(() => {
+                if(user) fetchUserData(user.email);
+                if (!user && window.google) {
+                    window.google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
+                    const btnContainer = document.getElementById("google-login-btn");
+                    if (btnContainer) window.google.accounts.id.renderButton(btnContainer, { theme: isDark ? "filled_black" : "outline", size: "large", shape: "pill" });
+                }
+            }, [user, isDark, currentView]);
+
+            const handleLogout = () => { setUser(null); setUserData(null); setSafeStorage('userProfile', null); setCurrentView('home'); };
+
+            const neoClass = isDark ? "bg-slate-800 shadow-[6px_6px_12px_#0f172a,-6px_-6px_12px_#334155] border-none text-slate-200" : "bg-[#e0e5ec] shadow-[6px_6px_12px_#b8b9be,-6px_-6px_12px_#ffffff] border-none text-slate-700";
+            const neoPressedClass = isDark ? "bg-slate-800 shadow-[inset_6px_6px_12px_#0f172a,inset_-6px_-6px_12px_#334155] border-none text-slate-200" : "bg-[#e0e5ec] shadow-[inset_6px_6px_12px_#b8b9be,inset_-6px_-6px_12px_#ffffff] border-none text-slate-700";
+            const neoBtnClass = isDark ? "bg-slate-800 shadow-[4px_4px_8px_#0f172a,-4px_-4px_8px_#334155] text-slate-200" : "bg-[#e0e5ec] shadow-[4px_4px_8px_#b8b9be,-4px_-4px_8px_#ffffff] text-slate-700";
+
+            const addSysLog = (msg) => setSystemLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${msg}`]);
+
+            const executeWithApiLogic = async (operationName, requestFn) => {
+                const validKeys = geminiKeys.filter(k => k.trim() !== ''); 
+                if (validKeys.length === 0) { alert(`⚠️ Gemini API Key မရှိပါ။ Settings (⚙️) ထဲတွင် ထည့်ပေးပါ။`); throw new Error("Missing API Key"); }
+                let attempts = 0; let currentIndex = activeKeyIndex; const totalKeys = validKeys.length;
+                while (attempts < totalKeys) {
+                    try { return await requestFn(validKeys[currentIndex]); } 
+                    catch (error) { currentIndex = (currentIndex + 1) % totalKeys; setActiveKeyIndex(currentIndex); attempts++; if (attempts >= totalKeys) { throw new Error(`All Keys Failed: ${error.message}`); } await new Promise(r => setTimeout(r, 2000)); }
+                }
+            };
+
+            // Admin Logic
+            const submitPayment = async () => {
+                if (!paymentProof || !selectedPkg) return;
+                setIsUploadingPayment(true);
+                const formData = new FormData(); formData.append("email", user.email); formData.append("amount", selectedPkg); formData.append("file", paymentProof);
+                try { await fetch('/api/buy-credits', { method: 'POST', body: formData }); alert("ငွေလွှဲပြေစာ ပေးပို့ပြီးပါပြီ။ Admin အတည်ပြုပေးပါမည်။"); } catch(e) {}
+                setIsUploadingPayment(false); setBuyModalOpen(false); setPaymentProof(null);
+            };
+            const approveTransaction = async (id, email, amount) => { await fetch('/api/admin/approve', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, email, amount}) }); alert(`${email} သို့ Credits ထည့်ပြီးပါပြီ`); loadAdminData(); };
+            const saveAdminSettings = async () => { await fetch('/api/admin/settings', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(globalSettings) }); alert('Settings ပြင်ဆင်ပြီးပါပြီ!'); };
+            const handleManualCreditAdd = async (e) => {
+                e.preventDefault();
+                await fetch('/api/admin/add-credit', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: manualCredit.email, amount: parseInt(manualCredit.amount)}) });
+                alert(`${manualCredit.email} သို့ Credit ဖြည့်ပေးပြီးပါပြီ`); setManualCredit({email: '', amount: 0});
+            };
+
+            const handleVideoUpload = (e) => { const file = e.target.files[0]; if (!file) return; setVideoFile(file); setVideoUrl(URL.createObjectURL(file)); setFinalVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProcessStage(''); setErrorMsg(''); aiBlurBoxRef.current = null; hookDataRef.current = null; setSocialContent(null); };
+
+            const performAiBlurDetection = async () => {
+                if (!autoBlurCaption || !videoFile) return;
+                setProcessStage("AI စာတန်းထိုးနေရာ ရှာဖွေနေသည်"); addSysLog("AI ဖြင့် မူရင်းစာတန်းထိုး နေရာကို ရှာဖွေနေပါသည်...");
+                try {
+                    const video = editVideoRef.current; const midTime = video && video.duration ? video.duration / 2 : 10; 
+                    const base64Image = await extractFrameAtTime(videoFile, midTime);
+                    const blurBox = await executeWithApiLogic("AI Blur", async (apiKey) => {
+                        const payload = { contents: [{ parts: [{ text: "Analyze this image from a video. Find the bounding box of the hardcoded subtitles. Return ONLY a JSON object with 'yMin' and 'yMax'. E.g. {\"yMin\": 0.80, \"yMax\": 0.95}" }, { inlineData: { mimeType: "image/jpeg", data: base64Image } } ] }], generationConfig: { temperature: 0.1, responseMimeType: "application/json" } };
+                        // 🌟 GEMINI-3-FLASH-PREVIEW for Blur detection
+                        const res = await fetch(`/api/gemini/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        const data = await res.json(); if (data.error) throw new Error(data.error.message); 
+                        if(!data.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
+                        let textResp = data.candidates[0].content.parts[0].text;
+                        return JSON.parse(textResp.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                    });
+                    aiBlurBoxRef.current = blurBox; addSysLog(`စာတန်းထိုးနေရာ တွေ့ရှိပါသည်: Y(${blurBox.yMin} - ${blurBox.yMax})`);
+                } catch (err) { addSysLog(`AI ရှာဖွေမှု မအောင်မြင်ပါ။ ပုံမှန်အောက်ခြေကို ဝါးပေးပါမည်။`); aiBlurBoxRef.current = { yMin: 0.82, yMax: 1.0 }; }
+            };
+
+            const performTranscription = async () => {
+                setProcessStage("Transcribe ထုတ်နေသည်"); addSysLog("အသံဖိုင်မှ စာသားပြောင်းခြင်း စတင်နေပါသည်...");
+                const arrayBuffer = await videoFile.arrayBuffer(); const audioCtx = new (window.AudioContext || window.webkitAudioContext)(); const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                const totalChunks = Math.ceil(audioBuffer.duration / 240); let allMasterSegments = [];
+                for (let i = 0; i < totalChunks; i++) {
+                    const offset = i * 240; const duration = Math.min(240, audioBuffer.duration - offset);
+                    const offlineCtx = new OfflineAudioContext(1, Math.ceil(duration * 16000), 16000); const source = offlineCtx.createBufferSource(); source.buffer = audioBuffer; source.connect(offlineCtx.destination); source.start(0, offset, duration);
+                    const wavBlob = exportWAV((await offlineCtx.startRendering()).getChannelData(0), 16000);
+                    const formData = new FormData(); formData.append('file', new File([wavBlob], `chunk.wav`, { type: 'audio/wav' })); formData.append('model', 'whisper-large-v3-turbo'); formData.append('response_format', 'verbose_json'); 
+                    try { const res = await fetch('/api/groq/transcriptions', { method: 'POST', body: formData }); const data = await res.json(); if(!res.ok) throw new Error(); data.segments.forEach(seg => allMasterSegments.push({ start: Number(seg.start) + offset, end: Number(seg.end) + offset, text: seg.text || "" })); } 
+                    catch(e) {
+                        addSysLog(`Groq အသုံးပြု၍မရသဖြင့် Gemini ဖြင့် ပြောင်းလဲဖတ်ယူနေပါသည်...`); const base64Audio = await blobToBase64(wavBlob);
+                        const chunkSegments = await executeWithApiLogic("Transcription", async (apiKey) => {
+                            const payload = { contents: [{ parts: [{ text: "Transcribe audio to JSON array: [{'start': 0.0, 'end': 2.0, 'text': '...'}]" }, { inlineData: { mimeType: "audio/wav", data: base64Audio } }] }], generationConfig: { temperature: 0.1, responseMimeType: "application/json" } };
+                            // 🌟 GEMINI-3.6-FLASH FOR TRANSCRIPTION FALLBACK
+                            const res = await fetch(`/api/gemini/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await res.json(); 
+                            if(!data.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
+                            return JSON.parse(data.candidates[0].content.parts[0].text.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                        }); chunkSegments.forEach(seg => allMasterSegments.push({ start: Number(seg.start) + offset, end: Number(seg.end) + offset, text: seg.text || "" }));
+                    }
+                    setRenderProgress(Math.floor(5 + (20 * ((i + 1) / totalChunks))));
+                }
+                
+                if (autoHookRef.current && allMasterSegments.length > 0) {
+                    addSysLog("Auto Hook အတွက် အသက်ဝင်ဆုံး ၅ စက္ကန့်စာ ရှာဖွေနေပါသည်...");
+                    let maxDensity = 0; let bestStart = 0;
+                    for (let i = 0; i < allMasterSegments.length; i++) {
+                        const winStart = allMasterSegments[i].start; const winEnd = winStart + 5; let wordCount = 0;
+                        for (let j = i; j < allMasterSegments.length; j++) { if (allMasterSegments[j].start <= winEnd) wordCount += allMasterSegments[j].text.split(' ').length; else break; }
+                        if (wordCount > maxDensity) { maxDensity = wordCount; bestStart = winStart; }
+                    }
+                    hookDataRef.current = { start: bestStart, end: bestStart + 5.5 };
+                    addSysLog(`Hook နေရာတွေ့ရှိပါသည်: ${bestStart.toFixed(1)}s`);
+                }
+                return jsonToSrt(allMasterSegments);
+            };
+
+            const performTranslation = async (originalSrt) => {
+                setProcessStage("ဘာသာပြန်နေသည်"); addSysLog(`Gemini ဖြင့် ${selectedLang} သို့ ဘာသာပြန်နေပါသည်...`);
+                const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text })); let allTranslatedBlocks = [];
+                for (let i = 0; i < originalBlocks.length; i += 15) {
+                    const batch = originalBlocks.slice(i, i + 15);
+                    const translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
+                        const transPayload = { contents: [{ parts: [{ text: JSON.stringify(batch) }] }], systemInstruction: { parts: [{ text: `Translate the 'text' values in this JSON array to ${selectedLang}. Return strictly as a JSON array of objects, keeping the original 'id', 'start', and 'end' values intact.` }] }, generationConfig: { temperature: 0.1, responseMimeType: "application/json" } };
+                        // 🌟 GEMINI-3.5-FLASH-LITE FOR FAST TRANSLATION
+                        const transRes = await fetch(`/api/gemini/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transPayload) });
+                        const transData = await transRes.json(); 
+                        if (transData.error) throw new Error(transData.error.message);
+                        if(!transData.candidates || !transData.candidates[0].content.parts[0].text) throw new Error("Invalid format");
+                        let textResp = transData.candidates[0].content.parts[0].text;
+                        return JSON.parse(textResp.trim());
+                    });
+                    for(let j=0; j<batch.length; j++) allTranslatedBlocks.push(translatedBatch.find(item => item.id === batch[j].id) || batch[j]);
+                    setRenderProgress(Math.floor(25 + (20 * ((i + 15) / originalBlocks.length))));
+                }
+                return allTranslatedBlocks;
+            };
+
+            const performTTSAndSyncLogic = async (allTranslatedBlocks) => {
+                setProcessStage("Voiceover ထုတ်နေသည်"); addSysLog(`အသံဖိုင်များကို ဖန်တီးနေပါသည်...`);
+                const chunks = getSrtChunks(allTranslatedBlocks); const newAudioChunks = new Array(chunks.length);
+                for (let i = 0; i < chunks.length; i += 2) {
+                    await Promise.all(chunks.slice(i, i + 2).map(async (chunk, batchIndex) => {
+                        const actualIndex = i + batchIndex; let safeText = chunk.text ? chunk.text.trim() : " "; if(!safeText) safeText = " ";
+                        try {
+                            if (recapEngine === 'edge') {
+                                const mp3Blob = await generateEdgeTTS(safeText, recapVoice);
+                                const pcmBytes = await decodeToPCM(mp3Blob); newAudioChunks[actualIndex] = { vStart: chunk.vStart, vEnd: chunk.vEnd, text: chunk.text, pcmBytes, audioDur: pcmBytes.length / 48000 };
+                            } else {
+                                await executeWithApiLogic(`TTS Chunk`, async (apiKey) => {
+                                    // 🌟 GEMINI-2.5-FLASH-PREVIEW-TTS
+                                    const ttsPayload = { contents: [{ parts: [{ text: safeText }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: recapVoice } } } } };
+                                    const ttsRes = await fetch(`/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsPayload) });
+                                    const ttsData = await ttsRes.json(); 
+                                    if(!ttsData.candidates || !ttsData.candidates[0].content.parts[0].inlineData) throw new Error("Audio format issue");
+                                    const binaryString = atob(ttsData.candidates[0].content.parts[0].inlineData.data);
+                                    const pcmBytes = new Uint8Array(binaryString.length); for (let j = 0; j < binaryString.length; j++) pcmBytes[j] = binaryString.charCodeAt(j);
+                                    newAudioChunks[actualIndex] = { vStart: chunk.vStart, vEnd: chunk.vEnd, text: chunk.text, pcmBytes, audioDur: pcmBytes.length / 48000 };
+                                });
+                            }
+                        } catch (err) { newAudioChunks[actualIndex] = { vStart: chunk.vStart, vEnd: chunk.vEnd, text: chunk.text, pcmBytes: new Uint8Array(48000), audioDur: 1.0 }; }
+                        setRenderProgress(45 + Math.floor(((actualIndex+1) / chunks.length) * 30));
+                    }));
+                }
+                const timeline = []; let currentVTime = 0;
+                for (const chunk of newAudioChunks) {
+                    if (!chunk) continue;
+                    if (chunk.vStart > currentVTime) timeline.push({ type: 'gap', vStart: currentVTime, vEnd: chunk.vStart, vSpeed: 1.0, durationReal: (chunk.vStart - currentVTime), text: "" });
+                    timeline.push({ type: 'narrate', vStart: chunk.vStart, vEnd: chunk.vEnd, vSpeed: Math.max(0.1, Math.min(8.0, (chunk.vEnd - chunk.vStart) / chunk.audioDur)), aSpeed: 1.0, pcmBytes: chunk.pcmBytes, durationReal: chunk.audioDur, text: chunk.text });
+                    currentVTime = chunk.vEnd;
+                }
+                let accumulatedReal = 0; const syncTimeline = timeline.map(t => { const res = { ...t, startReal: accumulatedReal, endReal: accumulatedReal + t.durationReal }; accumulatedReal += t.durationReal; return res; });
+                const offlineCtx = new OfflineAudioContext(1, Math.ceil(accumulatedReal * 24000), 24000);
+                for (const event of syncTimeline) {
+                    if (event.type === 'narrate' && event.pcmBytes) {
+                        const audioBuffer = offlineCtx.createBuffer(1, event.pcmBytes.length / 2, 24000); const channelData = audioBuffer.getChannelData(0);
+                        for (let i = 0; i < event.pcmBytes.length / 2; i++) { let int16 = (event.pcmBytes[i*2+1] << 8) | event.pcmBytes[i*2]; channelData[i] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0; }
+                        const source = offlineCtx.createBufferSource(); source.buffer = audioBuffer; source.connect(offlineCtx.destination); source.start(event.startReal);
+                    }
+                }
+                return { mergedAudioUrl: URL.createObjectURL(exportWAV((await offlineCtx.startRendering()).getChannelData(0), 24000)), syncTimeline, accumulatedReal };
+            };
+
+            const performFinalRender = (audioUrl, syncTimeline, totalAudioDur, mode) => new Promise(async (resolve, reject) => {
+                setProcessStage("Video အကြမ်းထည် ဖန်တီးနေသည်"); setRenderProgress(80); addSysLog("WebM Render စတင်နေပါသည်...");
+                const video = editVideoRef.current; const canvas = canvasRef.current;
+                
+                video.muted = false; video.crossOrigin = "anonymous";
+                if (video.readyState < 2) await new Promise((res) => { video.onloadeddata = res; video.load(); });
+                
+                const currentRatio = videoRatioRef.current;
+                const maxRes = 1280; let cWidth = video.videoWidth || 1280; let cHeight = video.videoHeight || 720;
+                if (currentRatio === '9:16') { cWidth = 720; cHeight = 1280; }
+                else if (currentRatio === '1:1') { cWidth = 1080; cHeight = 1080; }
+                else { if (cWidth > maxRes) { cHeight = Math.floor(cHeight * (maxRes / cWidth)); cWidth = maxRes; } }
+                
+                canvas.width = cWidth; canvas.height = cHeight;
+                const ctx = canvas.getContext('2d', { alpha: false }); ctx.imageSmoothingEnabled = true; 
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height); video.currentTime = 0;
+                
+                const audio = new Audio(audioUrl || videoUrl); audio.crossOrigin = "anonymous"; audio.preservesPitch = true; 
+                await new Promise((res) => { audio.onloadedmetadata = res; audio.load(); });
+                
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') await audioCtx.resume();
+                const audioDest = audioCtx.createMediaStreamDestination(); 
+                
+                const videoSource = audioCtx.createMediaElementSource(video);
+                const audioSource = audioCtx.createMediaElementSource(audio);
+                const videoGain = audioCtx.createGain(); const audioGain = audioCtx.createGain();
+                videoSource.connect(videoGain); audioSource.connect(audioGain);
+                videoGain.connect(audioDest); audioGain.connect(audioDest);
+                // 🌟 MUTED DURING RENDER: The next line is purposely commented out to prevent audio playing from speaker
+                // videoGain.connect(audioCtx.destination); audioGain.connect(audioCtx.destination);
+                
+                let canvasStream; try { canvasStream = canvas.captureStream(60); } catch (e) { try { canvasStream = canvas.mozCaptureStream(60); } catch(err) { return reject(err); } }
+                let mimeType = 'video/webm; codecs=vp8,opus'; if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+                let mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: 3000000 });
+                const recordedChunks = []; let isStopped = false;
+                
+                const finalize = async () => { 
+                    if (isStopped) return; isStopped = true; 
+                    setProcessStage("Editor များအတွက် Final MP4 ပြင်ဆင်နေပါသည် (FFmpeg)...");
+                    try {
+                        const rawBlob = new Blob(recordedChunks, { type: mimeType }); const formData = new FormData(); formData.append('file', rawBlob, 'raw_video.webm');
+                        const res = await fetch('/api/convert-mp4', { method: 'POST', body: formData });
+                        if (!res.ok) throw new Error("FFmpeg Conversion Failed");
+                        const finalBlob = await res.blob(); setFinalVideoUrl(URL.createObjectURL(finalBlob)); addSysLog("MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
+                    } catch (err) { addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ: ${err.message}`); setFinalVideoUrl(URL.createObjectURL(new Blob(recordedChunks, { type: mimeType }))); }
+                    setIsRecapProcessing(false); setProcessStage(""); setRenderProgress(100); isRecordingRef.current = false; resolve(); 
+                };
+                mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); }; mediaRecorder.onstop = finalize;
+                
+                let renderPhase = (autoHookRef.current && hookDataRef.current) ? 'hook' : 'main';
+                isRecordingRef.current = true; 
+                
+                videoGain.gain.value = renderPhase === 'hook' ? 1 : (mode === 'recap' ? 0 : 1);
+                audioGain.gain.value = renderPhase === 'hook' ? 0 : (mode === 'recap' ? 1 : 0);
+                
+                mediaRecorder.start(100); 
+                if (renderPhase === 'hook') { video.currentTime = hookDataRef.current.start; video.play(); audio.play(); } 
+                else { video.currentTime = 0; video.play(); audio.play(); }
+                
+                let lastUiUpdate = 0; let currentEventIndex = -1; let activeText = ""; let lastDrawTime = 0; const fpsInterval = 1000 / 60; const renderStartTime = performance.now();
+                let isCurrentlyFrozen = false; let lastFreezeEndRealTime = renderStartTime; let freezeStartRealTime = 0;
+                const offscreenCanvas = document.createElement('canvas'); const offscreenCtx = offscreenCanvas.getContext('2d', { alpha: false });
+                
+                const renderLoop = (nowReal) => {
+                    if (!isRecordingRef.current) return;
+                    
+                    if (renderPhase === 'hook') {
+                        activeText = "🔥 အထွတ်အထိပ် ရောက်နေသော အပိုင်း 🔥";
+                        if (video.currentTime >= hookDataRef.current.end) {
+                            renderPhase = 'main'; video.currentTime = 0; audio.currentTime = 0;
+                            videoGain.gain.value = mode === 'recap' ? 0 : 1; audioGain.gain.value = mode === 'recap' ? 1 : 0;
+                        }
+                    } else {
+                        const currentAudioTime = audio.currentTime; const targetDur = mode === 'recap' ? totalAudioDur : video.duration;
+                        if (nowReal - lastUiUpdate > 250) { setRenderProgress(Math.min(99, 80 + Math.floor((currentAudioTime / (targetDur || 1)) * 15))); lastUiUpdate = nowReal; }
+                        if (currentAudioTime >= (targetDur || 1) - 0.1 || audio.ended || (mode==='subtitle' && video.ended)) { mediaRecorder.stop(); setTimeout(finalize, 500); return; }
+                        
+                        if (mode === 'recap') {
+                            let eventIndex = syncTimeline.findIndex(e => currentAudioTime >= e.startReal && currentAudioTime < e.endReal);
+                            if (eventIndex === -1 && syncTimeline.length > 0) eventIndex = syncTimeline.length - 1;
+                            if (eventIndex !== -1) { const currentEvent = syncTimeline[eventIndex]; if (eventIndex !== currentEventIndex) { currentEventIndex = eventIndex; activeText = currentEvent.text || ""; video.playbackRate = Math.max(0.25, Math.min(2.5, currentEvent.vSpeed)); if (Math.abs(video.currentTime - currentEvent.vStart) > 1.5) video.currentTime = currentEvent.vStart; } }
+                        } else {
+                            const currentVTime = video.currentTime; const activeBlock = syncTimeline.find(b => currentVTime >= b.start && currentVTime <= b.end); activeText = activeBlock ? activeBlock.text : "";
+                        }
+                    }
+
+                    if (nowReal - lastDrawTime < fpsInterval) { animationRef.current = requestAnimationFrame(renderLoop); return; } lastDrawTime = nowReal;
+                    
+                    ctx.fillStyle = isDark ? '#1e293b' : '#000000'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.filter = activeFilter;
+                    
+                    const vRatio = video.videoWidth / video.videoHeight; const cRatio = canvas.width / canvas.height;
+                    let drawWidth, drawHeight, startX, startY;
+                    
+                    if (currentRatio !== '16:9') {
+                        ctx.save(); ctx.filter = 'blur(40px) brightness(0.5)';
+                        let bgWidth = canvas.width, bgHeight = canvas.width / vRatio;
+                        if (bgHeight < canvas.height) { bgHeight = canvas.height; bgWidth = canvas.height * vRatio; }
+                        ctx.drawImage(video, (canvas.width - bgWidth)/2, (canvas.height - bgHeight)/2, bgWidth, bgHeight);
+                        ctx.restore();
+                    }
+                    
+                    if (vRatio > cRatio) { drawWidth = canvas.width; drawHeight = canvas.width / vRatio; startX = 0; startY = (canvas.height - drawHeight) / 2; } 
+                    else { drawHeight = canvas.height; drawWidth = canvas.height * vRatio; startX = (canvas.width - drawWidth) / 2; startY = 0; }
+                    
+                    let applyZoom = 1.0; let isFrozenFrame = false;
+                    if (freezeInterval > 0 && renderPhase === 'main') {
+                        if (!isCurrentlyFrozen && (nowReal - lastFreezeEndRealTime) >= freezeInterval * 1000) {
+                            isCurrentlyFrozen = true; freezeStartRealTime = nowReal; offscreenCanvas.width = canvas.width; offscreenCanvas.height = canvas.height; offscreenCtx.fillStyle = isDark ? '#1e293b' : '#000000'; offscreenCtx.fillRect(0, 0, offscreenCanvas.width, offscreenCanvas.height); offscreenCtx.filter = activeFilter; offscreenCtx.save(); offscreenCtx.translate(offscreenCanvas.width, 0); offscreenCtx.scale(-1, 1); offscreenCtx.drawImage(video, startX, startY, drawWidth, drawHeight); offscreenCtx.restore();
+                        }
+                        if (isCurrentlyFrozen) {
+                            const timeFrozen = nowReal - freezeStartRealTime;
+                            if (timeFrozen >= 2000) { isCurrentlyFrozen = false; lastFreezeEndRealTime = nowReal; } 
+                            else { isFrozenFrame = true; applyZoom = 1.0 + (timeFrozen / 2000) * 0.15; }
+                        }
+                    }
+                    
+                    ctx.save();
+                    if (isFrozenFrame) { ctx.translate(canvas.width / 2, canvas.height / 2); ctx.scale(applyZoom, applyZoom); ctx.translate(-canvas.width / 2, -canvas.height / 2); ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height); } 
+                    else { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, startX, startY, drawWidth, drawHeight); }
+                    ctx.restore();
+                    ctx.filter = 'none';
+                    
+                    if (autoBlurCaption && aiBlurBoxRef.current && renderPhase === 'main') {
+                        const { yMin, yMax } = aiBlurBoxRef.current; const blurY = startY + (drawHeight * yMin); const blurH = drawHeight * (yMax - yMin);
+                        ctx.save();
+                        if (isFrozenFrame) { ctx.translate(canvas.width / 2, canvas.height / 2); ctx.scale(applyZoom, applyZoom); ctx.translate(-canvas.width / 2, -canvas.height / 2); ctx.beginPath(); ctx.rect(startX, blurY, drawWidth, blurH); ctx.clip(); ctx.filter = 'blur(20px)'; ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height); } 
+                        else { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.beginPath(); ctx.rect(startX, blurY, drawWidth, blurH); ctx.clip(); ctx.filter = 'blur(20px)'; ctx.drawImage(video, startX, startY, drawWidth, drawHeight); }
+                        ctx.restore();
+                    }
+                    
+                    if (autoCaption && activeText) {
+                        ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; 
+                        const fontSize = Math.floor(canvas.width * (currentRatio === '9:16' ? 0.05 : 0.035)); 
+                        ctx.font = `900 ${fontSize}px sans-serif`;
+                        let textY = autoBlurCaption && aiBlurBoxRef.current && renderPhase === 'main' ? startY + (drawHeight * ((aiBlurBoxRef.current.yMin + aiBlurBoxRef.current.yMax) / 2)) : canvas.height * (subPosition / 100);
+                        const maxWidth = canvas.width * 0.85; const words = activeText.split(' '); let line = ''; const lines = [];
+                        for(let n = 0; n < words.length; n++) { const testLine = line + words[n] + ' '; if (ctx.measureText(testLine).width > maxWidth && n > 0) { lines.push(line); line = words[n] + ' '; } else { line = testLine; } } lines.push(line);
+                        const lineHeight = fontSize * 1.3; let currentY = textY - ((lines.length - 1) * lineHeight / 2);
+                        for (let i = 0; i < lines.length; i++) {
+                            if (strokeColor !== 'none') { ctx.lineWidth = fontSize * 0.2; ctx.strokeStyle = strokeColor; ctx.strokeText(lines[i].trim(), canvas.width/2, currentY); }
+                            ctx.fillStyle = captionColor; ctx.fillText(lines[i].trim(), canvas.width/2, currentY); currentY += lineHeight; 
+                        }
+                        ctx.restore();
+                    }
+                    animationRef.current = requestAnimationFrame(renderLoop);
+                };
+                animationRef.current = requestAnimationFrame(renderLoop);
+            });
+
+            // 🌟 Social Media Generator
+            const generateSocialContent = async () => {
+                setIsGeneratingSocial(true);
+                const blocks = translatedBlocksRef.current || extractionDataRef.current || [];
+                const storyText = blocks.map(b => b.text).join(' ').substring(0, 3000) || "မြန်မာ Movie Recap ဇာတ်လမ်း။"; 
+                try {
+                    const content = await executeWithApiLogic("Social Content", async (apiKey) => {
+                        const payload = {
+                            contents: [{ parts: [{ text: `Generate engaging social media posts in Myanmar language based on this transcript for YouTube, TikTok, and Facebook. Include titles, descriptions, and hashtags. Return strictly as JSON object with this exact format: {"youtube": {"title": "...", "desc": "...", "tags": "..."}, "tiktok": {"title": "...", "desc": "...", "tags": "..."}, "facebook": {"title": "...", "desc": "...", "tags": "..."}} \n\nTranscript: ${storyText}` }] }],
+                            generationConfig: { temperature: 0.7, responseMimeType: "application/json" }
+                        };
+                        const res = await fetch(`/api/gemini/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        const data = await res.json(); if (data.error) throw new Error(data.error.message);
+                        if(!data.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
+                        let textResp = data.candidates[0].content.parts[0].text;
+                        return JSON.parse(textResp.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                    });
+                    setSocialContent(content);
+                } catch (e) { alert("Social Content ဖန်တီးရာတွင် အခက်အခဲရှိပါသည်။ API Key ကို စစ်ဆေးပါ။"); addSysLog("Social Content Error: " + e.message); }
+                setIsGeneratingSocial(false);
+            };
+
+            const handleProcess = async (type) => {
+                if (!videoFile) return;
+                try { const ctxCheck = new (window.AudioContext || window.webkitAudioContext)(); if (ctxCheck.state === 'suspended') await ctxCheck.resume(); } catch (e) {}
+                
+                try {
+                    const requiredSecs = editVideoRef.current?.duration || 60;
+                    const checkRes = await fetch('/api/check-credits', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email: user.email, duration_seconds: requiredSecs}) });
+                    const checkData = await checkRes.json();
+                    if (checkData.error) return alert(checkData.error);
+                } catch(e) {} 
+
+                setIsRecapProcessing(true); setErrorMsg(''); setSystemLogs([]); setRenderProgress(0); setFinalVideoUrl(''); setSocialContent(null);
+                let currentStep = 1;
+                while (currentStep <= 5) {
+                    try {
+                        if (currentStep === 1) { if (!extractionDataRef.current) extractionDataRef.current = await performTranscription(); currentStep = 2; }
+                        if (currentStep === 2) { if (autoBlurCaption && !aiBlurBoxRef.current) await performAiBlurDetection(); currentStep = 3; }
+                        if (currentStep === 3) { if (!translatedBlocksRef.current) translatedBlocksRef.current = await performTranslation(extractionDataRef.current); currentStep = 4; }
+                        if (currentStep === 4) { 
+                            if (type === 'recap') { if (!syncTimelineRef.current) { const { mergedAudioUrl, syncTimeline, accumulatedReal } = await performTTSAndSyncLogic(translatedBlocksRef.current); finalAudioUrlRef.current = mergedAudioUrl; syncTimelineRef.current = syncTimeline; totalAudioDurRef.current = accumulatedReal; } } 
+                            else { syncTimelineRef.current = translatedBlocksRef.current; totalAudioDurRef.current = 0; }
+                            currentStep = 5; 
+                        }
+                        if (currentStep === 5) { await performFinalRender(finalAudioUrlRef.current, syncTimelineRef.current, totalAudioDurRef.current, type); currentStep = 6; }
+                    } catch (error) { setErrorMsg(`လုပ်ငန်းစဉ် ရပ်တန့်သွားပါသည်: ${error.message}`); setIsRecapProcessing(false); setProcessStage(''); break; }
+                }
+            };
+
+            const downloadFinalFile = async () => { 
+                if (!user) return;
+                try {
+                    const requiredSecs = editVideoRef.current?.duration || 60;
+                    const deductRes = await fetch('/api/deduct', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email: user.email, duration_seconds: requiredSecs}) });
+                    const deductData = await deductRes.json();
+                    if (deductData.error) { alert("Error: " + deductData.error); return; }
+                    
+                    fetchUserData(user.email); 
+                    const element = document.createElement("a"); element.href = finalVideoUrl; element.download = `AI_Studio_${new Date().getTime()}.mp4`; element.click(); 
+                } catch(e) { alert("Download Failed"); }
+            };
+
+            const playVoicePreview = async (engine, voice) => {
+                if(geminiKeys.length === 0 || geminiKeys[0] === '') {
+                    alert("⚠️ Settings ထဲတွင် API Key ထည့်ပေးပါ"); return;
+                }
+                setPreviewingAudio(true); setErrorMsg(''); setTtsError('');
+                try {
+                    if (previewAudioObjRef.current) previewAudioObjRef.current.pause();
+                    if (engine === 'edge') {
+                        const voiceName = EDGE_VOICES.find(v => v.id === voice)?.name || voice;
+                        const mp3Blob = await generateEdgeTTS(`မင်္ဂလာပါ။ ဒါကတော့ ${voiceName} ရဲ့ အစမ်းအသံဖြစ်ပါတယ်။`, voice);
+                        const audio = new Audio(URL.createObjectURL(mp3Blob)); previewAudioObjRef.current = audio; 
+                        audio.play().catch(e=>console.error(e)); audio.onended = () => setPreviewingAudio(false);
+                    } else {
+                        await executeWithApiLogic("Voice Preview", async (apiKey) => {
+                            const ttsPayload = { contents: [{ parts: [{ text: `Hello, this is a voice preview for ${voice}.` }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } };
+                            const res = await fetch(`/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsPayload) });
+                            const data = await res.json(); if (data.error) throw new Error(data.error.message);
+                            if (!data.candidates || !data.candidates[0].content.parts[0].inlineData) throw new Error("Audio generation not supported by this API Key or Model yet.");
+                            const pcmBase64 = data.candidates[0].content.parts[0].inlineData.data;
+                            const binaryString = atob(pcmBase64); const pcmBytes = new Uint8Array(binaryString.length);
+                            for (let j = 0; j < binaryString.length; j++) pcmBytes[j] = binaryString.charCodeAt(j);
+                            const offlineCtx = new OfflineAudioContext(1, pcmBytes.length / 2, 24000); const audioBuffer = offlineCtx.createBuffer(1, pcmBytes.length / 2, 24000); const channelData = audioBuffer.getChannelData(0);
+                            for (let i = 0; i < pcmBytes.length / 2; i++) { let int16 = (pcmBytes[i * 2 + 1] << 8) | pcmBytes[i * 2]; channelData[i] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0; }
+                            const audio = new Audio(URL.createObjectURL(exportWAV(channelData, 24000))); previewAudioObjRef.current = audio; 
+                            audio.play().catch(e=>console.error(e)); audio.onended = () => setPreviewingAudio(false);
+                        });
+                    }
+                } catch (err) { setTtsError(err.message); setErrorMsg(err.message); setPreviewingAudio(false); }
+            };
+
+            const handleGenerateTTS = async () => {
+                if (!ttsTextInput.trim()) return;
+                setIsTtsGenerating(true); setTtsError(''); setTtsAudioUrl(''); setTtsProgressPct(10);
+                try {
+                    let processedText = ttsTextInput; 
+                    if (ttsEngine === 'gemini') {
+                        setTtsProgressTxt('စာသားများကို ပြင်ဆင်နေပါသည်...');
+                        processedText = await executeWithApiLogic("TTS Preprocessing", async (apiKey) => {
+                            const payload = { contents: [{ parts: [{ text: ttsTextInput }] }], systemInstruction: { parts: [{ text: `You are an expert Myanmar voiceover director. Convert the written Myanmar text into natural, flowing, conversational Myanmar spoken text (ဗမာစကားပြော). Tone: ${ttsStyleObj.name} (${ttsStyleObj.prompt}). Do not summarize.` }] }, generationConfig: { temperature: 0.6 } };
+                            const res = await fetch(`/api/gemini/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            const data = await res.json(); if (data.error) throw new Error(data.error.message); return data.candidates[0].content.parts[0].text.trim();
+                        });
+                    } else setTtsProgressTxt('စာသားများကို ပိုင်းဖြတ်နေပါသည်...');
+                    
+                    setTtsProgressTxt('အသံဖန်တီးနေပါသည်...'); setTtsProgressPct(40);
+                    const textChunks = chunkTextForTTS(processedText, 500); 
+                    
+                    if (ttsEngine === 'edge') {
+                        const audioBlobs = [];
+                        for (let i = 0; i < textChunks.length; i++) {
+                            setTtsProgressTxt(`အသံဖန်တီးနေပါသည်... (အပိုင်း ${i + 1}/${textChunks.length})`); setTtsProgressPct(40 + Math.floor((i / textChunks.length) * 50));
+                            audioBlobs.push(await generateEdgeTTS(textChunks[i], ttsVoice));
+                        }
+                        setTtsProgressTxt('အသံများကို ပေါင်းစပ်နေပါသည်...'); setTtsProgressPct(95);
+                        setTtsAudioUrl(URL.createObjectURL(new Blob(audioBlobs, { type: 'audio/mp3' })));
+                    } else {
+                        const allPcmBuffers = []; let totalSamples = 0;
+                        for (let i = 0; i < textChunks.length; i++) {
+                            setTtsProgressTxt(`အသံဖန်တီးနေပါသည်... (အပိုင်း ${i + 1}/${textChunks.length})`); setTtsProgressPct(40 + Math.floor((i / textChunks.length) * 50));
+                            await executeWithApiLogic(`TTS Chunk`, async (apiKey) => {
+                                const ttsPayload = { contents: [{ parts: [{ text: textChunks[i] }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: ttsVoice } } } } };
+                                const res = await fetch(`/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsPayload) });
+                                const data = await res.json(); if (data.error) throw new Error(data.error.message);
+                                if (!data.candidates || !data.candidates[0].content.parts[0].inlineData) throw new Error("Audio generation failed");
+                                const binaryString = atob(data.candidates[0].content.parts[0].inlineData.data);
+                                const pcmBytes = new Uint8Array(binaryString.length); for (let j = 0; j < binaryString.length; j++) pcmBytes[j] = binaryString.charCodeAt(j);
+                                totalSamples += pcmBytes.length / 2; allPcmBuffers.push({ bytes: pcmBytes, samples: pcmBytes.length / 2 });
+                            });
+                        }
+                        setTtsProgressTxt('အသံများကို ပေါင်းစပ်နေပါသည်...'); setTtsProgressPct(95);
+                        const offlineCtx = new OfflineAudioContext(1, totalSamples, 24000); const finalAudioBuffer = offlineCtx.createBuffer(1, totalSamples, 24000); const channelData = finalAudioBuffer.getChannelData(0); let currentSampleOffset = 0;
+                        for (const buf of allPcmBuffers) { for (let i = 0; i < buf.samples; i++) { let int16 = (buf.bytes[i*2+1] << 8) | buf.bytes[i*2]; channelData[currentSampleOffset++] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0; } }
+                        setTtsAudioUrl(URL.createObjectURL(exportWAV(channelData, 24000)));
+                    }
+                    setTtsProgressPct(100); setTtsProgressTxt('ပြီးပါပြီ!');
+                } catch (err) { setTtsError(err.message); } finally { setIsTtsGenerating(false); }
+            };
+
+            const downloadTtsAudio = () => { if(ttsAudioUrl) { const a = document.createElement('a'); a.href = ttsAudioUrl; a.download = `Voiceover_${ttsEngine}_${ttsVoice}.mp3`; a.click(); } };
+
+            const renderSettingsPanel = () => {
+                if (!showSettings) return null;
+                return (
+                    <div className={`p-6 md:p-8 rounded-3xl mb-8 animate-in fade-in slide-in-from-top-4 ${neoPressedClass}`}>
+                        <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><SettingsIcon className="w-6 h-6 text-indigo-500"/> Gemini API Keys Management</h2>
+                        <form onSubmit={(e) => { e.preventDefault(); const validKeys = geminiKeys.filter(k => k.trim() !== ''); setGeminiKeys(validKeys.length > 0 ? validKeys : ['']); setSafeStorage('geminiKeys', validKeys); setActiveKeyIndex(0); setShowSettings(false); }} className="space-y-4">
+                            {geminiKeys.map((key, index) => (
+                                <div key={index} className="flex items-center gap-3"><input type="password" value={key} onChange={(e) => {const n=[...geminiKeys]; n[index]=e.target.value; setGeminiKeys(n);}} placeholder={`API Key ${index + 1}`} className={`w-full p-4 rounded-xl outline-none transition-all ${neoPressedClass}`} />{geminiKeys.length > 1 && (<button type="button" onClick={() => {const n=geminiKeys.filter((_,i)=>i!==index); setGeminiKeys(n); if(activeKeyIndex>=n.length)setActiveKeyIndex(0);}} className={`p-4 rounded-xl text-red-500 ${neoBtnClass}`}><Trash2 className="w-5 h-5" /></button>)}</div>
+                            ))}
+                            <div className="flex gap-4 pt-4"><button type="button" onClick={() => setGeminiKeys([...geminiKeys, ''])} className={`px-6 py-3 rounded-xl flex items-center gap-2 font-semibold ${neoBtnClass}`}><Plus className="w-5 h-5" /> Add Key</button><button type="submit" className={`px-8 py-3 rounded-xl font-bold text-white bg-indigo-500 hover:bg-indigo-600 shadow-lg ml-auto`}>Save</button></div>
+                        </form>
+                    </div>
+                );
+            };
+
+            const renderTopNavigation = (title, icon) => (
+                <header className={`flex flex-col md:flex-row justify-between items-center p-6 rounded-3xl mb-8 ${neoClass} animate-in slide-in-from-top-4`}>
+                    <div className="flex items-center w-full md:w-auto mb-4 md:mb-0 gap-4"><button onClick={() => setCurrentView('home')} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="Back to Home"><ChevronLeft className="w-6 h-6 text-indigo-500" /></button><h1 className={`text-xl md:text-3xl font-black flex items-center gap-3 tracking-tight ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{icon} {title}</h1></div>
+                    <div className="flex items-center gap-4">
+                        {user && (
+                            <div className="flex items-center gap-4 mr-2">
+                                <div className="text-right hidden md:block">
+                                    <div className="text-sm font-bold opacity-90">{user.name}</div>
+                                    <div className="text-xs font-bold text-yellow-500">{userData?.credits || 0} Credits</div>
+                                </div>
+                                <button onClick={() => setBuyModalOpen(true)} className="p-3 bg-yellow-500 text-black hover:bg-yellow-600 rounded-2xl flex items-center justify-center shadow-lg font-bold" title="Topup Credits"><CreditCard className="w-5 h-5"/></button>
+                            </div>
+                        )}
+                        {userData?.role === 'admin' && (
+                            <button onClick={() => {setCurrentView('admin'); loadAdminData();}} className="relative p-3 bg-red-500 text-white hover:bg-red-600 rounded-2xl shadow-lg font-bold flex items-center justify-center mr-2">
+                                Admin View {transactions.length > 0 && <span className="absolute -top-2 -right-2 bg-yellow-400 text-black w-6 h-6 rounded-full flex items-center justify-center text-xs font-black animate-bounce">{transactions.length}</span>}
+                            </button>
+                        )}
+                        <button onClick={() => setIsDark(!isDark)} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="Day/Night Mode">{isDark ? <Sun className="w-6 h-6 text-yellow-400" /> : <Moon className="w-6 h-6 text-indigo-600" />}</button>
+                        <button onClick={() => setShowSettings(!showSettings)} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="API Keys Settings"><SettingsIcon className={`w-6 h-6 ${showSettings ? 'text-indigo-500' : ''}`} /></button>
+                    </div>
+                </header>
+            );
+
+            if (currentView === 'admin' && userData?.role === 'admin') {
+                return (
+                    <div className={`min-h-screen font-sans p-4 md:p-8 transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                        <div className="max-w-6xl mx-auto space-y-8">
+                            {renderTopNavigation("Admin Dashboard", <SettingsIcon className="w-8 h-8 text-red-500"/>)}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                                <div className={`p-6 rounded-3xl flex items-center gap-4 ${neoClass}`}><div className="p-4 bg-indigo-500/20 text-indigo-500 rounded-2xl"><IconBase><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></IconBase></div><div><p className="text-sm opacity-70 font-bold">Total Users</p><p className="text-3xl font-black">{adminStats.total_users}</p></div></div>
+                                <div className={`p-6 rounded-3xl flex items-center gap-4 ${neoClass}`}><div className="p-4 bg-green-500/20 text-green-500 rounded-2xl"><CreditCard className="w-8 h-8"/></div><div><p className="text-sm opacity-70 font-bold">This Month Profit</p><p className="text-3xl font-black">{adminStats.monthly_profit} MMK</p></div></div>
+                            </div>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <div className={`p-8 rounded-3xl ${neoClass}`}>
+                                    <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold text-green-500">💰 ငွေလွှဲဝင်ထားသူများ စာရင်း</h2><button onClick={loadAdminData} className={`px-4 py-2 text-sm rounded-xl ${neoBtnClass}`}>Refresh</button></div>
+                                    {transactions.length === 0 ? <p className="opacity-50">လက်ရှိတွင် ငွေလွှဲထားသူ မရှိသေးပါ...</p> : (
+                                        <div className="space-y-4">
+                                            {transactions.map(t => (
+                                                <div key={t.id} className={`p-4 rounded-xl flex justify-between items-center border border-red-500/50 ${neoPressedClass}`}>
+                                                    <div><p className="font-bold">{t.email}</p><p className="text-yellow-500 text-sm font-bold">{t.amount} MMK</p></div>
+                                                    <button onClick={() => approveTransaction(t.id, t.email, t.amount)} className="bg-green-500 text-white px-4 py-2 rounded-xl font-bold shadow-lg shadow-green-500/30">အတည်ပြုမည်</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="mt-8 pt-8 border-t border-gray-600/30">
+                                        <h2 className="text-lg font-bold text-indigo-500 mb-4">🎁 Manual Credit Transfer</h2>
+                                        <form onSubmit={handleManualCreditAdd} className="flex gap-2">
+                                            <input type="email" placeholder="User Email" required value={manualCredit.email} onChange={e=>setManualCredit({...manualCredit, email: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/>
+                                            <input type="number" placeholder="Amount" required value={manualCredit.amount || ''} onChange={e=>setManualCredit({...manualCredit, amount: e.target.value})} className={`w-32 p-3 rounded-xl outline-none ${neoPressedClass}`}/>
+                                            <button type="submit" className="bg-indigo-500 text-white px-4 rounded-xl font-bold">Add</button>
+                                        </form>
+                                    </div>
+                                </div>
+                                <div className={`p-8 rounded-3xl flex flex-col ${neoClass}`}>
+                                    <h2 className="text-xl font-bold text-rose-500 mb-6">⚙️ System Settings</h2>
+                                    <div className="space-y-4 mb-4">
+                                        <div><label className="text-sm font-bold opacity-70">Marquee Announcement</label><textarea value={globalSettings.announcement} onChange={(e) => setGlobalSettings({...globalSettings, announcement: e.target.value})} rows="3" className={`w-full p-4 rounded-xl outline-none resize-none ${neoPressedClass}`}></textarea></div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div><label className="text-sm font-bold opacity-70">Deduct Rate (Credits/Min)</label><input type="number" value={globalSettings.deduction_rate} onChange={e=>setGlobalSettings({...globalSettings, deduction_rate: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
+                                            <div><label className="text-sm font-bold opacity-70">Free Daily Limit (Mins)</label><input type="number" value={globalSettings.free_daily_mins} onChange={e=>setGlobalSettings({...globalSettings, free_daily_mins: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
+                                        </div>
+                                    </div>
+                                    <button onClick={saveAdminSettings} className="w-full bg-rose-500 text-white py-4 rounded-xl font-bold mt-auto shadow-lg shadow-rose-500/30">Save Settings</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div>
+                    {globalSettings.announcement && (<div className="marquee-container"><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
+                    {buyModalOpen && (
+                        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                            <div className={`w-full max-w-lg p-8 rounded-3xl ${neoClass}`}>
+                                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><CreditCard className="w-6 h-6 text-indigo-500"/> Buy Credits</h2>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
+                                    {PACKAGES.map(amt => {
+                                        if (amt === 3000 && userData?.has_bought_3000) return null;
+                                        return (<button key={amt} onClick={() => setSelectedPkg(amt)} className={`p-4 rounded-xl font-bold text-center border-2 ${selectedPkg === amt ? 'border-indigo-500 bg-indigo-500/10' : 'border-transparent ' + neoPressedClass}`}>{amt} <br/><span className="text-xs opacity-70">MMK</span></button>)
+                                    })}
+                                </div>
+                                {selectedPkg && (
+                                    <div className={`p-6 rounded-2xl mb-6 text-sm ${neoPressedClass}`}>
+                                        <p className="opacity-70 mb-2">KBZPay သို့ ငွေလွှဲပြီး Screenshot တင်ပေးပါ:</p><p className="font-mono text-xl font-bold text-yellow-500">09421619437</p><p className="font-bold mb-4">Aung Win Thu</p>
+                                        <input type="file" accept="image/*" onChange={(e)=>setPaymentProof(e.target.files[0])} className="w-full" />
+                                    </div>
+                                )}
+                                <div className="flex gap-4"><button onClick={() => setBuyModalOpen(false)} className={`flex-1 py-3 rounded-xl font-bold ${neoBtnClass}`}>Cancel</button><button onClick={submitPayment} disabled={!paymentProof || isUploadingPayment} className={`flex-1 py-3 rounded-xl font-bold text-white transition ${paymentProof ? 'bg-indigo-500 hover:bg-indigo-600 shadow-lg' : 'bg-gray-600'}`}>{isUploadingPayment ? 'Sending...' : 'Confirm Payment'}</button></div>
+                            </div>
+                        </div>
+                    )}
+                    
+                    <div className="pt-10">
+                        {currentView === 'home' && (
+                            <div className={`min-h-screen font-sans flex flex-col items-center justify-center p-6 relative transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                                <div className="absolute top-6 right-6 flex items-center gap-4">
+                                    {user && (<button onClick={handleLogout} className={`px-4 py-3 rounded-2xl flex items-center gap-2 font-bold text-red-500 ${neoBtnClass}`}><LogOut className="w-5 h-5"/> Logout</button>)}
+                                    <button onClick={() => setIsDark(!isDark)} className={`p-4 rounded-full flex items-center justify-center ${neoBtnClass} ${isDark ? 'text-yellow-400' : 'text-indigo-600'}`}>{isDark ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}</button>
+                                </div>
+                                <div className="text-center mb-10 animate-in fade-in zoom-in duration-500"><div className="inline-flex items-center justify-center p-5 rounded-3xl mb-6 neumorphic-card bg-indigo-500 text-white"><Sparkles className="w-12 h-12" /></div><h1 className="text-5xl md:text-6xl font-black mb-4 tracking-tight">AI Studio</h1><p className="text-lg opacity-70 font-medium">Ultimate Creator Tools for Video & Audio</p></div>
+                                {!user ? (
+                                    <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md w-full text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><svg className="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" /></svg></div><h2 className="text-2xl font-bold mb-3">Welcome Back!</h2><p className="opacity-70 mb-8 text-sm">လုပ်ဆောင်ချက်များကို အသုံးပြုရန် သင့် Gmail အကောင့်ဖြင့် အရင်ဆုံး ဝင်ရောက်ပေးပါ။</p><div id="google-login-btn"></div></div>
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 w-full max-w-6xl animate-in slide-in-from-bottom-8">
+                                        <button onClick={() => setCurrentView('recap')} className={`group p-8 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all duration-300 transform hover:-translate-y-2 ${neoClass}`}><div className={`p-6 rounded-full mb-6 transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-900 text-indigo-400' : 'bg-[#d1d9e6] text-indigo-600'}`}><Film className="w-10 h-10" /></div><h2 className="text-xl font-black mb-2">One Click Recap</h2><p className="text-sm opacity-70">Voiceover & Subtitle</p></button>
+                                        <button onClick={() => setCurrentView('subtitle')} className={`group p-8 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all duration-300 transform hover:-translate-y-2 ${neoClass}`}><div className={`p-6 rounded-full mb-6 transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-900 text-emerald-400' : 'bg-[#d1d9e6] text-emerald-600'}`}><SubtitleIcon className="w-10 h-10" /></div><h2 className="text-xl font-black mb-2">AI Subtitle Tool</h2><p className="text-sm opacity-70">Auto Translate Subs Only</p></button>
+                                        <button onClick={() => setCurrentView('tts')} className={`group p-8 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all duration-300 transform hover:-translate-y-2 ${neoClass}`}><div className={`p-6 rounded-full mb-6 transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-900 text-rose-400' : 'bg-[#d1d9e6] text-rose-600'}`}><Mic className="w-10 h-10" /></div><h2 className="text-xl font-black mb-2">Text to Speech</h2><p className="text-sm opacity-70">Human-like Voices</p></button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {(currentView === 'recap' || currentView === 'subtitle') && (
+                            <div className={`min-h-screen font-sans p-4 md:p-8 relative pb-10 transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                                <div style={{ position: 'fixed', top: '-5000px', left: '-5000px', width: '1280px', height: '720px', pointerEvents: 'none', zIndex: -9999 }}><video ref={editVideoRef} src={videoUrl} playsInline muted preload="auto" style={{ width: '100%', height: '100%' }} /></div>
+                                <div className="max-w-6xl mx-auto space-y-8 relative">
+                                    {renderTopNavigation(currentView === 'recap' ? "One Click Recap" : "AI Subtitle Tool", currentView === 'recap' ? <Film className="w-8 h-8 text-indigo-500"/> : <SubtitleIcon className="w-8 h-8 text-emerald-500"/>)}
+                                    {renderSettingsPanel()}
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                                        <div className="lg:col-span-5 flex flex-col gap-6">
+                                            <div className={`p-6 md:p-8 rounded-3xl ${neoClass}`}>
+                                                <h2 className="text-xl font-bold mb-6 flex items-center gap-3"><Sliders className={`w-6 h-6 ${currentView === 'recap' ? 'text-indigo-500' : 'text-emerald-500'}`} /> လုပ်ဆောင်ချက် ဆက်တင်များ</h2>
+                                                
+                                                <div className="mb-6"><input type="file" accept="video/*" onChange={handleVideoUpload} ref={fileInputRef} className="hidden" /><button onClick={() => fileInputRef.current.click()} className={`w-full py-4 rounded-xl flex items-center justify-center gap-3 font-bold transition-all ${neoBtnClass}`}><Upload className="w-6 h-6 text-indigo-500" />{videoFile ? <span className="truncate max-w-[200px]">{videoFile.name}</span> : "ဗီဒီယို ဖိုင်ရွေးချယ်ပါ"}</button></div>
+                                                <div className="mb-6 relative z-50"><label className="block text-sm font-semibold mb-3 opacity-80">🌐 ဘာသာစကား (Translate to)</label><div className="relative"><button onClick={() => setIsLangOpen(!isLangOpen)} className={`w-full px-5 py-4 rounded-xl outline-none font-medium text-left flex items-center justify-between cursor-pointer ${neoPressedClass}`} type="button"><span className="flex items-center gap-3 text-base"><span className="text-2xl">{LANGUAGES.find(l => l.name === selectedLang)?.flag}</span> {selectedLang}</span><span className={`opacity-50 text-xs transition-transform duration-300 ${isLangOpen ? 'rotate-180' : ''}`}>▼</span></button>{isLangOpen && (<div className={`absolute top-full left-0 right-0 mt-3 p-2 rounded-2xl z-50 flex flex-col gap-1 max-h-64 overflow-y-auto shadow-2xl ${neoClass}`}>{LANGUAGES.map(lang => (<button key={lang.name} onClick={() => { setSelectedLang(lang.name); setIsLangOpen(false); }} className={`px-4 py-3 text-left rounded-xl font-medium flex items-center gap-4 transition-all ${selectedLang === lang.name ? 'bg-indigo-500 text-white shadow-md' : (isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-300')}`} type="button"><span className="text-2xl">{lang.flag}</span>{lang.name}</button>))}</div>)}</div></div>
+
+                                                {currentView === 'recap' && (
+                                                    <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎙️ Voiceover Engine</label><div className="flex flex-col md:flex-row gap-3 mb-4"><button type="button" onClick={() => setRecapEngine('gemini')} className={`flex-1 py-3 rounded-xl font-bold transition-all ${recapEngine === 'gemini' ? 'bg-indigo-500 text-white' : neoPressedClass}`}>Gemini TTS</button><button type="button" onClick={() => setRecapEngine('edge')} className={`flex-1 py-3 rounded-xl font-bold transition-all ${recapEngine === 'edge' ? 'bg-indigo-500 text-white' : neoPressedClass}`}>Edge TTS</button></div><div className="flex gap-3"><select value={recapVoice} onChange={(e) => setRecapVoice(e.target.value)} className={`flex-1 px-5 py-4 rounded-xl outline-none font-medium appearance-none ${neoPressedClass}`}>{(recapEngine === 'edge' ? EDGE_VOICES : GEMINI_VOICES).map(v => <option key={v.id} value={v.id}>{v.name || v.id} ({v.gender})</option>)}</select><button onClick={() => playVoicePreview(recapEngine, recapVoice)} disabled={previewingAudio} className={`px-5 rounded-xl flex items-center justify-center gap-2 ${neoBtnClass}`} title="Preview">{previewingAudio ? <Loader2 className="w-5 h-5 animate-spin text-indigo-500"/> : <Volume2 className="w-5 h-5 text-indigo-500" />}</button></div></div>
+                                                )}
+                                                
+                                                <div className="space-y-4 mb-8">
+                                                    <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎨 Video Filters</label><div className={`flex gap-3 overflow-x-auto p-4 rounded-2xl ${neoPressedClass}`}>{FILTERS.map(f => (<button key={f.id} onClick={() => setActiveFilter(f.css)} className={`filter-btn flex-shrink-0 flex flex-col items-center justify-center gap-2 rounded-xl border-2 ${activeFilter === f.css ? 'border-indigo-500 bg-indigo-500/10' : 'border-transparent'}`}><div className="w-12 h-12 rounded-full overflow-hidden border border-gray-400/30 bg-gray-500" style={{ filter: f.css, backgroundImage: 'url("https://images.unsplash.com/photo-1492691527719-9d1e07e534b4?auto=format&fit=crop&q=80&w=100")', backgroundSize: 'cover', backgroundPosition: 'center' }}></div><span className="text-[10px] font-bold text-center">{f.name}</span></button>))}</div></div>
+                                                    
+                                                    <div className={`flex items-center justify-between p-5 rounded-2xl ${neoPressedClass}`}><div><div className="text-sm font-bold flex items-center gap-2"><Film className="w-4 h-4 text-indigo-500"/> Video Ratio</div></div><select value={videoRatio} onChange={(e)=>setVideoRatio(e.target.value)} className={`p-2 rounded-lg text-xs font-bold outline-none ${neoClass}`}><option value="16:9">16:9 (YouTube)</option><option value="9:16">9:16 (Shorts/TikTok)</option><option value="1:1">1:1 (Facebook)</option></select></div>
+                                                    <div className={`flex items-center justify-between p-5 rounded-2xl ${neoPressedClass}`}><div><div className="text-sm font-bold flex items-center gap-2"><Film className="w-4 h-4 text-indigo-500"/> Freeze & Zoom</div><div className="text-[11px] opacity-70 mt-1">သတ်မှတ်စက္ကန့်တိုင်းတွင် Zoom ဆွဲမည်</div></div><div className="flex gap-2">{[0, 3, 4, 5].map(val => (<button key={val} onClick={() => setFreezeInterval(val)} className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${freezeInterval === val ? 'bg-indigo-500 text-white' : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`}>{val === 0 ? 'Off' : `${val}s`}</button>))}</div></div>
+                                                    <div className={`flex items-center justify-between p-5 rounded-2xl ${neoPressedClass}`}><div><div className="text-sm font-bold flex items-center gap-2"><EyeOff className="w-4 h-4 text-indigo-500"/> Auto Blur (မူလစာတန်းဝါးမည်)</div></div><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" className="sr-only peer" checked={autoBlurCaption} onChange={() => setAutoBlurCaption(!autoBlurCaption)} /><div className={`w-12 h-6 rounded-full peer peer-checked:bg-indigo-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full ${isDark ? 'bg-slate-700' : 'bg-slate-300'}`}></div></label></div>
+                                                    <div className={`flex flex-col gap-4 p-5 rounded-2xl ${neoPressedClass}`}>
+                                                        <div className="flex items-center justify-between"><div><div className="text-sm font-bold flex items-center gap-2"><Type className="w-4 h-4 text-indigo-500"/> Add Subtitle (စာတန်းထိုးထည့်မည်)</div></div><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" className="sr-only peer" checked={autoCaption} onChange={() => setAutoCaption(!autoCaption)} /><div className={`w-12 h-6 rounded-full peer peer-checked:bg-indigo-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-full ${isDark ? 'bg-slate-700' : 'bg-slate-300'}`}></div></label></div>
+                                                        {autoCaption && (
+                                                            <div className="mt-2 pt-4 border-t border-current border-opacity-10 space-y-4">
+                                                                {!autoBlurCaption && (<div><label className="text-xs font-bold opacity-70 mb-2 block">စာတန်းနေရာ (Position Y)</label><input type="range" min="10" max="95" value={subPosition} onChange={(e) => setSubPosition(e.target.value)} className="w-full accent-indigo-500"/></div>)}
+                                                                <div><label className="text-xs font-bold opacity-70 mb-2 block">စာလုံးအရောင် (Text Color)</label><div className="flex gap-2 flex-wrap">{CAPTION_COLORS.map(c => (<button key={c.name} onClick={() => setCaptionColor(c.hex)} className={`w-6 h-6 rounded-full border-2 transition-transform ${captionColor === c.hex ? 'scale-125 border-indigo-500' : 'border-transparent'}`} style={{ backgroundColor: c.hex }} title={c.name}/>))}</div></div>
+                                                                <div><label className="text-xs font-bold opacity-70 mb-2 flex justify-between items-center"><span>အနားကွပ်အရောင် (Stroke Color)</span></label><div className="flex gap-2 flex-wrap items-center"><button onClick={() => setStrokeColor('none')} className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-transform ${strokeColor === 'none' ? 'scale-125 border-indigo-500 bg-red-500/20 text-red-500' : 'border-transparent bg-slate-500/20 text-slate-500'}`} title="No Stroke"><Slash className="w-4 h-4" /></button><div className="w-px h-6 bg-current opacity-20 mx-1"></div>{CAPTION_COLORS.map(c => (<button key={`stroke-${c.name}`} onClick={() => setStrokeColor(c.hex)} className={`w-6 h-6 rounded-full border-2 transition-transform ${strokeColor === c.hex ? 'scale-125 border-indigo-500' : 'border-transparent'}`} style={{ backgroundColor: c.hex }} title={c.name} />))}</div></div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {errorMsg && (<div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl text-sm font-semibold flex items-start gap-3"><AlertCircle className="w-6 h-6 shrink-0"/> <span className="pt-0.5">{errorMsg}</span></div>)}
+                                                <button onClick={() => handleProcess(currentView)} disabled={isRecapProcessing || !videoFile} className={`w-full py-5 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 ${isRecapProcessing || !videoFile ? (isDark ? 'bg-slate-700 text-slate-500' : 'bg-slate-300 text-slate-500') : (currentView === 'recap' ? 'bg-indigo-500 hover:bg-indigo-600' : 'bg-emerald-500 hover:bg-emerald-600') + ' text-white shadow-lg'}`}>{isRecapProcessing ? "စီစဉ်ဆောင်ရွက်နေပါသည်..." : <><Sparkles className="w-6 h-6"/> {currentView === 'recap' ? "One Click-Recap ပြုလုပ်မည်" : "စာတန်းထိုးဗီဒီယို ဖန်တီးမည်"}</>}</button>
+                                            </div>
+                                        </div>
+                                        <div className="lg:col-span-7 flex flex-col gap-6">
+                                            {isRecapProcessing && !finalVideoUrl && (<div className={`p-8 rounded-3xl flex flex-col items-center justify-center animate-in fade-in ${neoClass}`}><div className="relative mb-8"><div className={`w-24 h-24 rounded-full border-4 flex items-center justify-center relative ${currentView === 'recap' ? 'border-indigo-500/20' : 'border-emerald-500/20'}`}><div className={`absolute inset-0 border-4 rounded-full border-t-transparent animate-spin ${currentView === 'recap' ? 'border-indigo-500' : 'border-emerald-500'}`}></div><span className={`text-xl font-black ${currentView === 'recap' ? 'text-indigo-500' : 'text-emerald-500'}`}>{renderProgress}%</span></div></div><h3 className="text-2xl font-bold mb-6 tracking-wide text-center">{processStage}<span className="animate-pulse">...</span></h3><div className={`w-full max-w-md h-4 rounded-full overflow-hidden p-1 ${neoPressedClass}`}><div className={`${currentView === 'recap' ? 'bg-indigo-500' : 'bg-emerald-500'} h-full rounded-full transition-all duration-300`} style={{ width: `${renderProgress}%` }}></div></div></div>)}
+                                            {systemLogs.length > 0 && !finalVideoUrl && (<div className={`p-4 rounded-2xl text-xs font-mono h-32 overflow-y-auto ${neoPressedClass} ${isDark ? 'text-yellow-400/80' : 'text-orange-600/80'}`}>{systemLogs.map((log, idx) => <div key={idx} className="mb-1 leading-relaxed border-b border-current border-opacity-10 pb-1">{log}</div>)}</div>)}
+                                            
+                                            <div className={`p-6 rounded-3xl flex-1 flex flex-col min-h-[400px] ${neoClass}`}>
+                                                <div className="p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className={`w-5 h-5 ${currentView === 'recap' ? 'text-indigo-500' : 'text-emerald-500'}`}/>} {finalVideoUrl ? "အပြီးသတ် MP4 ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည်" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
+                                                
+                                                <div className={`flex-1 rounded-2xl overflow-hidden flex items-center justify-center relative ${neoPressedClass} mx-auto`}
+                                                     style={{ 
+                                                         aspectRatio: videoRatio === '9:16' ? '9/16' : videoRatio === '1:1' ? '1/1' : '16/9',
+                                                         width: videoRatio === '9:16' ? 'auto' : '100%',
+                                                         height: videoRatio === '9:16' ? '100%' : 'auto',
+                                                         maxHeight: '600px', maxWidth: '100%'
+                                                     }}>
+                                                    {(!isRecapProcessing || (isRecapProcessing && renderProgress < 80)) && !finalVideoUrl && (videoUrl ? <video src={videoUrl} controls playsInline className={`w-full h-full object-cover transition-all duration-500 ${isRecapProcessing ? 'opacity-30 blur-sm scale-95' : 'opacity-100'}`} style={{ filter: activeFilter }} /> : <div className="opacity-30 flex flex-col items-center p-10"><Film className="w-16 h-16 mb-4"/><p className="font-semibold text-center">ဗီဒီယို တင်လိုက်ပါက<br/>ဤနေရာတွင် ပေါ်လာပါမည်</p></div>)}
+                                                    <canvas ref={canvasRef} className={`w-full h-full object-contain transition-all duration-500 ${isRecapProcessing && renderProgress >= 80 && !finalVideoUrl ? 'block blur-md opacity-70 scale-95' : 'hidden'}`} />
+                                                    {finalVideoUrl && <video src={finalVideoUrl} controls playsInline className="w-full h-full object-contain animate-in zoom-in-95 duration-500" />}
+                                                </div>
+                                                {finalVideoUrl && (<button onClick={downloadFinalFile} className="w-full mt-6 py-5 bg-green-500 hover:bg-green-600 text-white font-black text-lg rounded-2xl flex items-center justify-center gap-3 transition-colors shadow-lg shadow-green-500/40"><Download className="w-6 h-6" /> MP4 ဗီဒီယိုကို ဒေါင်းလုဒ်ဆွဲမည် (Credits နုတ်မည်)</button>)}
+                                            </div>
+
+                                            {finalVideoUrl && (
+                                                <div className={`p-6 rounded-3xl mt-6 ${neoClass}`}>
+                                                    <div className="flex justify-between items-center mb-6">
+                                                        <h3 className="text-xl font-bold flex items-center gap-2 text-indigo-500"><Type className="w-6 h-6"/> Social Media Kit</h3>
+                                                        {!socialContent && <button onClick={generateSocialContent} disabled={isGeneratingSocial} className={`px-4 py-2 bg-indigo-500 text-white rounded-lg font-bold text-sm ${isGeneratingSocial?'opacity-50':''}`}>{isGeneratingSocial ? 'Generating...' : 'Auto Generate Post'}</button>}
+                                                    </div>
+                                                    
+                                                    {socialContent && (
+                                                        <div>
+                                                            <div className="flex gap-4 border-b border-gray-600 mb-4">
+                                                                {['youtube', 'tiktok', 'facebook'].map(tab => (
+                                                                    <button key={tab} onClick={() => setActiveSocialTab(tab)} className={`pb-2 capitalize font-bold transition ${activeSocialTab === tab ? 'text-indigo-500 border-b-2 border-indigo-500' : 'opacity-50'}`}>{tab}</button>
+                                                                ))}
+                                                            </div>
+                                                            <div className={`p-4 rounded-xl text-sm leading-relaxed ${neoPressedClass}`}>
+                                                                <div className="flex justify-between items-start mb-2"><h4 className="font-bold text-lg">{socialContent[activeSocialTab]?.title}</h4><button onClick={() => {navigator.clipboard.writeText(`${socialContent[activeSocialTab]?.title}\n\n${socialContent[activeSocialTab]?.desc}\n\n${socialContent[activeSocialTab]?.tags}`); alert('Copied!');}} className={`p-2 rounded-lg ${neoBtnClass}`}><Copy className="w-4 h-4"/></button></div>
+                                                                <p className="mb-4 opacity-80">{socialContent[activeSocialTab]?.desc}</p>
+                                                                <p className="text-indigo-400 font-bold">{socialContent[activeSocialTab]?.tags}</p>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {currentView === 'tts' && (
+                            <div className={`min-h-screen font-sans p-4 md:p-8 relative pb-10 transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                                <div className="max-w-6xl mx-auto space-y-8 relative">
+                                    {renderTopNavigation("Text to Speech", <Mic className="w-8 h-8 text-rose-500"/>)}
+                                    {renderSettingsPanel()}
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                                        <div className="lg:col-span-5 flex flex-col gap-6">
+                                            <div className={`p-6 md:p-8 rounded-3xl ${neoClass}`}>
+                                                <h2 className="text-xl font-bold mb-6 flex items-center gap-3"><Sliders className="w-6 h-6 text-rose-500" /> အသံ ချိန်ညှိမှုများ</h2>
+                                                <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎙️ Voiceover Engine & Model</label><div className="flex flex-col md:flex-row gap-3 mb-4"><button type="button" onClick={() => setTtsEngine('gemini')} className={`flex-1 py-3 rounded-xl font-bold transition-all ${ttsEngine === 'gemini' ? 'bg-rose-500 text-white' : neoPressedClass}`}>Gemini TTS</button><button type="button" onClick={() => setTtsEngine('edge')} className={`flex-1 py-3 rounded-xl font-bold transition-all ${ttsEngine === 'edge' ? 'bg-rose-500 text-white' : neoPressedClass}`}>Edge TTS</button></div><div className="flex gap-3"><select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)} className={`flex-1 px-5 py-4 rounded-xl outline-none font-medium appearance-none cursor-pointer ${neoPressedClass}`}>{(ttsEngine === 'edge' ? EDGE_VOICES : GEMINI_VOICES).map(v => <option key={v.id} value={v.id}>{v.name || v.id} - ({v.gender})</option>)}</select><button onClick={() => playVoicePreview(ttsEngine, ttsVoice)} disabled={previewingAudio} className={`px-5 rounded-xl flex items-center justify-center gap-2 ${neoBtnClass}`} title="Preview">{previewingAudio ? <Loader2 className="w-5 h-5 animate-spin text-rose-500"/> : <Volume2 className="w-5 h-5 text-rose-500" />}</button></div></div>
+                                                <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎭 လေသံ အမျိုးအစား (10 Styles)</label><div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2 pb-2">{VOICE_STYLES.map(style => (<button key={style.id} onClick={() => setTtsStyleObj(style)} className={`p-3 rounded-xl text-xs font-semibold text-left flex items-center gap-2 transition-all ${ttsStyleObj.id === style.id ? 'bg-rose-500 text-white shadow-md' : neoPressedClass}`}><span className="text-xl">{style.emoji}</span> <span className="truncate">{style.name.split(' ')[0]}</span></button>))}</div></div>
+                                                {ttsError && (<div className="mb-6 bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl text-sm font-semibold flex items-start gap-3"><AlertCircle className="w-6 h-6 shrink-0"/> <span className="pt-0.5">{ttsError}</span></div>)}
+                                                <button onClick={handleGenerateTTS} disabled={isTtsGenerating || !ttsTextInput.trim()} className={`w-full py-5 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 ${isTtsGenerating || !ttsTextInput.trim() ? (isDark ? 'bg-slate-700 text-slate-500' : 'bg-slate-300 text-slate-500') : 'bg-rose-500 hover:bg-rose-600 text-white shadow-lg shadow-rose-500/40'}`}>{isTtsGenerating ? "ဖန်တီးနေပါသည်..." : <><Mic className="w-6 h-6"/> Generate Voice</>}</button>
+                                            </div>
+                                        </div>
+                                        <div className="lg:col-span-7 flex flex-col gap-6">
+                                            <div className={`p-6 rounded-3xl flex-1 flex flex-col min-h-[500px] ${neoClass}`}>
+                                                <div className="flex justify-between items-center mb-4"><div className="font-bold opacity-70 flex items-center gap-2"><Type className="w-5 h-5 text-rose-500"/> စာရိုက်ထည့်ရန်</div><div className={`text-xs font-bold px-3 py-1 rounded-full ${ttsTextInput.length >= 10000 ? 'text-red-500' : 'opacity-60'}`}>{ttsTextInput.length} / 10000</div></div>
+                                                <textarea value={ttsTextInput} onChange={(e) => setTtsTextInput(e.target.value)} maxLength={10000} placeholder="လူစကားပြောအသံအဖြစ် ပြောင်းလဲလိုသော စာများကို ဤနေရာတွင် ရိုက်ထည့်ပါ..." className={`flex-1 w-full p-6 rounded-2xl resize-none outline-none text-base leading-relaxed ${neoPressedClass}`}></textarea>
+                                                <div className="mt-6">
+                                                    {isTtsGenerating && (<div className={`p-6 rounded-2xl mb-6 animate-in fade-in ${neoPressedClass}`}><div className="flex justify-between text-sm font-bold mb-3"><span className="text-rose-500">{ttsProgressTxt}</span><span>{ttsProgressPct}%</span></div><div className="w-full h-3 rounded-full overflow-hidden bg-opacity-20 bg-current"><div className="bg-rose-500 h-full rounded-full transition-all duration-300" style={{ width: `${ttsProgressPct}%` }}></div></div></div>)}
+                                                    {ttsAudioUrl && !isTtsGenerating && (<div className={`p-6 rounded-2xl animate-in fade-in zoom-in flex flex-col gap-4 ${neoPressedClass}`}><div className="flex items-center gap-3 font-bold text-green-500"><CheckCircle className="w-6 h-6"/> အောင်မြင်စွာ ဖန်တီးပြီးပါပြီ!</div><audio src={ttsAudioUrl} controls className="w-full h-14 rounded-xl outline-none" /><button onClick={downloadTtsAudio} className="w-full py-4 bg-green-500 hover:bg-green-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg mt-2"><Download className="w-5 h-5" /> အသံဖိုင်ကို ဒေါင်းလုဒ်ဆွဲမည် (MP3/WAV)</button></div>)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
