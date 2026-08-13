@@ -212,7 +212,7 @@
             const [adminStats, setAdminStats] = useState({ total_users: 0, monthly_profit: 0 });
             const [transactions, setTransactions] = useState([]);
             const [manualCredit, setManualCredit] = useState({ email: '', amount: 0 });
-            const [globalSettings, setGlobalSettings] = useState({ announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။", deduction_rate: '200', free_daily_mins: '2', trial_mins: '5' });
+            const [globalSettings, setGlobalSettings] = useState({ announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။", deduction_rate: '200', free_daily_mins: '2', trial_mins: '5', marquee_color: '#ef4444' });
             
             // Buy States
             const [buyModalOpen, setBuyModalOpen] = useState(false);
@@ -275,6 +275,8 @@
             const canvasRef = useRef(null);
             const animationRef = useRef(null);
             const isRecordingRef = useRef(false);
+            const ffmpegRef = useRef(null);
+            const ffmpegLoadingRef = useRef(null);
 
             useEffect(() => { videoRatioRef.current = videoRatio; }, [videoRatio]);
             useEffect(() => { autoHookRef.current = autoHook; }, [autoHook]);
@@ -329,6 +331,27 @@
 
             const addSysLog = (msg) => setSystemLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${msg}`]);
 
+            const loadFastFFmpeg = async () => {
+                if (ffmpegRef.current?.isLoaded?.()) return ffmpegRef.current;
+                if (ffmpegLoadingRef.current) return ffmpegLoadingRef.current;
+                if (typeof FFmpeg === 'undefined') throw new Error('FFmpeg.wasm is not loaded.');
+
+                const { createFFmpeg } = FFmpeg;
+                const ffmpeg = createFFmpeg({
+                    log: false,
+                    corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+                });
+                ffmpegLoadingRef.current = ffmpeg.load().then(() => {
+                    ffmpegRef.current = ffmpeg;
+                    ffmpegLoadingRef.current = null;
+                    return ffmpeg;
+                }).catch((error) => {
+                    ffmpegLoadingRef.current = null;
+                    throw error;
+                });
+                return ffmpegLoadingRef.current;
+            };
+
             const executeWithApiLogic = async (operationName, requestFn) => {
                 const validKeys = geminiKeys.filter(k => k.trim() !== ''); 
                 if (validKeys.length === 0) { alert(`⚠️ Gemini API Key မရှိပါ။ Settings (⚙️) ထဲတွင် ထည့်ပေးပါ။`); throw new Error("Missing API Key"); }
@@ -355,7 +378,7 @@
                 alert(`${manualCredit.email} သို့ Credit ဖြည့်ပေးပြီးပါပြီ`); setManualCredit({email: '', amount: 0});
             };
 
-            const handleVideoUpload = (e) => { const file = e.target.files[0]; if (!file) return; setVideoFile(file); setVideoUrl(URL.createObjectURL(file)); setFinalVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProcessStage(''); setErrorMsg(''); aiBlurBoxRef.current = null; hookDataRef.current = null; setSocialContent(null); };
+            const handleVideoUpload = (e) => { const file = e.target.files[0]; if (!file) return; setVideoFile(file); setVideoUrl(URL.createObjectURL(file)); setFinalVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProcessStage(''); setErrorMsg(''); aiBlurBoxRef.current = null; hookDataRef.current = null; setSocialContent(null); loadFastFFmpeg().catch(() => {}); };
 
             const performAiBlurDetection = async () => {
                 if (!autoBlurCaption || !videoFile) return;
@@ -421,7 +444,7 @@
                         const transRes = await fetch(`/api/gemini/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transPayload) });
                         const transData = await transRes.json(); 
                         if (transData.error) throw new Error(transData.error.message);
-                        if(!transData.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
+                        if(!transData.candidates || !transData.candidates[0].content.parts[0].text) throw new Error("Invalid format");
                         let textResp = transData.candidates[0].content.parts[0].text;
                         return JSON.parse(textResp.trim());
                     });
@@ -516,20 +539,15 @@
                     try {
                         const rawBlob = new Blob(recordedChunks, { type: mimeType }); 
                         
-                        if (typeof FFmpeg === 'undefined') throw new Error("FFmpeg.wasm is not loaded.");
-                        const { createFFmpeg, fetchFile } = FFmpeg;
-                        const ffmpeg = createFFmpeg({ 
-                            log: true, 
-                            corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
-                        });
-                        
-                        addSysLog("FFmpeg.wasm ကို Browser တွင် စတင်နေပါပြီ...");
-                        await ffmpeg.load();
+                        const ffmpeg = await loadFastFFmpeg();
+                        const { fetchFile } = FFmpeg;
+                        try { ffmpeg.FS('unlink', 'input.webm'); } catch (e) {}
+                        try { ffmpeg.FS('unlink', 'output.mp4'); } catch (e) {}
                         ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
                         
-                        // 🌟 Fastest MP4 conversion using -c copy
-                        addSysLog("MP4 Format သို့ အမြန်ဆုံးပြောင်းလဲနေပါသည် (-c copy)...");
-                        await ffmpeg.run('-i', 'input.webm', '-c', 'copy', 'output.mp4');
+                        // Keep the recorded VP8 video stream and encode only audio for a fast, playable MP4.
+                        addSysLog("MP4 Format သို့ အမြန်ဆုံးပြောင်းလဲနေပါသည် (video copy + AAC audio)...");
+                        await ffmpeg.run('-i', 'input.webm', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', 'output.mp4');
                         
                         const data = ffmpeg.FS('readFile', 'output.mp4');
                         const finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
@@ -809,15 +827,15 @@
                     <div className="flex items-center w-full md:w-auto mb-4 md:mb-0 gap-4"><button onClick={() => setCurrentView('home')} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="Back to Home"><ChevronLeft className="w-6 h-6 text-indigo-500" /></button><h1 className={`text-xl md:text-3xl font-black flex items-center gap-3 tracking-tight ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{icon} {title}</h1></div>
                     <div className="flex items-center gap-4">
                         {user && (
-                            <div className="flex items-center gap-3 mr-2">
-                                <button onClick={() => setShowProfile(true)} className={`flex items-center gap-3 p-1.5 pr-4 rounded-full hover:scale-105 transition-transform ${neoBtnClass}`} title="View Profile">
-                                    <img src={user.picture || "https://ui-avatars.com/api/?name="+user.name} alt="Profile" className="w-9 h-9 rounded-full border-2 border-indigo-500/50" />
-                                    <div className="text-left hidden md:block">
-                                        <div className="text-sm font-bold opacity-90 leading-tight">{user.name}</div>
-                                        <div className="text-xs font-bold text-yellow-500 leading-tight">{userData?.credits || 0} Credits</div>
+                            <div className="flex items-center gap-2 mr-2">
+                                <button onClick={() => setShowProfile(true)} className={`flex items-center gap-3 px-3 py-2 rounded-2xl hover:scale-[1.02] transition-transform ${neoBtnClass}`} title="View Profile">
+                                    <img src={user.picture || "https://ui-avatars.com/api/?name="+user.name} alt="Profile" className="w-9 h-9 rounded-xl border-2 border-indigo-500/50" />
+                                    <div className="text-left hidden sm:block">
+                                        <div className="text-[11px] opacity-60 font-bold uppercase tracking-wide">Available Credits</div>
+                                        <div className="text-base font-black text-yellow-500 leading-tight">{Number(userData?.credits || 0).toLocaleString()} <span className="text-[10px]">CR</span></div>
                                     </div>
                                 </button>
-                                <button onClick={() => setBuyModalOpen(true)} className="p-3 bg-yellow-500 text-black hover:bg-yellow-600 rounded-2xl flex items-center justify-center shadow-lg font-bold" title="Topup Credits"><CreditCard className="w-5 h-5"/></button>
+                                <button onClick={() => { setSelectedPkg(null); setPaymentProof(null); setBuyModalOpen(true); }} className="px-3 sm:px-4 py-3 bg-yellow-500 text-black hover:bg-yellow-600 rounded-2xl flex items-center justify-center gap-2 shadow-lg font-black" title="Topup Credits"><CreditCard className="w-5 h-5"/><span className="hidden sm:inline">Top Up</span></button>
                             </div>
                         )}
                         {userData?.role === 'admin' && (
@@ -866,6 +884,10 @@
                                     <h2 className="text-xl font-bold text-rose-500 mb-6">⚙️ System Settings</h2>
                                     <div className="space-y-4 mb-4">
                                         <div><label className="text-sm font-bold opacity-70">Marquee Announcement</label><textarea value={globalSettings.announcement} onChange={(e) => setGlobalSettings({...globalSettings, announcement: e.target.value})} rows="3" className={`w-full p-4 rounded-xl outline-none resize-none ${neoPressedClass}`}></textarea></div>
+                                        <div className={`flex items-center justify-between gap-4 p-4 rounded-2xl ${neoPressedClass}`}>
+                                            <div><label className="text-sm font-bold block">Marquee Background</label><span className="text-xs opacity-60">ထိပ်က စာတန်းနောက်ခံအရောင်</span></div>
+                                            <div className="flex items-center gap-3"><input type="color" value={globalSettings.marquee_color || '#ef4444'} onChange={(e) => setGlobalSettings({...globalSettings, marquee_color: e.target.value})} className="w-12 h-10 p-1 rounded-lg bg-transparent cursor-pointer" title="Choose marquee color"/><span className="font-mono text-xs uppercase opacity-70">{globalSettings.marquee_color || '#ef4444'}</span></div>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div><label className="text-sm font-bold opacity-70">Deduct Rate (Credits/Min)</label><input type="number" value={globalSettings.deduction_rate} onChange={e=>setGlobalSettings({...globalSettings, deduction_rate: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
                                             <div><label className="text-sm font-bold opacity-70">Free Daily Limit (Mins)</label><input type="number" value={globalSettings.free_daily_mins} onChange={e=>setGlobalSettings({...globalSettings, free_daily_mins: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
@@ -881,7 +903,7 @@
 
             return (
                 <div>
-                    {globalSettings.announcement && (<div className="marquee-container"><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
+                    {globalSettings.announcement && (<div className="marquee-container" style={{ backgroundColor: globalSettings.marquee_color || '#ef4444' }}><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
                     
                     {/* --- Profile Modal --- */}
                     {showProfile && user && (
@@ -911,22 +933,28 @@
 
                     {/* --- Buy Modal --- */}
                     {buyModalOpen && (
-                        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-                            <div className={`w-full max-w-lg p-8 rounded-3xl ${neoClass}`}>
-                                <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><CreditCard className="w-6 h-6 text-indigo-500"/> Buy Credits</h2>
+                        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                            <div className={`w-full max-w-xl p-5 md:p-7 rounded-[2rem] shadow-2xl ${neoClass}`}>
+                                <div className="flex items-start justify-between gap-4 mb-6">
+                                    <div><div className="inline-flex p-3 rounded-2xl bg-yellow-500/15 text-yellow-500 mb-3"><CreditCard className="w-6 h-6"/></div><h2 className="text-2xl font-black">Credit Top Up</h2><p className="text-sm opacity-60 mt-1">Package ရွေးပြီး ငွေလွှဲပြေစာတင်ပါ</p></div>
+                                    <button onClick={() => setBuyModalOpen(false)} className={`p-2 rounded-xl ${neoBtnClass}`}><XIcon className="w-5 h-5"/></button>
+                                </div>
+                                <div className={`p-4 rounded-2xl mb-5 flex items-center justify-between ${neoPressedClass}`}><span className="text-sm opacity-70">လက်ရှိလက်ကျန်</span><span className="text-xl font-black text-yellow-500">{Number(userData?.credits || 0).toLocaleString()} Credits</span></div>
+                                <label className="block text-sm font-bold opacity-70 mb-3">Package ရွေးပါ</label>
                                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
                                     {PACKAGES.map(amt => {
                                         if (amt === 3000 && userData?.has_bought_3000) return null;
-                                        return (<button key={amt} onClick={() => setSelectedPkg(amt)} className={`p-4 rounded-xl font-bold text-center border-2 ${selectedPkg === amt ? 'border-indigo-500 bg-indigo-500/10' : 'border-transparent ' + neoPressedClass}`}>{amt} <br/><span className="text-xs opacity-70">MMK</span></button>)
+                                        return (<button key={amt} onClick={() => { setSelectedPkg(amt); setPaymentProof(null); }} className={`p-4 rounded-2xl font-black text-center border-2 transition-all ${selectedPkg === amt ? 'border-indigo-500 bg-indigo-500/15 scale-[1.02]' : 'border-transparent ' + neoPressedClass}`}><span className="text-lg">{amt.toLocaleString()}</span><br/><span className="text-xs opacity-60">MMK Credits</span></button>)
                                     })}
                                 </div>
                                 {selectedPkg && (
-                                    <div className={`p-6 rounded-2xl mb-6 text-sm ${neoPressedClass}`}>
-                                        <p className="opacity-70 mb-2">KBZPay သို့ ငွေလွှဲပြီး Screenshot တင်ပေးပါ:</p><p className="font-mono text-xl font-bold text-yellow-500">09421619437</p><p className="font-bold mb-4">Aung Win Thu</p>
-                                        <input type="file" accept="image/*" onChange={(e)=>setPaymentProof(e.target.files[0])} className="w-full" />
+                                    <div className={`p-5 rounded-2xl mb-6 text-sm border border-yellow-500/20 ${neoPressedClass}`}>
+                                        <div className="flex items-center justify-between mb-4"><div><p className="text-xs opacity-60 mb-1">ငွေလွှဲရမည့်ပမာဏ</p><p className="text-xl font-black text-yellow-500">{selectedPkg.toLocaleString()} MMK</p></div><div className="text-right"><p className="text-xs opacity-60 mb-1">KBZPay</p><p className="font-mono font-black">09421619437</p></div></div>
+                                        <p className="font-bold mb-4">Aung Win Thu</p>
+                                        <label className={`flex items-center justify-center gap-2 w-full p-4 rounded-xl border border-dashed border-current/20 cursor-pointer hover:border-indigo-500 transition-colors ${neoClass}`}><Upload className="w-5 h-5 text-indigo-500"/><span className="truncate">{paymentProof ? paymentProof.name : 'ငွေလွှဲပြေစာ Screenshot ရွေးပါ'}</span><input type="file" accept="image/*" onChange={(e)=>setPaymentProof(e.target.files[0])} className="hidden" /></label>
                                     </div>
                                 )}
-                                <div className="flex gap-4"><button onClick={() => setBuyModalOpen(false)} className={`flex-1 py-3 rounded-xl font-bold ${neoBtnClass}`}>Cancel</button><button onClick={submitPayment} disabled={!paymentProof || isUploadingPayment} className={`flex-1 py-3 rounded-xl font-bold text-white transition ${paymentProof ? 'bg-indigo-500 hover:bg-indigo-600 shadow-lg' : 'bg-gray-600'}`}>{isUploadingPayment ? 'Sending...' : 'Confirm Payment'}</button></div>
+                                <div className="flex gap-3"><button onClick={() => setBuyModalOpen(false)} className={`flex-1 py-3.5 rounded-xl font-bold ${neoBtnClass}`}>Cancel</button><button onClick={submitPayment} disabled={!paymentProof || !selectedPkg || isUploadingPayment} className={`flex-1 py-3.5 rounded-xl font-black text-white transition ${paymentProof && selectedPkg ? 'bg-indigo-500 hover:bg-indigo-600 shadow-lg shadow-indigo-500/25' : 'bg-gray-600/60 cursor-not-allowed'}`}>{isUploadingPayment ? 'Sending...' : 'Submit Payment'}</button></div>
                             </div>
                         </div>
                     )}

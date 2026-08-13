@@ -8,9 +8,6 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
-# FFmpeg.wasm အတွက် လိုအပ်သော Starlette Middleware ကို Import လုပ်ခြင်း
-from starlette.middleware.base import BaseHTTPMiddleware
-
 # --- ENV & MONGODB SETUP ---
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
@@ -23,17 +20,6 @@ settings_col = db['settings']
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-
-# --- FFmpeg.wasm Security Headers Middleware ထည့်သွင်းခြင်း (Design မပျက်စေရန် credentialless သုံးထားသည်) ---
-class CrossOriginIsolationMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
-        return response
-
-app.add_middleware(CrossOriginIsolationMiddleware)
-# ---------------------------------------------------------------------------------------------------------
 
 @app.get("/")
 async def serve_index():
@@ -57,8 +43,15 @@ def init_db():
             {"key": "deduction_rate", "value": "200"},
             {"key": "free_daily_mins", "value": "2"},
             {"key": "trial_mins", "value": "5"},
-            {"key": "announcement", "value": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ ၅ မိနစ်စာ အခမဲ့ စမ်းသပ်နိုင်ပါသည်။"}
+            {"key": "announcement", "value": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ ၅ မိနစ်စာ အခမဲ့ စမ်းသပ်နိုင်ပါသည်။"},
+            {"key": "marquee_color", "value": "#ef4444"}
         ])
+    else:
+        settings_col.update_one(
+            {"key": "marquee_color"},
+            {"$setOnInsert": {"value": "#ef4444"}},
+            upsert=True
+        )
     
     if not users_col.find_one({"email": "778leomord@gmail.com"}):
         users_col.insert_one({
@@ -229,6 +222,7 @@ class SettingsData(BaseModel):
     free_daily_mins: str
     trial_mins: str
     announcement: str
+    marquee_color: str = "#ef4444"
 
 @app.post("/api/admin/settings")
 async def update_settings(data: SettingsData):
@@ -236,7 +230,7 @@ async def update_settings(data: SettingsData):
         settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
     return {"status": "success"}
 
-# --- SYSTEM APIs ---
+# --- SYSTEM APIs (No Changes Needed Here) ---
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     try:
