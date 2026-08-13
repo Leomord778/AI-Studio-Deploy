@@ -14,7 +14,6 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <!-- FFmpeg.wasm for Browser-side Fast MP4 Conversion -->
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -66,6 +65,7 @@
         const Slash = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></IconBase>;
         const CreditCard = ({ className }) => <IconBase className={className}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></IconBase>;
         const Copy = ({ className }) => <IconBase className={className}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></IconBase>;
+        const XIcon = ({ className }) => <IconBase className={className}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconBase>;
 
         const LANGUAGES = [
             { name: "မြန်မာ (Myanmar)", flag: "🇲🇲" }, { name: "English", flag: "🇬🇧" }, { name: "中文 (Chinese)", flag: "🇨🇳" },
@@ -205,6 +205,7 @@
             const [geminiKeys, setGeminiKeys] = useState(() => getSafeStorage('geminiKeys', ['']));
             const [activeKeyIndex, setActiveKeyIndex] = useState(0);
             const [showSettings, setShowSettings] = useState(false);
+            const [showProfile, setShowProfile] = useState(false); // 🌟 New Profile State
             const [systemLogs, setSystemLogs] = useState([]); 
             
             // Admin States
@@ -420,7 +421,7 @@
                         const transRes = await fetch(`/api/gemini/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transPayload) });
                         const transData = await transRes.json(); 
                         if (transData.error) throw new Error(transData.error.message);
-                        if(!transData.candidates || !transData.candidates[0].content.parts[0].text) throw new Error("Invalid format");
+                        if(!transData.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
                         let textResp = transData.candidates[0].content.parts[0].text;
                         return JSON.parse(textResp.trim());
                     });
@@ -808,11 +809,14 @@
                     <div className="flex items-center w-full md:w-auto mb-4 md:mb-0 gap-4"><button onClick={() => setCurrentView('home')} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="Back to Home"><ChevronLeft className="w-6 h-6 text-indigo-500" /></button><h1 className={`text-xl md:text-3xl font-black flex items-center gap-3 tracking-tight ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{icon} {title}</h1></div>
                     <div className="flex items-center gap-4">
                         {user && (
-                            <div className="flex items-center gap-4 mr-2">
-                                <div className="text-right hidden md:block">
-                                    <div className="text-sm font-bold opacity-90">{user.name}</div>
-                                    <div className="text-xs font-bold text-yellow-500">{userData?.credits || 0} Credits</div>
-                                </div>
+                            <div className="flex items-center gap-3 mr-2">
+                                <button onClick={() => setShowProfile(true)} className={`flex items-center gap-3 p-1.5 pr-4 rounded-full hover:scale-105 transition-transform ${neoBtnClass}`} title="View Profile">
+                                    <img src={user.picture || "https://ui-avatars.com/api/?name="+user.name} alt="Profile" className="w-9 h-9 rounded-full border-2 border-indigo-500/50" />
+                                    <div className="text-left hidden md:block">
+                                        <div className="text-sm font-bold opacity-90 leading-tight">{user.name}</div>
+                                        <div className="text-xs font-bold text-yellow-500 leading-tight">{userData?.credits || 0} Credits</div>
+                                    </div>
+                                </button>
                                 <button onClick={() => setBuyModalOpen(true)} className="p-3 bg-yellow-500 text-black hover:bg-yellow-600 rounded-2xl flex items-center justify-center shadow-lg font-bold" title="Topup Credits"><CreditCard className="w-5 h-5"/></button>
                             </div>
                         )}
@@ -878,6 +882,34 @@
             return (
                 <div>
                     {globalSettings.announcement && (<div className="marquee-container"><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
+                    
+                    {/* --- Profile Modal --- */}
+                    {showProfile && user && (
+                        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                            <div className={`w-full max-w-sm p-8 rounded-3xl text-center relative shadow-2xl animate-in zoom-in-95 ${neoClass}`}>
+                                <button onClick={() => setShowProfile(false)} className="absolute top-4 right-4 p-2 opacity-50 hover:opacity-100 hover:text-red-500 transition-colors"><XIcon className="w-6 h-6"/></button>
+                                <h2 className="text-2xl font-bold mb-6 flex items-center justify-center gap-2">👤 My Profile</h2>
+                                
+                                <img src={user.picture || "https://ui-avatars.com/api/?name="+user.name} alt="Avatar" className="w-24 h-24 rounded-full mx-auto mb-4 border-4 border-indigo-500 shadow-lg object-cover" />
+                                <h3 className="text-xl font-black">{user.name}</h3>
+                                <p className="opacity-70 text-sm mb-6">{user.email}</p>
+                                
+                                <div className={`p-5 rounded-2xl mb-6 flex justify-between items-center ${neoPressedClass}`}>
+                                    <div className="text-left">
+                                        <p className="text-xs font-bold opacity-70 mb-1">လက်ကျန် Credits</p>
+                                        <p className="text-3xl font-black text-yellow-500">{userData?.credits || 0}</p>
+                                    </div>
+                                    <button onClick={() => { setShowProfile(false); setBuyModalOpen(true); }} className="px-5 py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-black rounded-xl shadow-lg transition-transform hover:scale-105">Topup</button>
+                                </div>
+                                
+                                <button onClick={() => { setShowProfile(false); handleLogout(); }} className="w-full py-4 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shadow-lg shadow-red-500/30">
+                                    <LogOut className="w-5 h-5"/> ထွက်မည် (Logout)
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- Buy Modal --- */}
                     {buyModalOpen && (
                         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
                             <div className={`w-full max-w-lg p-8 rounded-3xl ${neoClass}`}>
@@ -903,7 +935,12 @@
                         {currentView === 'home' && (
                             <div className={`min-h-screen font-sans flex flex-col items-center justify-center p-6 relative transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                                 <div className="absolute top-6 right-6 flex items-center gap-4">
-                                    {user && (<button onClick={handleLogout} className={`px-4 py-3 rounded-2xl flex items-center gap-2 font-bold text-red-500 ${neoBtnClass}`}><LogOut className="w-5 h-5"/> Logout</button>)}
+                                    {user && (
+                                        <button onClick={() => setShowProfile(true)} className={`px-4 py-2 rounded-full flex items-center gap-2 font-bold transition-transform hover:scale-105 ${neoBtnClass}`} title="View Profile">
+                                            <img src={user.picture || "https://ui-avatars.com/api/?name="+user.name} className="w-8 h-8 rounded-full border border-indigo-500" />
+                                            <span>Profile</span>
+                                        </button>
+                                    )}
                                     <button onClick={() => setIsDark(!isDark)} className={`p-4 rounded-full flex items-center justify-center ${neoBtnClass} ${isDark ? 'text-yellow-400' : 'text-indigo-600'}`}>{isDark ? <Sun className="w-6 h-6" /> : <Moon className="w-6 h-6" />}</button>
                                 </div>
                                 <div className="text-center mb-10 animate-in fade-in zoom-in duration-500"><div className="inline-flex items-center justify-center p-5 rounded-3xl mb-6 neumorphic-card bg-indigo-500 text-white"><Sparkles className="w-12 h-12" /></div><h1 className="text-5xl md:text-6xl font-black mb-4 tracking-tight">AI Studio</h1><p className="text-lg opacity-70 font-medium">Ultimate Creator Tools for Video & Audio</p></div>
