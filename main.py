@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 
+# FFmpeg.wasm အတွက် လိုအပ်သော Starlette Middleware ကို Import လုပ်ခြင်း
+from starlette.middleware.base import BaseHTTPMiddleware
+
 # --- ENV & MONGODB SETUP ---
 load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
@@ -20,6 +23,17 @@ settings_col = db['settings']
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# --- FFmpeg.wasm Security Headers Middleware ထည့်သွင်းခြင်း ---
+class CrossOriginIsolationMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        return response
+
+app.add_middleware(CrossOriginIsolationMiddleware)
+# -------------------------------------------------------------
 
 @app.get("/")
 async def serve_index():
@@ -222,7 +236,7 @@ async def update_settings(data: SettingsData):
         settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
     return {"status": "success"}
 
-# --- SYSTEM APIs (No Changes Needed Here) ---
+# --- SYSTEM APIs ---
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     try:

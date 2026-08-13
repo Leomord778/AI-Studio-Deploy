@@ -14,6 +14,8 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- FFmpeg.wasm for Browser-side Fast MP4 Conversion -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     
@@ -171,7 +173,6 @@
         const exportWAV = (channelData, sampleRate) => { const buffer = new ArrayBuffer(44 + channelData.length * 2); const view = new DataView(buffer); writeString(view, 0, 'RIFF'); view.setUint32(4, 36 + channelData.length * 2, true); writeString(view, 8, 'WAVE'); writeString(view, 12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); writeString(view, 36, 'data'); view.setUint32(40, channelData.length * 2, true); let offset = 44; for (let i = 0; i < channelData.length; i++, offset += 2) { const s = Math.max(-1, Math.min(1, channelData[i])); view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true); } return new Blob([view], { type: 'audio/wav' }); };
         const blobToBase64 = (blob) => new Promise((res, rej) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result.split(',')[1]); reader.onerror = rej; reader.readAsDataURL(blob); });
         
-        // 🌟 Modified to support fast AI Blur fetching
         const extractFrameAtTime = (videoFile, timeInSeconds) => new Promise((res, rej) => {
             const video = document.createElement('video'); video.src = URL.createObjectURL(videoFile); video.crossOrigin = "anonymous"; video.muted = true;
             video.onloadeddata = () => { video.currentTime = Math.min(timeInSeconds, video.duration / 2); };
@@ -363,7 +364,6 @@
                     const base64Image = await extractFrameAtTime(videoFile, midTime);
                     const blurBox = await executeWithApiLogic("AI Blur", async (apiKey) => {
                         const payload = { contents: [{ parts: [{ text: "Analyze this image from a video. Find the bounding box of the hardcoded subtitles. Return ONLY a JSON object with 'yMin' and 'yMax'. E.g. {\"yMin\": 0.80, \"yMax\": 0.95}" }, { inlineData: { mimeType: "image/jpeg", data: base64Image } } ] }], generationConfig: { temperature: 0.1, responseMimeType: "application/json" } };
-                        // 🌟 GEMINI-3-FLASH-PREVIEW for Blur detection
                         const res = await fetch(`/api/gemini/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                         const data = await res.json(); if (data.error) throw new Error(data.error.message); 
                         if(!data.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
@@ -388,7 +388,6 @@
                         addSysLog(`Groq အသုံးပြု၍မရသဖြင့် Gemini ဖြင့် ပြောင်းလဲဖတ်ယူနေပါသည်...`); const base64Audio = await blobToBase64(wavBlob);
                         const chunkSegments = await executeWithApiLogic("Transcription", async (apiKey) => {
                             const payload = { contents: [{ parts: [{ text: "Transcribe audio to JSON array: [{'start': 0.0, 'end': 2.0, 'text': '...'}]" }, { inlineData: { mimeType: "audio/wav", data: base64Audio } }] }], generationConfig: { temperature: 0.1, responseMimeType: "application/json" } };
-                            // 🌟 GEMINI-3.6-FLASH FOR TRANSCRIPTION FALLBACK
                             const res = await fetch(`/api/gemini/v1beta/models/gemini-3.6-flash:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await res.json(); 
                             if(!data.candidates || !data.candidates[0].content.parts[0].text) throw new Error("Invalid format");
                             return JSON.parse(data.candidates[0].content.parts[0].text.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
@@ -418,7 +417,6 @@
                     const batch = originalBlocks.slice(i, i + 15);
                     const translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
                         const transPayload = { contents: [{ parts: [{ text: JSON.stringify(batch) }] }], systemInstruction: { parts: [{ text: `Translate the 'text' values in this JSON array to ${selectedLang}. Return strictly as a JSON array of objects, keeping the original 'id', 'start', and 'end' values intact.` }] }, generationConfig: { temperature: 0.1, responseMimeType: "application/json" } };
-                        // 🌟 GEMINI-3.5-FLASH-LITE FOR FAST TRANSLATION
                         const transRes = await fetch(`/api/gemini/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transPayload) });
                         const transData = await transRes.json(); 
                         if (transData.error) throw new Error(transData.error.message);
@@ -444,7 +442,6 @@
                                 const pcmBytes = await decodeToPCM(mp3Blob); newAudioChunks[actualIndex] = { vStart: chunk.vStart, vEnd: chunk.vEnd, text: chunk.text, pcmBytes, audioDur: pcmBytes.length / 48000 };
                             } else {
                                 await executeWithApiLogic(`TTS Chunk`, async (apiKey) => {
-                                    // 🌟 GEMINI-2.5-FLASH-PREVIEW-TTS
                                     const ttsPayload = { contents: [{ parts: [{ text: safeText }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: recapVoice } } } } };
                                     const ttsRes = await fetch(`/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsPayload) });
                                     const ttsData = await ttsRes.json(); 
@@ -505,25 +502,46 @@
                 const videoGain = audioCtx.createGain(); const audioGain = audioCtx.createGain();
                 videoSource.connect(videoGain); audioSource.connect(audioGain);
                 videoGain.connect(audioDest); audioGain.connect(audioDest);
-                // 🌟 MUTED DURING RENDER: The next line is purposely commented out to prevent audio playing from speaker
-                // videoGain.connect(audioCtx.destination); audioGain.connect(audioCtx.destination);
                 
                 let canvasStream; try { canvasStream = canvas.captureStream(60); } catch (e) { try { canvasStream = canvas.mozCaptureStream(60); } catch(err) { return reject(err); } }
                 let mimeType = 'video/webm; codecs=vp8,opus'; if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
                 let mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: 3000000 });
                 const recordedChunks = []; let isStopped = false;
                 
+                // 🌟 Fast FFmpeg.wasm Finalize Step
                 const finalize = async () => { 
                     if (isStopped) return; isStopped = true; 
-                    setProcessStage("Editor များအတွက် Final MP4 ပြင်ဆင်နေပါသည် (FFmpeg)...");
+                    setProcessStage("Browser အတွင်း MP4 အမြန်ပြောင်းလဲနေပါသည် (FFmpeg.wasm)...");
                     try {
-                        const rawBlob = new Blob(recordedChunks, { type: mimeType }); const formData = new FormData(); formData.append('file', rawBlob, 'raw_video.webm');
-                        const res = await fetch('/api/convert-mp4', { method: 'POST', body: formData });
-                        if (!res.ok) throw new Error("FFmpeg Conversion Failed");
-                        const finalBlob = await res.blob(); setFinalVideoUrl(URL.createObjectURL(finalBlob)); addSysLog("MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
-                    } catch (err) { addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ: ${err.message}`); setFinalVideoUrl(URL.createObjectURL(new Blob(recordedChunks, { type: mimeType }))); }
+                        const rawBlob = new Blob(recordedChunks, { type: mimeType }); 
+                        
+                        if (typeof FFmpeg === 'undefined') throw new Error("FFmpeg.wasm is not loaded.");
+                        const { createFFmpeg, fetchFile } = FFmpeg;
+                        const ffmpeg = createFFmpeg({ 
+                            log: true, 
+                            corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+                        });
+                        
+                        addSysLog("FFmpeg.wasm ကို Browser တွင် စတင်နေပါပြီ...");
+                        await ffmpeg.load();
+                        ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
+                        
+                        // 🌟 Fastest MP4 conversion using -c copy
+                        addSysLog("MP4 Format သို့ အမြန်ဆုံးပြောင်းလဲနေပါသည် (-c copy)...");
+                        await ffmpeg.run('-i', 'input.webm', '-c', 'copy', 'output.mp4');
+                        
+                        const data = ffmpeg.FS('readFile', 'output.mp4');
+                        const finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
+                        
+                        setFinalVideoUrl(URL.createObjectURL(finalBlob)); 
+                        addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
+                    } catch (err) { 
+                        addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ (WebM ကိုသာ ပြပေးပါမည်): ${err.message}`); 
+                        setFinalVideoUrl(URL.createObjectURL(new Blob(recordedChunks, { type: mimeType }))); 
+                    }
                     setIsRecapProcessing(false); setProcessStage(""); setRenderProgress(100); isRecordingRef.current = false; resolve(); 
                 };
+                
                 mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); }; mediaRecorder.onstop = finalize;
                 
                 let renderPhase = (autoHookRef.current && hookDataRef.current) ? 'hook' : 'main';
@@ -627,7 +645,7 @@
                 animationRef.current = requestAnimationFrame(renderLoop);
             });
 
-            // 🌟 Social Media Generator
+            // Social Media Generator
             const generateSocialContent = async () => {
                 setIsGeneratingSocial(true);
                 const blocks = translatedBlocksRef.current || extractionDataRef.current || [];
