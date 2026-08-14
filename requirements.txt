@@ -1,11 +1,10 @@
 fastapi
-uvicorn
-pydantic
-edge-tts
-httpx
+uvicorn[standard]
 python-multipart
+httpx
+edge-tts
 imageio-ffmpeg
 pymongo
 python-dotenv
-dnspython
+pydantic
 boto3
