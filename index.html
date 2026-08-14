@@ -29,13 +29,12 @@
         .filter-btn:hover { transform: scale(1.05); }
         .marquee-container { width: 100%; overflow: hidden; white-space: nowrap; background: #ef4444; color: white; padding: 10px 0; font-weight: bold; position: sticky; top: 0; z-index: 50; }
         .marquee-content { display: inline-block; animation: marquee 25s linear infinite; }
-                @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+        @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
         /* External translation widgets must never sit above a purchase/order dialog. */
         .purchase-modal { z-index: 1000; }
         .tool-language-menu { z-index: 20; }
         .goog-te-banner-frame, .goog-te-gadget, #google_translate_element, .skiptranslate iframe { display: none !important; }
         body { top: 0 !important; }
-
     </style>
 </head>
 <body class="bg-[#e0e5ec] transition-colors duration-300">
@@ -216,7 +215,7 @@
             const [geminiKeys, setGeminiKeys] = useState(() => getSafeStorage('geminiKeys', ['']));
             const [activeKeyIndex, setActiveKeyIndex] = useState(0);
             const [showSettings, setShowSettings] = useState(false);
-            const [showProfile, setShowProfile] = useState(false); // 🌟 New Profile State
+            const [showProfile, setShowProfile] = useState(false);
             const [systemLogs, setSystemLogs] = useState([]); 
             
             // Admin States
@@ -352,11 +351,10 @@
                 } catch (e) { alert(e.message); }
             };
 
-                        useEffect(() => {
+            useEffect(() => {
                 if(user && sessionToken) fetchUserData(user.email);
                 else if (user && !sessionToken) { setUser(null); setUserData(null); setSafeStorage('userProfile', null); }
                 if (!user && window.google) {
-
                     window.google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
                     const btnContainer = document.getElementById("google-login-btn");
                     if (btnContainer) window.google.accounts.id.renderButton(btnContainer, { theme: isDark ? "filled_black" : "outline", size: "large", shape: "pill" });
@@ -603,7 +601,6 @@
                 videoSource.connect(videoGain); audioSource.connect(audioGain);
                 videoGain.connect(audioDest); audioGain.connect(audioDest);
                 
-                                // Mobile browsers can sustain 30 fps much more reliably than 60 fps for long videos.
                 let canvasStream; try { canvasStream = canvas.captureStream(30); } catch (e) { try { canvasStream = canvas.mozCaptureStream(30); } catch(err) { return reject(err); } }
                 let mimeType = 'video/webm; codecs=vp8,opus'; if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
                 const mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: 2500000 });
@@ -624,25 +621,29 @@
                     reject(error instanceof Error ? error : new Error(message));
                 };
 
-                // Finalize runs only after MediaRecorder has emitted its last dataavailable event and stopped.
+                // 🌟 Fast FFmpeg.wasm Finalize Step (H.264 MP4 Export)
                 const finalize = async () => {
                     if (isStopped) return; isStopped = true; cleanupRender();
                     setProcessStage("Browser အတွင်း MP4 အမြန်ပြောင်းလဲနေပါသည် (FFmpeg.wasm)...");
                     try {
                         if (!recordedChunks.length) throw new Error('WebM recording data မရရှိပါ။');
                         const rawBlob = new Blob(recordedChunks, { type: mimeType });
-                        // WebM is the original complete MediaRecorder output and is the safest source for in-page playback.
                         setPreviewVideoUrl(URL.createObjectURL(rawBlob));
+                        
                         const ffmpeg = await loadFastFFmpeg();
                         const { fetchFile } = FFmpeg;
+                        
                         try { ffmpeg.FS('unlink', 'input.webm'); } catch (e) {}
                         try { ffmpeg.FS('unlink', 'output.mp4'); } catch (e) {}
+                        
                         ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
-                        addSysLog("MP4 Format သို့ အမြန်ဆုံးပြောင်းလဲနေပါသည် (video copy + AAC audio)...");
-                        await ffmpeg.run('-i', 'input.webm', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', 'output.mp4');
+                        
+                        addSysLog("MP4 Format သို့ အပြည့်အဝ ပြန်လည် Render လုပ်နေပါသည် (H.264)...");
+                        await ffmpeg.run('-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', 'output.mp4');
+                        
                         const data = ffmpeg.FS('readFile', 'output.mp4');
-                        // Preserve Uint8Array boundaries. data.buffer can include unrelated WASM-memory bytes on some devices.
                         const mp4Blob = new Blob([data], { type: 'video/mp4' });
+                        
                         setFinalVideoUrl(URL.createObjectURL(mp4Blob));
                         await saveRenderedVideoHistory(mp4Blob, mode);
                         addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
@@ -804,7 +805,7 @@
                 setIsGeneratingSocial(false);
             };
 
-                        const saveRenderedVideoHistory = async (blob, toolName) => {
+            const saveRenderedVideoHistory = async (blob, toolName) => {
                 if (!user || !blob) return;
                 try {
                     const form = new FormData();
@@ -842,7 +843,6 @@
             const handleHistoryDelete = async (id) => { if (!confirm('ဒီ video ကို ဖျက်မလား?')) return; await apiFetch(`/api/history/videos/${id}`, {method:'DELETE'}); loadHistory(); };
 
             const handleProcess = async (type) => {
-
                 if (!videoFile) return;
                 try { const ctxCheck = new (window.AudioContext || window.webkitAudioContext)(); if (ctxCheck.state === 'suspended') await ctxCheck.resume(); } catch (e) {}
                 
@@ -1005,7 +1005,7 @@
                 </header>
             );
 
-                        const renderNoticeStrip = () => notifications.filter(n => !n.is_read).slice(0, 2).map(n => <div key={n.id} className={`p-3 rounded-2xl mb-3 border border-indigo-400/20 ${neoPressedClass}`}><div className="font-bold text-sm">{n.title}</div><div className="text-xs opacity-70 mt-1 whitespace-pre-line">{n.body}</div></div>);
+            const renderNoticeStrip = () => notifications.filter(n => !n.is_read).slice(0, 2).map(n => <div key={n.id} className={`p-3 rounded-2xl mb-3 border border-indigo-400/20 ${neoPressedClass}`}><div className="font-bold text-sm">{n.title}</div><div className="text-xs opacity-70 mt-1 whitespace-pre-line">{n.body}</div></div>);
 
             const renderStoreView = () => {
                 const categories = ['all', ...Array.from(new Set(storeProducts.map(p => p.category)))];
@@ -1033,7 +1033,6 @@
             if (currentView === 'admin_messages' && userData?.role === 'admin') return renderMessagesView(true);
 
             if (currentView === 'admin' && userData?.role === 'admin') {
-
                 return (
                     <div className={`min-h-screen font-sans p-4 md:p-8 transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                         <div className="max-w-6xl mx-auto space-y-8">
@@ -1077,7 +1076,7 @@
                                     </div>
                                     <button onClick={saveAdminSettings} className="w-full bg-rose-500 text-white py-4 rounded-xl font-bold mt-auto shadow-lg shadow-rose-500/30">Save Settings</button>
                                 </div>
-                                                        </div>
+                            </div>
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 <div className={`p-7 rounded-3xl ${neoClass}`}><div className="flex justify-between items-center mb-5"><h2 className="text-xl font-black text-amber-500">🛍️ Product Create</h2><button onClick={loadAdminExtended} className={`px-3 py-2 rounded-xl text-xs ${neoBtnClass}`}>Refresh</button></div><form onSubmit={createAdminProduct} className="space-y-3"><input required placeholder="Product name" value={productForm.name} onChange={e=>setProductForm({...productForm,name:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/><div className="grid grid-cols-2 gap-3"><input required placeholder="Category" value={productForm.category} onChange={e=>setProductForm({...productForm,category:e.target.value})} className={`p-3 rounded-xl outline-none ${neoPressedClass}`}/><input required type="number" min="1" placeholder="Price in Credits" value={productForm.price_credits} onChange={e=>setProductForm({...productForm,price_credits:e.target.value})} className={`p-3 rounded-xl outline-none ${neoPressedClass}`}/></div><textarea placeholder="Description" value={productForm.description} onChange={e=>setProductForm({...productForm,description:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} rows="3"/><input placeholder="Delivery link (digital product)" value={productForm.delivery_link} onChange={e=>setProductForm({...productForm,delivery_link:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/><label className={`flex gap-3 items-center p-3 rounded-xl cursor-pointer ${neoPressedClass}`}><input type="checkbox" checked={productForm.has_expiry} onChange={e=>setProductForm({...productForm,has_expiry:e.target.checked})}/> သက်တမ်းပါသည်</label>{productForm.has_expiry&&<input required type="datetime-local" value={productForm.expiry_at} onChange={e=>setProductForm({...productForm,expiry_at:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/>}<label className={`flex gap-3 items-center p-3 rounded-xl cursor-pointer ${neoPressedClass}`}><Upload className="w-5 h-5 text-amber-500"/>{productForm.image?productForm.image.name:'Product photo ရွေးပါ'}<input required={!productForm.image} type="file" accept="image/*" className="hidden" onChange={e=>setProductForm({...productForm,image:e.target.files[0]})}/></label><div className={`p-3 rounded-xl ${neoPressedClass}`}><div className="flex justify-between items-center mb-2"><span className="text-sm font-bold">Payment accounts</span><button type="button" onClick={()=>setProductForm({...productForm,payment_accounts:[...productForm.payment_accounts,{provider:'Other',number:'',holder:''}]})} className="text-xs text-amber-500 font-bold">+ Add</button></div>{productForm.payment_accounts.map((a,i)=><div key={i} className="grid grid-cols-3 gap-2 mb-2"><input placeholder="KPay/Wave" value={a.provider} onChange={e=>{const v=[...productForm.payment_accounts];v[i]={...v[i],provider:e.target.value};setProductForm({...productForm,payment_accounts:v})}} className={`p-2 rounded-lg outline-none text-xs ${neoClass}`}/><input placeholder="Phone number" value={a.number} onChange={e=>{const v=[...productForm.payment_accounts];v[i]={...v[i],number:e.target.value};setProductForm({...productForm,payment_accounts:v})}} className={`p-2 rounded-lg outline-none text-xs ${neoClass}`}/><input placeholder="Holder" value={a.holder} onChange={e=>{const v=[...productForm.payment_accounts];v[i]={...v[i],holder:e.target.value};setProductForm({...productForm,payment_accounts:v})}} className={`p-2 rounded-lg outline-none text-xs ${neoClass}`}/></div>)}</div><button className="w-full py-4 rounded-xl bg-amber-500 text-black font-black">Create & Publish Product</button></form><div className="space-y-2 mt-6">{adminProducts.slice(0,8).map(p=><div key={p.id} className={`flex gap-3 items-center p-3 rounded-xl ${neoPressedClass}`}><img src={p.image_url} className="w-12 h-12 rounded-lg object-cover"/><div className="flex-1 min-w-0"><b className="block truncate">{p.name}</b><small className="opacity-60">{p.category} · {p.price_credits} CR</small></div><button onClick={async()=>{await apiFetch(`/api/admin/products/${p.id}/toggle`,{method:'PATCH'});loadAdminExtended()}} className={`text-xs px-2 py-1 rounded-lg ${p.is_active?'bg-green-500 text-white':'bg-slate-500 text-white'}`}>{p.is_active?'Live':'Off'}</button></div>)}</div></div>
                                 <div className={`p-7 rounded-3xl ${neoClass}`}><h2 className="text-xl font-black text-sky-500 mb-5">📦 Store Orders</h2>{adminOrders.length===0?<p className="opacity-60">Order မရှိသေးပါ။</p>:<div className="space-y-3 max-h-[600px] overflow-y-auto">{adminOrders.map(o=><div key={o.id} className={`p-4 rounded-2xl ${neoPressedClass}`}><div className="flex justify-between gap-3"><div><b>{o.product_name}</b><small className="block opacity-60">{o.buyer_email} · {o.delivery_email}</small></div><span className="text-xs font-black text-amber-500">{o.status}</span></div>{o.receipt_url&&<img src={o.receipt_url} className="w-24 h-24 object-cover rounded-xl mt-3"/>}{o.status==='pending'&&<button onClick={()=>approveStoreOrder(o)} className="mt-3 w-full py-2 rounded-xl bg-green-500 text-white font-bold">Approve & Send Link</button>}</div>)}</div>}</div>
@@ -1089,7 +1088,6 @@
             }
 
             return (
-
                 <div>
                     {globalSettings.announcement && (<div className="marquee-container" style={{ backgroundColor: globalSettings.announcement_bg || globalSettings.marquee_color || '#ef4444', color: globalSettings.announcement_text_color || '#ffffff' }}><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
                     
