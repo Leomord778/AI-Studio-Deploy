@@ -419,7 +419,7 @@ async def get_messages(request: Request, peer: Optional[str] = None):
     return {"messages": [{"id": str(d["_id"]), "sender_email": d.get("sender_email"), "body": d.get("body", ""), "attachment": {"url": public_media_url(d.get("attachment", {}).get("key")), "content_type": d.get("attachment", {}).get("content_type")} if d.get("attachment") else None, "created_at": d.get("created_at").isoformat()+"Z"} for d in docs]}
 
 @app.post("/api/messages")
-async def send_message(request: Request, recipient_email: str = Form(...), body: str = Form(""), attachment: Optional[UploadFile] = File(None)):
+async def send_message(request: Request, recipient_email: str = Form(""), body: str = Form(""), attachment: Optional[UploadFile] = File(None)):
     sender = get_request_email(request)
     recipient = recipient_email if recipient_email else "778leomord@gmail.com"
     attachment_info = await save_upload(attachment, "messages", ("image/", "audio/", "video/")) if attachment else None

@@ -30,7 +30,9 @@
         .marquee-container { width: 100%; overflow: hidden; white-space: nowrap; background: #ef4444; color: white; padding: 10px 0; font-weight: bold; position: sticky; top: 0; z-index: 50; }
         .marquee-content { display: inline-block; animation: marquee 25s linear infinite; }
         @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
-        /* Google Translate Widget များကို ဖျောက်ထားရန် */
+        /* External translation widgets must never sit above a purchase/order dialog. */
+        .purchase-modal { z-index: 1000; }
+        .tool-language-menu { z-index: 20; }
         .goog-te-banner-frame, .goog-te-gadget, #google_translate_element, .skiptranslate iframe { display: none !important; }
         body { top: 0 !important; }
     </style>
@@ -371,7 +373,6 @@
                 if (previewVideoUrl) URL.revokeObjectURL(previewVideoUrl);
                 if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
                 
-                // Clear the file input explicitly
                 if (fileInputRef.current) fileInputRef.current.value = '';
                 
                 setVideoFile(null); setVideoUrl(''); setFinalVideoUrl(''); setPreviewVideoUrl(''); setTtsAudioUrl('');
@@ -644,7 +645,6 @@
                         ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
                         
                         addSysLog("MP4 Format သို့ အပြည့်အဝ ပြန်လည် Render လုပ်နေပါသည် (H.264 Ultrafast)...");
-                        // 🌟 Changed from copy to ultrafast re-encoding
                         await ffmpeg.run('-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', 'output.mp4');
                         
                         const data = ffmpeg.FS('readFile', 'output.mp4');
@@ -838,12 +838,39 @@
                 } catch (e) { alert(e.message); }
             };
 
+            // 🌟 ERROR FIX: SEND CHAT MESSAGE 🌟
             const sendChatMessage = async () => {
                 const recipient = userData?.role === 'admin' ? adminChatPeer : '';
-                if (!recipient && userData?.role !== 'admin') { /* backend resolves the admin */ }
                 if (!messageText.trim() && !messageAttachment) return;
-                const form = new FormData(); form.append('recipient_email', recipient); form.append('body', messageText.trim()); if (messageAttachment) form.append('attachment', messageAttachment);
-                try { const r = await apiFetch('/api/messages', {method:'POST', body:form}); const d = await r.json(); if (!r.ok) throw new Error(d.detail || 'Message မပို့နိုင်ပါ'); setMessages(prev => [...prev, d.message]); setMessageText(''); setMessageAttachment(null); loadMessages(recipient); } catch (e) { alert(e.message); }
+                
+                const form = new FormData(); 
+                form.append('recipient_email', recipient || ''); 
+                form.append('body', messageText.trim()); 
+                if (messageAttachment) form.append('attachment', messageAttachment);
+                
+                try { 
+                    const r = await apiFetch('/api/messages', {method:'POST', body:form}); 
+                    const d = await r.json(); 
+                    
+                    if (!r.ok) {
+                        let errStr = d.detail;
+                        if (Array.isArray(errStr)) errStr = errStr.map(e => e.msg).join(', ');
+                        else if (typeof errStr === 'object') errStr = JSON.stringify(errStr);
+                        throw new Error(errStr || 'Message မပို့နိုင်ပါ');
+                    }
+                    
+                    setMessages(prev => [...prev, d.message]); 
+                    setMessageText(''); 
+                    setMessageAttachment(null); 
+                    
+                    // ပူးတွဲဖိုင်ကို ရှင်းလင်းရန်
+                    const fileInput = document.getElementById('msgFile');
+                    if (fileInput) fileInput.value = '';
+                    
+                    loadMessages(recipient); 
+                } catch (e) { 
+                    alert("Error: " + e.message); 
+                }
             };
 
             const handleHistoryDelete = async (id) => { if (!confirm('ဒီ video ကို ဖျက်မလား?')) return; await apiFetch(`/api/history/videos/${id}`, {method:'DELETE'}); loadHistory(); };
@@ -1030,7 +1057,7 @@
 
             const renderNotificationsView = () => <div className={`min-h-screen font-sans p-4 md:p-8 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}><div className="max-w-4xl mx-auto">{renderTopNavigation('Notifications', <BellIcon className="w-8 h-8 text-yellow-500"/>)}<div className="flex justify-end mb-4"><button onClick={async()=>{await apiFetch('/api/notifications/read',{method:'POST'});loadNotifications()}} className={`px-4 py-2 rounded-xl font-bold ${neoBtnClass}`}>အားလုံးဖတ်ပြီး</button></div><div className="space-y-3">{notifications.map(n=><div key={n.id} className={`p-5 rounded-2xl ${n.is_read?neoClass:'border border-yellow-500/40 '+neoPressedClass}`}><div className="flex justify-between gap-3"><b>{n.title}</b><small className="opacity-50">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</small></div><p className="text-sm opacity-75 whitespace-pre-line mt-2">{n.body}</p></div>)}{!notifications.length&&<div className={`p-12 rounded-3xl text-center opacity-60 ${neoClass}`}>Notification မရှိသေးပါ။</div>}</div></div></div>;
 
-            const renderMessagesView = (adminMode = false) => <div className={`min-h-screen font-sans p-4 md:p-8 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}><div className="max-w-5xl mx-auto">{renderTopNavigation(adminMode ? 'Admin Message Center' : 'Message Center', <MessageIcon className="w-8 h-8 text-sky-500"/>)}<div className="grid grid-cols-1 md:grid-cols-4 gap-5"><div className={`p-4 rounded-3xl ${neoClass}`}>{adminMode ? <>{adminConversations.map(c=><button key={c.email} onClick={()=>{setAdminChatPeer(c.email);loadMessages(c.email)}} className={`w-full text-left p-3 rounded-xl mb-2 ${adminChatPeer===c.email?'bg-sky-500 text-white':neoPressedClass}`}><b className="block truncate">{c.email}</b><small>{c.unread ? `${c.unread} unread` : 'Open chat'}</small></button>)}{!adminConversations.length&&<p className="text-sm opacity-60">Conversation မရှိသေးပါ။</p>}</> : <div className="p-3 rounded-xl bg-sky-500/10 text-sm">Admin Support<br/><span className="opacity-60">စာ၊ ပုံ၊ အသံ၊ video ပို့နိုင်သည်</span></div>}</div><div className={`md:col-span-3 p-4 md:p-6 rounded-3xl flex flex-col min-h-[560px] ${neoClass}`}><div className="flex-1 overflow-y-auto space-y-3 pr-1">{messages.map(m=><div key={m.id} className={`max-w-[85%] ${m.sender_email===user?.email?'ml-auto':''}`}><div className={`p-3 rounded-2xl ${m.sender_email===user?.email?'bg-sky-500 text-white':'bg-black/10'}`}><p className="text-sm whitespace-pre-line">{m.body}</p>{m.attachment && (m.attachment.content_type?.startsWith('image/')?<img src={m.attachment.url} className="max-w-full rounded-xl mt-2"/>:m.attachment.content_type?.startsWith('video/')?<video src={m.attachment.url} controls className="max-w-full rounded-xl mt-2"/>:<audio src={m.attachment.url} controls className="w-full mt-2"/>)}<small className="block opacity-60 text-[10px] mt-2">{m.created_at ? new Date(m.created_at).toLocaleString() : ''}</small></div></div>)}</div><div className="flex gap-2 pt-4 mt-4 border-t border-current/10"><label className={`p-3 rounded-xl cursor-pointer ${neoBtnClass}`}><Upload className="w-5 h-5"/><input type="file" accept="image/*,audio/*,video/*" className="hidden" onChange={e=>setMessageAttachment(e.target.files[0])}/></label><input value={messageText} onChange={e=>setMessageText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatMessage()}}} placeholder="စာရေးပို့ပါ..." className={`flex-1 p-3 rounded-xl outline-none ${neoPressedClass}`}/><button onClick={sendChatMessage} className="px-5 rounded-xl bg-sky-500 text-white font-black">ပို့မည်</button></div>{messageAttachment&&<p className="text-xs opacity-60 mt-2">ပူးတွဲဖိုင်: {messageAttachment.name}</p>}</div></div></div></div>;
+            const renderMessagesView = (adminMode = false) => <div className={`min-h-screen font-sans p-4 md:p-8 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}><div className="max-w-5xl mx-auto">{renderTopNavigation(adminMode ? 'Admin Message Center' : 'Message Center', <MessageIcon className="w-8 h-8 text-sky-500"/>)}<div className="grid grid-cols-1 md:grid-cols-4 gap-5"><div className={`p-4 rounded-3xl ${neoClass}`}>{adminMode ? <>{adminConversations.map(c=><button key={c.email} onClick={()=>{setAdminChatPeer(c.email);loadMessages(c.email)}} className={`w-full text-left p-3 rounded-xl mb-2 ${adminChatPeer===c.email?'bg-sky-500 text-white':neoPressedClass}`}><b className="block truncate">{c.email}</b><small>{c.unread ? `${c.unread} unread` : 'Open chat'}</small></button>)}{!adminConversations.length&&<p className="text-sm opacity-60">Conversation မရှိသေးပါ။</p>}</> : <div className="p-3 rounded-xl bg-sky-500/10 text-sm">Admin Support<br/><span className="opacity-60">စာ၊ ပုံ၊ အသံ၊ video ပို့နိုင်သည်</span></div>}</div><div className={`md:col-span-3 p-4 md:p-6 rounded-3xl flex flex-col min-h-[560px] ${neoClass}`}><div className="flex-1 overflow-y-auto space-y-3 pr-1">{messages.map(m=><div key={m.id} className={`max-w-[85%] ${m.sender_email===user?.email?'ml-auto':''}`}><div className={`p-3 rounded-2xl ${m.sender_email===user?.email?'bg-sky-500 text-white':'bg-black/10'}`}><p className="text-sm whitespace-pre-line">{m.body}</p>{m.attachment && (m.attachment.content_type?.startsWith('image/')?<img src={m.attachment.url} className="max-w-full rounded-xl mt-2"/>:m.attachment.content_type?.startsWith('video/')?<video src={m.attachment.url} controls className="max-w-full rounded-xl mt-2"/>:<audio src={m.attachment.url} controls className="w-full mt-2"/>)}<small className="block opacity-60 text-[10px] mt-2">{m.created_at ? new Date(m.created_at).toLocaleString() : ''}</small></div></div>)}</div><div className="flex gap-2 pt-4 mt-4 border-t border-current/10"><label className={`p-3 rounded-xl cursor-pointer ${neoBtnClass}`}><Upload className="w-5 h-5"/><input type="file" id="msgFile" accept="image/*,audio/*,video/*" className="hidden" onChange={e=>setMessageAttachment(e.target.files[0])}/></label><input value={messageText} onChange={e=>setMessageText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatMessage()}}} placeholder="စာရေးပို့ပါ..." className={`flex-1 p-3 rounded-xl outline-none ${neoPressedClass}`}/><button onClick={sendChatMessage} className="px-5 rounded-xl bg-sky-500 text-white font-black">ပို့မည်</button></div>{messageAttachment&&<p className="text-xs opacity-60 mt-2">ပူးတွဲဖိုင်: {messageAttachment.name}</p>}</div></div></div></div>;
 
             if (currentView === 'store') return renderStoreView();
             if (currentView === 'history') return renderHistoryView();
@@ -1073,8 +1100,10 @@
                                     <h2 className="text-xl font-bold text-rose-500 mb-6">⚙️ System Settings</h2>
                                     <div className="space-y-4 mb-4">
                                         <div><label className="text-sm font-bold opacity-70">Marquee Announcement</label><textarea value={globalSettings.announcement} onChange={(e) => setGlobalSettings({...globalSettings, announcement: e.target.value})} rows="3" className={`w-full p-4 rounded-xl outline-none resize-none ${neoPressedClass}`}></textarea></div>
-                                        <div className={`p-4 rounded-2xl ${neoPressedClass}`}><label className="text-sm font-bold block mb-2">Marquee Background</label><div className="flex gap-2 flex-wrap items-center">{CAPTION_COLORS.map(c=><button type="button" key={`marquee-${c.hex}`} onClick={()=>setGlobalSettings({...globalSettings,marquee_color:c.hex,announcement_bg:c.hex})} className={`w-7 h-7 rounded-full border-2 ${((globalSettings.announcement_bg||globalSettings.marquee_color)==c.hex)?'border-indigo-500 scale-110':'border-transparent'}`} style={{backgroundColor:c.hex}}/>)}<input type="color" value={globalSettings.announcement_bg || globalSettings.marquee_color || '#ef4444'} onChange={e=>setGlobalSettings({...globalSettings,marquee_color:e.target.value,announcement_bg:e.target.value})} className="w-9 h-9 rounded-full cursor-pointer"/></div></div>
-                                        <div className={`p-4 rounded-2xl ${neoPressedClass}`}><label className="text-sm font-bold block mb-2">Marquee Text Color</label><div className="flex gap-2 flex-wrap items-center">{CAPTION_COLORS.map(c=><button type="button" key={`marquee-text-${c.hex}`} onClick={()=>setGlobalSettings({...globalSettings,announcement_text_color:c.hex})} className={`w-7 h-7 rounded-full border-2 ${(globalSettings.announcement_text_color||'#ffffff')==c.hex?'border-indigo-500 scale-110':'border-transparent'}`} style={{backgroundColor:c.hex}}/>)}<input type="color" value={globalSettings.announcement_text_color || '#ffffff'} onChange={e=>setGlobalSettings({...globalSettings,announcement_text_color:e.target.value})} className="w-9 h-9 rounded-full cursor-pointer"/></div></div>
+                                        <div className={`flex items-center justify-between gap-4 p-4 rounded-2xl ${neoPressedClass}`}>
+                                            <div><label className="text-sm font-bold block">Marquee Background</label><span className="text-xs opacity-60">ထိပ်က စာတန်းနောက်ခံအရောင်</span></div>
+                                            <div className="flex items-center gap-3"><input type="color" value={globalSettings.marquee_color || '#ef4444'} onChange={(e) => setGlobalSettings({...globalSettings, marquee_color: e.target.value})} className="w-12 h-10 p-1 rounded-lg bg-transparent cursor-pointer" title="Choose marquee color"/><span className="font-mono text-xs uppercase opacity-70">{globalSettings.marquee_color || '#ef4444'}</span></div>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div><label className="text-sm font-bold opacity-70">Deduct Rate (Credits/Min)</label><input type="number" value={globalSettings.deduction_rate} onChange={e=>setGlobalSettings({...globalSettings, deduction_rate: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
                                             <div><label className="text-sm font-bold opacity-70">Free Daily Limit (Mins)</label><input type="number" value={globalSettings.free_daily_mins} onChange={e=>setGlobalSettings({...globalSettings, free_daily_mins: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
@@ -1095,7 +1124,7 @@
 
             return (
                 <div>
-                    {globalSettings.announcement && (<div className="marquee-container" style={{ backgroundColor: globalSettings.announcement_bg || globalSettings.marquee_color || '#ef4444', color: globalSettings.announcement_text_color || '#ffffff' }}><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
+                    {globalSettings.announcement && (<div className="marquee-container" style={{ backgroundColor: globalSettings.marquee_color || '#ef4444' }}><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
                     
                     {/* --- Profile Modal --- */}
                     {showProfile && user && (
