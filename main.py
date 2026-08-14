@@ -1,6 +1,5 @@
 import os, httpx, math, subprocess, tempfile, edge_tts, imageio_ffmpeg, traceback
 from datetime import datetime
-from typing import Optional
 from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, Form, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,9 +7,6 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from bson.objectid import ObjectId
-
-# FFmpeg.wasm နှင့် Google Login အတွက် လိုအပ်သော Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # --- ENV & MONGODB SETUP ---
 load_dotenv()
@@ -25,25 +21,11 @@ settings_col = db['settings']
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# --- CORS & Isolation Middleware ---
-# Google Login Popup ပွင့်စေရန် same-origin-allow-popups သုံးထားပြီး
-# FFmpeg.wasm အလုပ်လုပ်စေရန် credentialless သုံးထားပါသည်။
-class CrossOriginIsolationMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
-        response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
-        return response
-
-app.add_middleware(CrossOriginIsolationMiddleware)
-# ----------------------------------
-
 @app.get("/")
 async def serve_index():
     with open("index.html", "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
 
-# --- TOKENS & KEYS ---
 BOT_TOKEN = "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8"
 CHAT_ID = "-1003802670362"
 
@@ -61,8 +43,15 @@ def init_db():
             {"key": "deduction_rate", "value": "200"},
             {"key": "free_daily_mins", "value": "2"},
             {"key": "trial_mins", "value": "5"},
-            {"key": "announcement", "value": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ ၅ မိနစ်စာ အခမဲ့ စမ်းသပ်နိုင်ပါသည်။"}
+            {"key": "announcement", "value": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ ၅ မိနစ်စာ အခမဲ့ စမ်းသပ်နိုင်ပါသည်။"},
+            {"key": "marquee_color", "value": "#ef4444"}
         ])
+    else:
+        settings_col.update_one(
+            {"key": "marquee_color"},
+            {"$setOnInsert": {"value": "#ef4444"}},
+            upsert=True
+        )
     
     if not users_col.find_one({"email": "778leomord@gmail.com"}):
         users_col.insert_one({
@@ -84,58 +73,31 @@ async def send_payment_to_telegram(email, amount, file_bytes):
 # --- USER APIs ---
 class LoginData(BaseModel):
     email: str
-    name: Optional[str] = None
-    picture: Optional[str] = None
 
 @app.post("/api/login")
 async def login(data: LoginData):
     today = datetime.now().strftime("%Y-%m-%d")
-    email = data.email.strip().lower()
-    user = users_col.find_one({"email": email})
+    user = users_col.find_one({"email": data.email})
     
     if not user:
         new_user = {
-            "email": email, 
-            "name": data.name or email.split("@")[0],
-            "picture": data.picture or "",
-            "role": "admin" if email == "778leomord@gmail.com" else "user", 
-            "credits": 0, 
-            "free_mins_used": 0, 
-            "last_free_date": today, 
-            "has_bought_3000": False, 
-            "is_new": True
+            "email": data.email, "role": "user", "credits": 0, 
+            "free_mins_used": 0, "last_free_date": today, "has_bought_3000": False, "is_new": True
         }
         users_col.insert_one(new_user)
         user = new_user
     else:
-        updates = {}
         if user.get("last_free_date") != today:
-            updates["free_mins_used"] = 0
-            updates["last_free_date"] = today
+            users_col.update_one({"email": data.email}, {"$set": {"free_mins_used": 0, "last_free_date": today}})
             user["free_mins_used"] = 0
             user["last_free_date"] = today
-            
-        if data.name:
-            updates["name"] = data.name
-        if data.picture:
-            updates["picture"] = data.picture
-            
-        if updates:
-            users_col.update_one({"email": email}, {"$set": updates})
 
     settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
     
     return { 
-        "email": user["email"], 
-        "name": user.get("name", ""),
-        "picture": user.get("picture", ""),
-        "role": user.get("role", "user"), 
-        "credits": user.get("credits", 0), 
-        "free_mins_used": user.get("free_mins_used", 0), 
-        "has_bought_3000": user.get("has_bought_3000", False), 
-        "is_new": user.get("is_new", False), 
-        "settings": settings,
-        "token": "valid_session"
+        "email": user["email"], "role": user.get("role", "user"), "credits": user.get("credits", 0), 
+        "free_mins_used": user.get("free_mins_used", 0), "has_bought_3000": user.get("has_bought_3000", False), 
+        "is_new": user.get("is_new", False), "settings": settings 
     }
 
 @app.post("/api/buy-credits")
@@ -231,7 +193,7 @@ async def get_transactions():
     return {"transactions": txs}
 
 class ApproveData(BaseModel):
-    id: str  
+    id: str  # MongoDB ObjectId is string
     email: str
     amount: int
 
@@ -260,6 +222,7 @@ class SettingsData(BaseModel):
     free_daily_mins: str
     trial_mins: str
     announcement: str
+    marquee_color: str = "#ef4444"
 
 @app.post("/api/admin/settings")
 async def update_settings(data: SettingsData):
@@ -267,7 +230,7 @@ async def update_settings(data: SettingsData):
         settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
     return {"status": "success"}
 
-# --- SYSTEM APIs ---
+# --- SYSTEM APIs (No Changes Needed Here) ---
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     try:
