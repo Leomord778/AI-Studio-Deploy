@@ -1,5 +1,5 @@
 import os, httpx, math, subprocess, tempfile, edge_tts, imageio_ffmpeg, traceback
-import base64, hashlib, hmac, json, mimetypes, shutil, smtplib, uuid
+import base64, hashlib, hmac, json, mimetypes, shutil, smtplib, uuid, time, asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 from email.message import EmailMessage
@@ -32,7 +32,7 @@ orders_col = db["store_orders"]
 notifications_col = db["notifications"]
 messages_col = db["messages"]
 
-# လုံခြုံရေး Tokens & Keys
+# လုံခြုံရေး Tokens
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-session-secret")
 BOT_TOKEN = "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8"
 CHAT_ID = "-1003802670362"
@@ -83,7 +83,6 @@ def cleanup_expired_media():
     if expired:
         video_history_col.delete_many({"_id": {"$in": [item["_id"] for item in expired]}})
 
-import asyncio
 async def cleanup_loop():
     while True:
         await asyncio.sleep(60 * 60)
@@ -196,7 +195,6 @@ async def serve_media(media_path: str):
     if not path.exists() or not path.is_file(): raise HTTPException(status_code=404, detail="Media not found")
     return FileResponse(path)
 
-# --- 🌟 GOOGLE LOGIN API FIX 🌟 ---
 class GoogleAuthData(BaseModel):
     credential: str
 
