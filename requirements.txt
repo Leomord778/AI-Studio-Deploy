@@ -8,3 +8,4 @@ imageio-ffmpeg
 pymongo
 python-dotenv
 dnspython
+boto3

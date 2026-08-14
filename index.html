@@ -29,7 +29,13 @@
         .filter-btn:hover { transform: scale(1.05); }
         .marquee-container { width: 100%; overflow: hidden; white-space: nowrap; background: #ef4444; color: white; padding: 10px 0; font-weight: bold; position: sticky; top: 0; z-index: 50; }
         .marquee-content { display: inline-block; animation: marquee 25s linear infinite; }
-        @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+                @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+        /* External translation widgets must never sit above a purchase/order dialog. */
+        .purchase-modal { z-index: 1000; }
+        .tool-language-menu { z-index: 20; }
+        .goog-te-banner-frame, .goog-te-gadget, #google_translate_element, .skiptranslate iframe { display: none !important; }
+        body { top: 0 !important; }
+
     </style>
 </head>
 <body class="bg-[#e0e5ec] transition-colors duration-300">
@@ -66,6 +72,10 @@
         const CreditCard = ({ className }) => <IconBase className={className}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></IconBase>;
         const Copy = ({ className }) => <IconBase className={className}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></IconBase>;
         const XIcon = ({ className }) => <IconBase className={className}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconBase>;
+        const StoreIcon = ({ className }) => <IconBase className={className}><path d="M3 10h18"/><path d="m5 10 1-6h12l1 6"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></IconBase>;
+        const HistoryIcon = ({ className }) => <IconBase className={className}><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/><polyline points="12 7 12 12 15 14"/></IconBase>;
+        const BellIcon = ({ className }) => <IconBase className={className}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></IconBase>;
+        const MessageIcon = ({ className }) => <IconBase className={className}><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 8.7 3.9 8.38 8.38 0 0 1 12.5 3h.5a8.48 8.48 0 0 1 8 8v.5Z"/></IconBase>;
 
         const LANGUAGES = [
             { name: "မြန်မာ (Myanmar)", flag: "🇲🇲" }, { name: "English", flag: "🇬🇧" }, { name: "中文 (Chinese)", flag: "🇨🇳" },
@@ -197,7 +207,8 @@
             const GOOGLE_CLIENT_ID = "135328538466-76vbcm81m07i03cqc105d5rrrt3967t4.apps.googleusercontent.com"; 
             
             const [user, setUser] = useState(() => getSafeStorage('userProfile', null));
-            const [userData, setUserData] = useState(null); 
+            const [sessionToken, setSessionToken] = useState(() => getSafeStorage('sessionToken', ''));
+            const [userData, setUserData] = useState(null);
             
             // UI States
             const [currentView, setCurrentView] = useState('home');
@@ -212,7 +223,7 @@
             const [adminStats, setAdminStats] = useState({ total_users: 0, monthly_profit: 0 });
             const [transactions, setTransactions] = useState([]);
             const [manualCredit, setManualCredit] = useState({ email: '', amount: 0 });
-            const [globalSettings, setGlobalSettings] = useState({ announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။", deduction_rate: '200', free_daily_mins: '2', trial_mins: '5', marquee_color: '#ef4444' });
+            const [globalSettings, setGlobalSettings] = useState({ announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။", deduction_rate: '200', free_daily_mins: '2', trial_mins: '5', marquee_color: '#ef4444', announcement_bg: '#ef4444', announcement_text_color: '#ffffff' });
             
             // Buy States
             const [buyModalOpen, setBuyModalOpen] = useState(false);
@@ -241,6 +252,7 @@
             const [renderProgress, setRenderProgress] = useState(0);
             const [errorMsg, setErrorMsg] = useState('');
             const [finalVideoUrl, setFinalVideoUrl] = useState('');
+            const [previewVideoUrl, setPreviewVideoUrl] = useState('');
             
             // Social Media Kit
             const [socialContent, setSocialContent] = useState(null);
@@ -257,7 +269,32 @@
             const [ttsProgressTxt, setTtsProgressTxt] = useState('');
             const [ttsProgressPct, setTtsProgressPct] = useState(0);
             const [previewingAudio, setPreviewingAudio] = useState(false);
-            const [ttsError, setTtsError] = useState(''); 
+            const [ttsError, setTtsError] = useState('');
+
+            // History, Store, Notifications and Messaging
+            const [historyItems, setHistoryItems] = useState([]);
+            const [creditHistory, setCreditHistory] = useState([]);
+            const [storeProducts, setStoreProducts] = useState([]);
+            const [storeCategory, setStoreCategory] = useState('all');
+            const [storeLoading, setStoreLoading] = useState(false);
+            const [selectedProduct, setSelectedProduct] = useState(null);
+            const [storeCheckoutOpen, setStoreCheckoutOpen] = useState(false);
+            const [storePaymentMode, setStorePaymentMode] = useState('credit');
+            const [deliveryEmail, setDeliveryEmail] = useState('');
+            const [storePaymentProvider, setStorePaymentProvider] = useState('KBZPay');
+            const [storePaymentNumber, setStorePaymentNumber] = useState('');
+            const [storeReceipt, setStoreReceipt] = useState(null);
+            const [notifications, setNotifications] = useState([]);
+            const [messages, setMessages] = useState([]);
+            const [messageText, setMessageText] = useState('');
+            const [messageAttachment, setMessageAttachment] = useState(null);
+            const [messagePeer, setMessagePeer] = useState('');
+            const [adminProducts, setAdminProducts] = useState([]);
+            const [adminOrders, setAdminOrders] = useState([]);
+            const [adminConversations, setAdminConversations] = useState([]);
+            const [adminChatPeer, setAdminChatPeer] = useState('');
+            const [myOrders, setMyOrders] = useState([]);
+            const [productForm, setProductForm] = useState({ name:'', category:'', description:'', price_credits:'', has_expiry:false, expiry_at:'', delivery_link:'', image:null, payment_accounts:[{provider:'KBZPay', number:'', holder:''}] });
 
             // Refs
             const previewAudioObjRef = useRef(null);
@@ -291,8 +328,8 @@
 
             const loadAdminData = async () => { 
                 try { 
-                    const res = await fetch('/api/admin/transactions'); const data = await res.json(); setTransactions(data.transactions || []); 
-                    const statsRes = await fetch('/api/admin/stats'); const statsData = await statsRes.json(); setAdminStats(statsData);
+                    const res = await apiFetch('/api/admin/transactions'); const data = await res.json(); setTransactions(data.transactions || []); 
+                    const statsRes = await apiFetch('/api/admin/stats'); const statsData = await statsRes.json(); setAdminStats(statsData);
                 } catch(e) {} 
             };
 
@@ -306,24 +343,53 @@
                 .catch(e => { setUserData({ credits: 0, role: 'user', has_bought_3000: false }); }); 
             };
 
-            const handleCredentialResponse = (response) => {
-                const base64Url = response.credential.split('.')[1];
-                const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-                const payload = JSON.parse(decodeURIComponent(atob(base64).split('').map(function(c) { return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); }).join('')));
-                const uData = { name: payload.name, email: payload.email, picture: payload.picture };
-                setUser(uData); setSafeStorage('userProfile', uData); fetchUserData(payload.email);
+            const handleCredentialResponse = async (response) => {
+                try {
+                    const authRes = await fetch('/api/auth/google', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({credential:response.credential}) });
+                    const data = await authRes.json(); if (!authRes.ok) throw new Error(data.detail || 'Google sign-in failed');
+                    const uData = data.user || {name:data.email.split('@')[0], email:data.email, picture:''};
+                    setSessionToken(data.token); setSafeStorage('sessionToken', data.token); setUser(uData); setSafeStorage('userProfile', uData); setUserData(data);
+                } catch (e) { alert(e.message); }
             };
 
-            useEffect(() => {
-                if(user) fetchUserData(user.email);
+                        useEffect(() => {
+                if(user && sessionToken) fetchUserData(user.email);
+                else if (user && !sessionToken) { setUser(null); setUserData(null); setSafeStorage('userProfile', null); }
                 if (!user && window.google) {
+
                     window.google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredentialResponse });
                     const btnContainer = document.getElementById("google-login-btn");
                     if (btnContainer) window.google.accounts.id.renderButton(btnContainer, { theme: isDark ? "filled_black" : "outline", size: "large", shape: "pill" });
                 }
-            }, [user, isDark, currentView]);
+            }, [user, sessionToken, isDark, currentView]);
 
-            const handleLogout = () => { setUser(null); setUserData(null); setSafeStorage('userProfile', null); setCurrentView('home'); };
+            const authHeaders = () => ({ ...(sessionToken ? {Authorization:`Bearer ${sessionToken}`} : {}), 'x-user-email': user?.email || '' });
+            const apiFetch = (url, options = {}) => fetch(url, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
+
+            const resetToolState = () => {
+                if (animationRef.current) cancelAnimationFrame(animationRef.current);
+                isRecordingRef.current = false;
+                if (videoUrl) URL.revokeObjectURL(videoUrl);
+                if (finalVideoUrl) URL.revokeObjectURL(finalVideoUrl);
+                if (previewVideoUrl) URL.revokeObjectURL(previewVideoUrl);
+                if (ttsAudioUrl) URL.revokeObjectURL(ttsAudioUrl);
+                setVideoFile(null); setVideoUrl(''); setFinalVideoUrl(''); setPreviewVideoUrl(''); setTtsAudioUrl('');
+                setSystemLogs([]); setRenderProgress(0); setProcessStage(''); setErrorMsg(''); setTtsError(''); setSocialContent(null);
+                setTtsTextInput(''); setIsTtsGenerating(false); setIsRecapProcessing(false);
+                extractionDataRef.current = null; translatedBlocksRef.current = null; syncTimelineRef.current = null; finalAudioUrlRef.current = null; hookDataRef.current = null; aiBlurBoxRef.current = null; totalAudioDurRef.current = 0;
+            };
+            const navigateHome = () => { resetToolState(); setCurrentView('home'); };
+            const openTool = (view) => { resetToolState(); setCurrentView(view); };
+            const handleLogout = () => { resetToolState(); setUser(null); setUserData(null); setSessionToken(''); setSafeStorage('userProfile', null); setSafeStorage('sessionToken', null); setCurrentView('home'); };
+
+            const loadNotifications = async () => { if (!user) return; try { const r = await apiFetch('/api/notifications'); const d = await r.json(); setNotifications(d.notifications || []); } catch (e) {} };
+            const loadHistory = async () => { if (!user) return; try { const [h, c, o] = await Promise.all([apiFetch('/api/history/videos'), apiFetch('/api/credit-history'), apiFetch('/api/orders/me')]); setHistoryItems((await h.json()).items || []); setCreditHistory((await c.json()).transactions || []); const od = await o.json(); setMyOrders(od.orders || []); } catch (e) {} };
+            const loadStore = async () => { setStoreLoading(true); try { const r = await fetch('/api/products'); const d = await r.json(); setStoreProducts(d.products || []); } catch (e) {} finally { setStoreLoading(false); } };
+            const loadMessages = async (peer = '') => { if (!user) return; const target = peer || (userData?.role === 'admin' ? adminChatPeer : ''); try { const r = await apiFetch(`/api/messages${target ? `?peer=${encodeURIComponent(target)}` : ''}`); const d = await r.json(); setMessages(d.messages || []); setMessagePeer(target); } catch (e) {} };
+            const openStore = () => { setCurrentView('store'); loadStore(); loadNotifications(); };
+            const openHistory = () => { setCurrentView('history'); loadHistory(); };
+            const openMessages = () => { setCurrentView('messages'); loadMessages(''); loadNotifications(); };
+            useEffect(() => { if (user && sessionToken) loadNotifications(); }, [user, sessionToken, currentView]);
 
             const neoClass = isDark ? "bg-slate-800 shadow-[6px_6px_12px_#0f172a,-6px_-6px_12px_#334155] border-none text-slate-200" : "bg-[#e0e5ec] shadow-[6px_6px_12px_#b8b9be,-6px_-6px_12px_#ffffff] border-none text-slate-700";
             const neoPressedClass = isDark ? "bg-slate-800 shadow-[inset_6px_6px_12px_#0f172a,inset_-6px_-6px_12px_#334155] border-none text-slate-200" : "bg-[#e0e5ec] shadow-[inset_6px_6px_12px_#b8b9be,inset_-6px_-6px_12px_#ffffff] border-none text-slate-700";
@@ -370,15 +436,25 @@
                 try { await fetch('/api/buy-credits', { method: 'POST', body: formData }); alert("ငွေလွှဲပြေစာ ပေးပို့ပြီးပါပြီ။ Admin အတည်ပြုပေးပါမည်။"); } catch(e) {}
                 setIsUploadingPayment(false); setBuyModalOpen(false); setPaymentProof(null);
             };
-            const approveTransaction = async (id, email, amount) => { await fetch('/api/admin/approve', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id, email, amount}) }); alert(`${email} သို့ Credits ထည့်ပြီးပါပြီ`); loadAdminData(); };
-            const saveAdminSettings = async () => { await fetch('/api/admin/settings', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(globalSettings) }); alert('Settings ပြင်ဆင်ပြီးပါပြီ!'); };
+            const approveTransaction = async (id, email, amount) => { const r = await apiFetch('/api/admin/approve', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id}) }); const d = await r.json(); if (!r.ok) return alert(d.detail || 'Approve failed'); alert(`${email} သို့ Credits ထည့်ပြီးပါပြီ`); loadAdminData(); };
+            const saveAdminSettings = async () => { const r = await apiFetch('/api/admin/settings', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(globalSettings) }); if (!r.ok) return alert('Settings save failed'); alert('Settings ပြင်ဆင်ပြီးပါပြီ!'); };
             const handleManualCreditAdd = async (e) => {
                 e.preventDefault();
-                await fetch('/api/admin/add-credit', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: manualCredit.email, amount: parseInt(manualCredit.amount)}) });
+                await apiFetch('/api/admin/add-credit', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: manualCredit.email, amount: parseInt(manualCredit.amount)}) });
                 alert(`${manualCredit.email} သို့ Credit ဖြည့်ပေးပြီးပါပြီ`); setManualCredit({email: '', amount: 0});
             };
+            const loadAdminExtended = async () => {
+                try { const [p,o,c] = await Promise.all([apiFetch('/api/admin/products'), apiFetch('/api/admin/orders'), apiFetch('/api/admin/messages/conversations')]); setAdminProducts((await p.json()).products || []); setAdminOrders((await o.json()).orders || []); setAdminConversations((await c.json()).conversations || []); } catch (e) {}
+            };
+            const createAdminProduct = async (e) => {
+                e.preventDefault(); if (!productForm.image) return alert('Product photo ထည့်ပေးပါ။');
+                const form = new FormData(); Object.entries(productForm).forEach(([key,value]) => { if (key !== 'image' && key !== 'payment_accounts') form.append(key, value); }); form.append('payment_accounts_json', JSON.stringify(productForm.payment_accounts)); form.append('image', productForm.image);
+                try { const r = await apiFetch('/api/admin/products', {method:'POST', body:form}); const d = await r.json(); if (!r.ok) throw new Error(d.detail || 'Product မဖန်တီးနိုင်ပါ'); alert('Product ဖန်တီးပြီး Store ထဲတင်ပြီးပါပြီ။'); setProductForm({name:'',category:'',description:'',price_credits:'',has_expiry:false,expiry_at:'',delivery_link:'',image:null,payment_accounts:[{provider:'KBZPay',number:'',holder:''}]}); loadAdminExtended(); } catch (err) { alert(err.message); }
+            };
+            const approveStoreOrder = async (order) => { const link = prompt('ပို့မည့် Product link ထည့်ပါ', order.delivery_link || ''); if (link === null) return; const note = prompt('User သို့ပို့မည့် message', 'သင်ဝယ်ယူထားသော Product ကို ပို့ပေးပြီးပါပြီ။') || ''; const r = await apiFetch(`/api/admin/orders/${order.id}/approve`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({delivery_link:link, message:note})}); const d = await r.json(); if (!r.ok) return alert(d.detail || 'Approve failed'); alert('Order အတည်ပြုပြီး Gmail နှင့် User notification ပို့ပြီးပါပြီ။'); loadAdminExtended(); };
+            const openAdminConversation = (email) => { setAdminChatPeer(email); setCurrentView('admin_messages'); loadMessages(email); };
 
-            const handleVideoUpload = (e) => { const file = e.target.files[0]; if (!file) return; setVideoFile(file); setVideoUrl(URL.createObjectURL(file)); setFinalVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProcessStage(''); setErrorMsg(''); aiBlurBoxRef.current = null; hookDataRef.current = null; setSocialContent(null); loadFastFFmpeg().catch(() => {}); };
+            const handleVideoUpload = (e) => { const file = e.target.files[0]; if (!file) return; setVideoFile(file); setVideoUrl(URL.createObjectURL(file)); setFinalVideoUrl(''); setPreviewVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProcessStage(''); setErrorMsg(''); aiBlurBoxRef.current = null; hookDataRef.current = null; setSocialContent(null); loadFastFFmpeg().catch(() => {}); };
 
             const performAiBlurDetection = async () => {
                 if (!autoBlurCaption || !videoFile) return;
@@ -527,53 +603,93 @@
                 videoSource.connect(videoGain); audioSource.connect(audioGain);
                 videoGain.connect(audioDest); audioGain.connect(audioDest);
                 
-                let canvasStream; try { canvasStream = canvas.captureStream(60); } catch (e) { try { canvasStream = canvas.mozCaptureStream(60); } catch(err) { return reject(err); } }
+                                // Mobile browsers can sustain 30 fps much more reliably than 60 fps for long videos.
+                let canvasStream; try { canvasStream = canvas.captureStream(30); } catch (e) { try { canvasStream = canvas.mozCaptureStream(30); } catch(err) { return reject(err); } }
                 let mimeType = 'video/webm; codecs=vp8,opus'; if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
-                let mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: 3000000 });
-                const recordedChunks = []; let isStopped = false;
-                
-                // 🌟 Fast FFmpeg.wasm Finalize Step
-                const finalize = async () => { 
-                    if (isStopped) return; isStopped = true; 
+                const mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: 2500000 });
+                const recordedChunks = []; let isStopped = false; let stopRequested = false;
+
+                const cleanupRender = () => {
+                    if (animationRef.current) cancelAnimationFrame(animationRef.current);
+                    video.pause(); audio.pause();
+                };
+
+                const failRender = (message, error) => {
+                    if (isStopped) return;
+                    isStopped = true; isRecordingRef.current = false; cleanupRender();
+                    addSysLog(`${message}: ${error?.message || error || 'Unknown error'}`);
+                    setErrorMsg(`${message}။ အခြား video ဖြင့်ပြန်စမ်းပါ၊ သို့မဟုတ် page ကို refresh လုပ်ပြီး ထပ်စမ်းပါ။`);
+                    setIsRecapProcessing(false); setProcessStage('');
+                    if (mediaRecorder.state === 'recording') { try { mediaRecorder.stop(); } catch (e) {} }
+                    reject(error instanceof Error ? error : new Error(message));
+                };
+
+                // Finalize runs only after MediaRecorder has emitted its last dataavailable event and stopped.
+                const finalize = async () => {
+                    if (isStopped) return; isStopped = true; cleanupRender();
                     setProcessStage("Browser အတွင်း MP4 အမြန်ပြောင်းလဲနေပါသည် (FFmpeg.wasm)...");
                     try {
-                        const rawBlob = new Blob(recordedChunks, { type: mimeType }); 
-                        
+                        if (!recordedChunks.length) throw new Error('WebM recording data မရရှိပါ။');
+                        const rawBlob = new Blob(recordedChunks, { type: mimeType });
+                        // WebM is the original complete MediaRecorder output and is the safest source for in-page playback.
+                        setPreviewVideoUrl(URL.createObjectURL(rawBlob));
                         const ffmpeg = await loadFastFFmpeg();
                         const { fetchFile } = FFmpeg;
                         try { ffmpeg.FS('unlink', 'input.webm'); } catch (e) {}
                         try { ffmpeg.FS('unlink', 'output.mp4'); } catch (e) {}
                         ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
-                        
-                        // Keep the recorded VP8 video stream and encode only audio for a fast, playable MP4.
                         addSysLog("MP4 Format သို့ အမြန်ဆုံးပြောင်းလဲနေပါသည် (video copy + AAC audio)...");
                         await ffmpeg.run('-i', 'input.webm', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', 'output.mp4');
-                        
                         const data = ffmpeg.FS('readFile', 'output.mp4');
-                        const finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
-                        
-                        setFinalVideoUrl(URL.createObjectURL(finalBlob)); 
+                        // Preserve Uint8Array boundaries. data.buffer can include unrelated WASM-memory bytes on some devices.
+                        const mp4Blob = new Blob([data], { type: 'video/mp4' });
+                        setFinalVideoUrl(URL.createObjectURL(mp4Blob));
+                        await saveRenderedVideoHistory(mp4Blob, mode);
                         addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
-                    } catch (err) { 
-                        addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ (WebM ကိုသာ ပြပေးပါမည်): ${err.message}`); 
-                        setFinalVideoUrl(URL.createObjectURL(new Blob(recordedChunks, { type: mimeType }))); 
+                    } catch (err) {
+                        addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ (WebM ကိုသာ ပြပေးပါမည်): ${err.message}`);
+                        const webmFallbackBlob = new Blob(recordedChunks, { type: mimeType });
+                        setPreviewVideoUrl(URL.createObjectURL(webmFallbackBlob));
+                        setFinalVideoUrl(URL.createObjectURL(webmFallbackBlob));
                     }
-                    setIsRecapProcessing(false); setProcessStage(""); setRenderProgress(100); isRecordingRef.current = false; resolve(); 
+                    setIsRecapProcessing(false); setProcessStage(''); setRenderProgress(100); isRecordingRef.current = false; resolve();
                 };
-                
-                mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); }; mediaRecorder.onstop = finalize;
-                
+
+                const stopRecorder = (reason) => {
+                    if (stopRequested || isStopped) return;
+                    stopRequested = true; addSysLog(reason);
+                    if (mediaRecorder.state === 'recording') {
+                        try { mediaRecorder.requestData(); } catch (e) {}
+                        mediaRecorder.stop();
+                    } else if (mediaRecorder.state === 'inactive') {
+                        finalize();
+                    }
+                };
+
+                mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+                mediaRecorder.onstop = finalize;
+                mediaRecorder.onerror = (e) => failRender('WebM recorder error', e.error || new Error('MediaRecorder error'));
+                video.onerror = () => failRender('Video decode မအောင်မြင်ပါ', video.error || new Error('Video playback error'));
+                audio.onerror = () => failRender('Audio playback မအောင်မြင်ပါ', audio.error || new Error('Audio playback error'));
+                audio.onstalled = () => addSysLog('Audio buffering ဖြစ်နေပါသည်၊ render ကိုစောင့်နေပါသည်...');
+
                 let renderPhase = (autoHookRef.current && hookDataRef.current) ? 'hook' : 'main';
-                isRecordingRef.current = true; 
-                
+                isRecordingRef.current = true;
                 videoGain.gain.value = renderPhase === 'hook' ? 1 : (mode === 'recap' ? 0 : 1);
                 audioGain.gain.value = renderPhase === 'hook' ? 0 : (mode === 'recap' ? 1 : 0);
-                
-                mediaRecorder.start(100); 
-                if (renderPhase === 'hook') { video.currentTime = hookDataRef.current.start; video.play(); audio.play(); } 
-                else { video.currentTime = 0; video.play(); audio.play(); }
-                
-                let lastUiUpdate = 0; let currentEventIndex = -1; let activeText = ""; let lastDrawTime = 0; const fpsInterval = 1000 / 60; const renderStartTime = performance.now();
+
+                if (renderPhase === 'hook') { video.currentTime = hookDataRef.current.start; } else { video.currentTime = 0; }
+                try {
+                    mediaRecorder.start(1000);
+                    await Promise.all([video.play(), audio.play()]);
+                } catch (err) {
+                    failRender('Video/Audio playback စတင်မရပါ', err);
+                    return;
+                }
+
+                let lastUiUpdate = 0; let currentEventIndex = -1; let activeText = ""; let lastDrawTime = 0; const fpsInterval = 1000 / 30; const renderStartTime = performance.now();
+                let lastMediaTime = audio.currentTime; let lastMediaAdvanceAt = renderStartTime;
+
                 let isCurrentlyFrozen = false; let lastFreezeEndRealTime = renderStartTime; let freezeStartRealTime = 0;
                 const offscreenCanvas = document.createElement('canvas'); const offscreenCtx = offscreenCanvas.getContext('2d', { alpha: false });
                 
@@ -589,7 +705,9 @@
                     } else {
                         const currentAudioTime = audio.currentTime; const targetDur = mode === 'recap' ? totalAudioDur : video.duration;
                         if (nowReal - lastUiUpdate > 250) { setRenderProgress(Math.min(99, 80 + Math.floor((currentAudioTime / (targetDur || 1)) * 15))); lastUiUpdate = nowReal; }
-                        if (currentAudioTime >= (targetDur || 1) - 0.1 || audio.ended || (mode==='subtitle' && video.ended)) { mediaRecorder.stop(); setTimeout(finalize, 500); return; }
+                        if (currentAudioTime > lastMediaTime + 0.02) { lastMediaTime = currentAudioTime; lastMediaAdvanceAt = nowReal; }
+                        if (nowReal - lastMediaAdvanceAt > 20000) { failRender('WebM render ရပ်တန့်နေပါသည်', new Error('Audio/video playback time did not advance for 20 seconds')); return; }
+                        if (currentAudioTime >= (targetDur || 1) - 0.1 || audio.ended || (mode==='subtitle' && video.ended)) { stopRecorder('WebM Render ပြီးဆုံးပါပြီ။ Final file ပြင်ဆင်နေပါသည်...'); return; }
                         
                         if (mode === 'recap') {
                             let eventIndex = syncTimeline.findIndex(e => currentAudioTime >= e.startReal && currentAudioTime < e.endReal);
@@ -686,7 +804,45 @@
                 setIsGeneratingSocial(false);
             };
 
+                        const saveRenderedVideoHistory = async (blob, toolName) => {
+                if (!user || !blob) return;
+                try {
+                    const form = new FormData();
+                    form.append('file', blob, `AI_Studio_${Date.now()}.mp4`);
+                    form.append('title', `${toolName === 'recap' ? 'One Click Recap' : 'AI Subtitle'} video`);
+                    form.append('tool', toolName);
+                    await apiFetch('/api/history/videos', { method: 'POST', body: form });
+                } catch (e) { addSysLog('History သိမ်းဆည်းခြင်း မအောင်မြင်ပါ။'); }
+            };
+
+            const submitStoreOrder = async () => {
+                if (!selectedProduct || !deliveryEmail.trim()) return alert('ပစ္စည်းရောက်မည့် Gmail ထည့်ပေးပါ။');
+                try {
+                    if (storePaymentMode === 'credit') {
+                        const r = await apiFetch('/api/orders/credit', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ product_id:selectedProduct.id, delivery_email:deliveryEmail.trim() }) });
+                        const d = await r.json(); if (!r.ok) throw new Error(d.detail || d.error || 'ဝယ်ယူ၍မရပါ');
+                        setUserData(prev => ({...prev, credits:d.credits})); alert('ဝယ်ယူမှုအောင်မြင်ပါသည်။ Product link ကို Gmail သို့ပို့ပေးပါမည်။');
+                    } else {
+                        if (!storeReceipt || !storePaymentNumber.trim()) return alert('ငွေလွှဲနံပါတ်နှင့် ပြေစာထည့်ပေးပါ။');
+                        const form = new FormData(); form.append('product_id', selectedProduct.id); form.append('delivery_email', deliveryEmail.trim()); form.append('payment_provider', storePaymentProvider); form.append('payment_number', storePaymentNumber.trim()); form.append('receipt', storeReceipt);
+                        const r = await apiFetch('/api/orders/transfer', {method:'POST', body:form}); const d = await r.json(); if (!r.ok) throw new Error(d.detail || 'Order မတင်နိုင်ပါ'); alert('Order တင်ပြီးပါပြီ။ Admin အတည်ပြုပြီး Gmail သို့ပို့ပေးပါမည်။');
+                    }
+                    setStoreCheckoutOpen(false); setSelectedProduct(null); setStoreReceipt(null); setDeliveryEmail(''); setStorePaymentNumber(''); loadHistory(); loadNotifications();
+                } catch (e) { alert(e.message); }
+            };
+
+            const sendChatMessage = async () => {
+                const recipient = userData?.role === 'admin' ? adminChatPeer : '';
+                if (!recipient && userData?.role !== 'admin') { /* backend resolves the admin */ }
+                if (!messageText.trim() && !messageAttachment) return;
+                const form = new FormData(); form.append('recipient_email', recipient); form.append('body', messageText.trim()); if (messageAttachment) form.append('attachment', messageAttachment);
+                try { const r = await apiFetch('/api/messages', {method:'POST', body:form}); const d = await r.json(); if (!r.ok) throw new Error(d.detail || 'Message မပို့နိုင်ပါ'); setMessages(prev => [...prev, d.message]); setMessageText(''); setMessageAttachment(null); loadMessages(recipient); } catch (e) { alert(e.message); }
+            };
+
+            const handleHistoryDelete = async (id) => { if (!confirm('ဒီ video ကို ဖျက်မလား?')) return; await apiFetch(`/api/history/videos/${id}`, {method:'DELETE'}); loadHistory(); };
+
             const handleProcess = async (type) => {
+
                 if (!videoFile) return;
                 try { const ctxCheck = new (window.AudioContext || window.webkitAudioContext)(); if (ctxCheck.state === 'suspended') await ctxCheck.resume(); } catch (e) {}
                 
@@ -697,7 +853,7 @@
                     if (checkData.error) return alert(checkData.error);
                 } catch(e) {} 
 
-                setIsRecapProcessing(true); setErrorMsg(''); setSystemLogs([]); setRenderProgress(0); setFinalVideoUrl(''); setSocialContent(null);
+                setIsRecapProcessing(true); setErrorMsg(''); setSystemLogs([]); setRenderProgress(0); setFinalVideoUrl(''); setPreviewVideoUrl(''); setSocialContent(null);
                 let currentStep = 1;
                 while (currentStep <= 5) {
                     try {
@@ -824,7 +980,7 @@
 
             const renderTopNavigation = (title, icon) => (
                 <header className={`flex flex-col md:flex-row justify-between items-center p-6 rounded-3xl mb-8 ${neoClass} animate-in slide-in-from-top-4`}>
-                    <div className="flex items-center w-full md:w-auto mb-4 md:mb-0 gap-4"><button onClick={() => setCurrentView('home')} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="Back to Home"><ChevronLeft className="w-6 h-6 text-indigo-500" /></button><h1 className={`text-xl md:text-3xl font-black flex items-center gap-3 tracking-tight ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{icon} {title}</h1></div>
+                    <div className="flex items-center w-full md:w-auto mb-4 md:mb-0 gap-4"><button onClick={navigateHome} className={`p-3 rounded-2xl flex items-center justify-center ${neoBtnClass}`} title="Back to Home"><ChevronLeft className="w-6 h-6 text-indigo-500" /></button><h1 className={`text-xl md:text-3xl font-black flex items-center gap-3 tracking-tight ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{icon} {title}</h1></div>
                     <div className="flex items-center gap-4">
                         {user && (
                             <div className="flex items-center gap-2 mr-2">
@@ -839,7 +995,7 @@
                             </div>
                         )}
                         {userData?.role === 'admin' && (
-                            <button onClick={() => {setCurrentView('admin'); loadAdminData();}} className="relative p-3 bg-red-500 text-white hover:bg-red-600 rounded-2xl shadow-lg font-bold flex items-center justify-center mr-2">
+                            <button onClick={() => {setCurrentView('admin'); loadAdminData(); loadAdminExtended();}} className="relative p-3 bg-red-500 text-white hover:bg-red-600 rounded-2xl shadow-lg font-bold flex items-center justify-center mr-2">
                                 Admin View {transactions.length > 0 && <span className="absolute -top-2 -right-2 bg-yellow-400 text-black w-6 h-6 rounded-full flex items-center justify-center text-xs font-black animate-bounce">{transactions.length}</span>}
                             </button>
                         )}
@@ -849,7 +1005,35 @@
                 </header>
             );
 
+                        const renderNoticeStrip = () => notifications.filter(n => !n.is_read).slice(0, 2).map(n => <div key={n.id} className={`p-3 rounded-2xl mb-3 border border-indigo-400/20 ${neoPressedClass}`}><div className="font-bold text-sm">{n.title}</div><div className="text-xs opacity-70 mt-1 whitespace-pre-line">{n.body}</div></div>);
+
+            const renderStoreView = () => {
+                const categories = ['all', ...Array.from(new Set(storeProducts.map(p => p.category)))];
+                const visibleProducts = storeProducts.filter(p => storeCategory === 'all' || p.category === storeCategory);
+                return <div className={`min-h-screen font-sans p-4 md:p-8 transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                    <div className="max-w-6xl mx-auto space-y-6">{renderTopNavigation('Online Store', <StoreIcon className="w-8 h-8 text-amber-500"/>)}
+                        {renderNoticeStrip()}
+                        <div className={`p-5 rounded-3xl ${neoClass}`}><div className="flex flex-col md:flex-row gap-4 md:items-center md:justify-between"><div><h2 className="text-2xl font-black">Digital Products</h2><p className="opacity-60 text-sm mt-1">Product ရွေးပြီး Credit သို့မဟုတ် ငွေလွှဲဖြင့် ဝယ်ယူနိုင်ပါသည်။</p></div><div className="flex gap-2 flex-wrap">{categories.map(c => <button key={c} onClick={() => setStoreCategory(c)} className={`px-4 py-2 rounded-xl text-sm font-bold ${storeCategory === c ? 'bg-amber-500 text-black' : neoBtnClass}`}>{c === 'all' ? 'အားလုံး' : c}</button>)}</div></div></div>
+                        {storeLoading ? <div className={`p-12 rounded-3xl text-center ${neoClass}`}><Loader2 className="w-10 h-10 animate-spin mx-auto text-amber-500"/></div> : visibleProducts.length === 0 ? <div className={`p-12 rounded-3xl text-center opacity-60 ${neoClass}`}>Product မရှိသေးပါ။</div> : <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">{visibleProducts.map(p => <article key={p.id} className={`overflow-hidden rounded-3xl ${neoClass}`}><div className="aspect-[4/3] bg-slate-950/20 overflow-hidden">{p.image_url ? <img src={p.image_url} className="w-full h-full object-cover"/> : <div className="h-full flex items-center justify-center"><StoreIcon className="w-16 h-16 opacity-30"/></div>}</div><div className="p-5"><div className="flex justify-between gap-3 items-start"><span className="text-xs font-bold px-2 py-1 rounded-lg bg-amber-500/15 text-amber-500">{p.category}</span><span className="text-xs opacity-50">{p.has_expiry && p.expiry_at ? `သက်တမ်း ${new Date(p.expiry_at).toLocaleDateString()}` : 'သက်တမ်းမရှိ'}</span></div><h3 className="text-xl font-black mt-4">{p.name}</h3><p className="text-sm opacity-65 mt-2 min-h-10 whitespace-pre-line">{p.description}</p><div className="flex justify-between items-center mt-5"><strong className="text-xl text-amber-500">{Number(p.price_credits).toLocaleString()} CR</strong><button onClick={() => {setSelectedProduct(p);setDeliveryEmail(user?.email || '');setStoreCheckoutOpen(true);}} className="px-4 py-3 rounded-xl bg-amber-500 text-black font-black">ဝယ်မည်</button></div></div></article>)}</div>}
+                    </div>
+                    {storeCheckoutOpen && selectedProduct && <div className="fixed inset-0 z-[1000] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"><div className={`w-full max-w-lg rounded-3xl p-6 my-8 ${neoClass}`}><div className="flex justify-between items-center mb-5"><div><h2 className="text-2xl font-black">{selectedProduct.name}</h2><p className="text-amber-500 font-black mt-1">{Number(selectedProduct.price_credits).toLocaleString()} Credits</p></div><button onClick={() => setStoreCheckoutOpen(false)} className={`p-2 rounded-xl ${neoBtnClass}`}><XIcon/></button></div><label className="text-sm font-bold opacity-70">ပစ္စည်းပို့မည့် Gmail</label><input type="email" value={deliveryEmail} onChange={e=>setDeliveryEmail(e.target.value)} placeholder="you@gmail.com" className={`w-full p-4 rounded-xl mt-2 mb-5 outline-none ${neoPressedClass}`}/><div className="grid grid-cols-2 gap-2 mb-5"><button onClick={()=>setStorePaymentMode('credit')} className={`py-3 rounded-xl font-bold ${storePaymentMode==='credit'?'bg-indigo-500 text-white':neoBtnClass}`}>Credit နုတ်မည်</button><button onClick={()=>setStorePaymentMode('transfer')} className={`py-3 rounded-xl font-bold ${storePaymentMode==='transfer'?'bg-indigo-500 text-white':neoBtnClass}`}>ငွေလွှဲမည်</button></div>{storePaymentMode==='transfer' && <div className={`p-4 rounded-2xl mb-5 ${neoPressedClass}`}><p className="text-sm font-bold mb-3">Payment account</p><div className="space-y-2">{(selectedProduct.payment_accounts || []).map((a,i)=><div key={i} className="text-sm"><b>{a.provider}</b> — {a.number}{a.holder ? ` (${a.holder})` : ''}</div>)}</div><select value={storePaymentProvider} onChange={e=>setStorePaymentProvider(e.target.value)} className={`w-full p-3 rounded-xl mt-4 outline-none ${neoClass}`}><option>KBZPay</option><option>WavePay</option><option>AYA Pay</option><option>Other</option></select><input value={storePaymentNumber} onChange={e=>setStorePaymentNumber(e.target.value)} placeholder="ငွေလွှဲခဲ့သော ဖုန်းနံပါတ်" className={`w-full p-3 rounded-xl mt-3 outline-none ${neoClass}`}/><label className={`mt-3 p-3 rounded-xl border border-dashed flex items-center justify-center gap-2 cursor-pointer ${neoClass}`}><Upload className="w-4 h-4"/>{storeReceipt ? storeReceipt.name : 'ပြေစာ screenshot တင်ပါ'}<input type="file" accept="image/*" className="hidden" onChange={e=>setStoreReceipt(e.target.files[0])}/></label></div>}<button onClick={submitStoreOrder} className="w-full py-4 rounded-2xl bg-amber-500 text-black font-black">ဝယ်ယူမှု အတည်ပြုမည်</button></div></div>}
+                </div>;
+            };
+
+            const renderHistoryView = () => <div className={`min-h-screen font-sans p-4 md:p-8 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}><div className="max-w-6xl mx-auto space-y-6">{renderTopNavigation('My History', <HistoryIcon className="w-8 h-8 text-indigo-500"/>)}<div className="grid grid-cols-1 lg:grid-cols-2 gap-6"><div className={`p-6 rounded-3xl ${neoClass}`}><h2 className="text-xl font-black mb-5">လုပ်ထားသော Video များ <span className="text-xs opacity-50">(48 နာရီအတွင်း)</span></h2>{historyItems.length===0?<p className="opacity-60">Video history မရှိသေးပါ။</p>:<div className="space-y-4">{historyItems.map(v=><div key={v.id} className={`p-3 rounded-2xl flex gap-3 items-center ${neoPressedClass}`}><video src={v.url} controls preload="metadata" className="w-32 h-20 rounded-xl object-cover bg-black"/><div className="min-w-0 flex-1"><p className="font-bold truncate">{v.title}</p><p className="text-xs opacity-60">{v.tool} · ဖျက်မည့်အချိန် {new Date(v.expires_at).toLocaleString()}</p></div><button onClick={()=>handleHistoryDelete(v.id)} className="p-2 rounded-xl text-red-500"><Trash2 className="w-5 h-5"/></button></div>)}</div>}</div><div className={`p-6 rounded-3xl ${neoClass}`}><h2 className="text-xl font-black mb-5">Credit / Order History</h2><div className="space-y-3">{creditHistory.map(t=><div key={t.id} className={`p-3 rounded-xl flex justify-between ${neoPressedClass}`}><span><b>{Number(t.amount).toLocaleString()} Credits</b><small className="block opacity-50">{t.created_at ? new Date(t.created_at).toLocaleString() : ''}</small></span><span className={`text-xs font-black ${t.status==='approved'?'text-green-500':t.status==='rejected'?'text-red-500':'text-yellow-500'}`}>{t.status}</span></div>)}{myOrders.map(o=><div key={o.id} className={`p-3 rounded-xl flex justify-between ${neoPressedClass}`}><span><b>{o.product_name}</b><small className="block opacity-50">{o.created_at ? new Date(o.created_at).toLocaleString() : ''}</small></span><span className="text-xs font-black text-indigo-500">{o.status}</span></div>)}{!creditHistory.length&&!myOrders.length&&<p className="opacity-60">History မရှိသေးပါ။</p>}</div></div></div></div></div>;
+
+            const renderNotificationsView = () => <div className={`min-h-screen font-sans p-4 md:p-8 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}><div className="max-w-4xl mx-auto">{renderTopNavigation('Notifications', <BellIcon className="w-8 h-8 text-yellow-500"/>)}<div className="flex justify-end mb-4"><button onClick={async()=>{await apiFetch('/api/notifications/read',{method:'POST'});loadNotifications()}} className={`px-4 py-2 rounded-xl font-bold ${neoBtnClass}`}>အားလုံးဖတ်ပြီး</button></div><div className="space-y-3">{notifications.map(n=><div key={n.id} className={`p-5 rounded-2xl ${n.is_read?neoClass:'border border-yellow-500/40 '+neoPressedClass}`}><div className="flex justify-between gap-3"><b>{n.title}</b><small className="opacity-50">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</small></div><p className="text-sm opacity-75 whitespace-pre-line mt-2">{n.body}</p></div>)}{!notifications.length&&<div className={`p-12 rounded-3xl text-center opacity-60 ${neoClass}`}>Notification မရှိသေးပါ။</div>}</div></div></div>;
+
+            const renderMessagesView = (adminMode = false) => <div className={`min-h-screen font-sans p-4 md:p-8 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}><div className="max-w-5xl mx-auto">{renderTopNavigation(adminMode ? 'Admin Message Center' : 'Message Center', <MessageIcon className="w-8 h-8 text-sky-500"/>)}<div className="grid grid-cols-1 md:grid-cols-4 gap-5"><div className={`p-4 rounded-3xl ${neoClass}`}>{adminMode ? <>{adminConversations.map(c=><button key={c.email} onClick={()=>{setAdminChatPeer(c.email);loadMessages(c.email)}} className={`w-full text-left p-3 rounded-xl mb-2 ${adminChatPeer===c.email?'bg-sky-500 text-white':neoPressedClass}`}><b className="block truncate">{c.email}</b><small>{c.unread ? `${c.unread} unread` : 'Open chat'}</small></button>)}{!adminConversations.length&&<p className="text-sm opacity-60">Conversation မရှိသေးပါ။</p>}</> : <div className="p-3 rounded-xl bg-sky-500/10 text-sm">Admin Support<br/><span className="opacity-60">စာ၊ ပုံ၊ အသံ၊ video ပို့နိုင်သည်</span></div>}</div><div className={`md:col-span-3 p-4 md:p-6 rounded-3xl flex flex-col min-h-[560px] ${neoClass}`}><div className="flex-1 overflow-y-auto space-y-3 pr-1">{messages.map(m=><div key={m.id} className={`max-w-[85%] ${m.sender_email===user?.email?'ml-auto':''}`}><div className={`p-3 rounded-2xl ${m.sender_email===user?.email?'bg-sky-500 text-white':'bg-black/10'}`}><p className="text-sm whitespace-pre-line">{m.body}</p>{m.attachment && (m.attachment.content_type?.startsWith('image/')?<img src={m.attachment.url} className="max-w-full rounded-xl mt-2"/>:m.attachment.content_type?.startsWith('video/')?<video src={m.attachment.url} controls className="max-w-full rounded-xl mt-2"/>:<audio src={m.attachment.url} controls className="w-full mt-2"/>)}<small className="block opacity-60 text-[10px] mt-2">{m.created_at ? new Date(m.created_at).toLocaleString() : ''}</small></div></div>)}</div><div className="flex gap-2 pt-4 mt-4 border-t border-current/10"><label className={`p-3 rounded-xl cursor-pointer ${neoBtnClass}`}><Upload className="w-5 h-5"/><input type="file" accept="image/*,audio/*,video/*" className="hidden" onChange={e=>setMessageAttachment(e.target.files[0])}/></label><input value={messageText} onChange={e=>setMessageText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChatMessage()}}} placeholder="စာရေးပို့ပါ..." className={`flex-1 p-3 rounded-xl outline-none ${neoPressedClass}`}/><button onClick={sendChatMessage} className="px-5 rounded-xl bg-sky-500 text-white font-black">ပို့မည်</button></div>{messageAttachment&&<p className="text-xs opacity-60 mt-2">ပူးတွဲဖိုင်: {messageAttachment.name}</p>}</div></div></div></div>;
+
+            if (currentView === 'store') return renderStoreView();
+            if (currentView === 'history') return renderHistoryView();
+            if (currentView === 'messages') return renderMessagesView(false);
+            if (currentView === 'notifications') return renderNotificationsView();
+            if (currentView === 'admin_messages' && userData?.role === 'admin') return renderMessagesView(true);
+
             if (currentView === 'admin' && userData?.role === 'admin') {
+
                 return (
                     <div className={`min-h-screen font-sans p-4 md:p-8 transition-colors duration-300 ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                         <div className="max-w-6xl mx-auto space-y-8">
@@ -884,10 +1068,8 @@
                                     <h2 className="text-xl font-bold text-rose-500 mb-6">⚙️ System Settings</h2>
                                     <div className="space-y-4 mb-4">
                                         <div><label className="text-sm font-bold opacity-70">Marquee Announcement</label><textarea value={globalSettings.announcement} onChange={(e) => setGlobalSettings({...globalSettings, announcement: e.target.value})} rows="3" className={`w-full p-4 rounded-xl outline-none resize-none ${neoPressedClass}`}></textarea></div>
-                                        <div className={`flex items-center justify-between gap-4 p-4 rounded-2xl ${neoPressedClass}`}>
-                                            <div><label className="text-sm font-bold block">Marquee Background</label><span className="text-xs opacity-60">ထိပ်က စာတန်းနောက်ခံအရောင်</span></div>
-                                            <div className="flex items-center gap-3"><input type="color" value={globalSettings.marquee_color || '#ef4444'} onChange={(e) => setGlobalSettings({...globalSettings, marquee_color: e.target.value})} className="w-12 h-10 p-1 rounded-lg bg-transparent cursor-pointer" title="Choose marquee color"/><span className="font-mono text-xs uppercase opacity-70">{globalSettings.marquee_color || '#ef4444'}</span></div>
-                                        </div>
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass}`}><label className="text-sm font-bold block mb-2">Marquee Background</label><div className="flex gap-2 flex-wrap items-center">{CAPTION_COLORS.map(c=><button type="button" key={`marquee-${c.hex}`} onClick={()=>setGlobalSettings({...globalSettings,marquee_color:c.hex,announcement_bg:c.hex})} className={`w-7 h-7 rounded-full border-2 ${((globalSettings.announcement_bg||globalSettings.marquee_color)==c.hex)?'border-indigo-500 scale-110':'border-transparent'}`} style={{backgroundColor:c.hex}}/>)}<input type="color" value={globalSettings.announcement_bg || globalSettings.marquee_color || '#ef4444'} onChange={e=>setGlobalSettings({...globalSettings,marquee_color:e.target.value,announcement_bg:e.target.value})} className="w-9 h-9 rounded-full cursor-pointer"/></div></div>
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass}`}><label className="text-sm font-bold block mb-2">Marquee Text Color</label><div className="flex gap-2 flex-wrap items-center">{CAPTION_COLORS.map(c=><button type="button" key={`marquee-text-${c.hex}`} onClick={()=>setGlobalSettings({...globalSettings,announcement_text_color:c.hex})} className={`w-7 h-7 rounded-full border-2 ${(globalSettings.announcement_text_color||'#ffffff')==c.hex?'border-indigo-500 scale-110':'border-transparent'}`} style={{backgroundColor:c.hex}}/>)}<input type="color" value={globalSettings.announcement_text_color || '#ffffff'} onChange={e=>setGlobalSettings({...globalSettings,announcement_text_color:e.target.value})} className="w-9 h-9 rounded-full cursor-pointer"/></div></div>
                                         <div className="grid grid-cols-2 gap-4">
                                             <div><label className="text-sm font-bold opacity-70">Deduct Rate (Credits/Min)</label><input type="number" value={globalSettings.deduction_rate} onChange={e=>setGlobalSettings({...globalSettings, deduction_rate: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
                                             <div><label className="text-sm font-bold opacity-70">Free Daily Limit (Mins)</label><input type="number" value={globalSettings.free_daily_mins} onChange={e=>setGlobalSettings({...globalSettings, free_daily_mins: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/></div>
@@ -895,15 +1077,21 @@
                                     </div>
                                     <button onClick={saveAdminSettings} className="w-full bg-rose-500 text-white py-4 rounded-xl font-bold mt-auto shadow-lg shadow-rose-500/30">Save Settings</button>
                                 </div>
+                                                        </div>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <div className={`p-7 rounded-3xl ${neoClass}`}><div className="flex justify-between items-center mb-5"><h2 className="text-xl font-black text-amber-500">🛍️ Product Create</h2><button onClick={loadAdminExtended} className={`px-3 py-2 rounded-xl text-xs ${neoBtnClass}`}>Refresh</button></div><form onSubmit={createAdminProduct} className="space-y-3"><input required placeholder="Product name" value={productForm.name} onChange={e=>setProductForm({...productForm,name:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/><div className="grid grid-cols-2 gap-3"><input required placeholder="Category" value={productForm.category} onChange={e=>setProductForm({...productForm,category:e.target.value})} className={`p-3 rounded-xl outline-none ${neoPressedClass}`}/><input required type="number" min="1" placeholder="Price in Credits" value={productForm.price_credits} onChange={e=>setProductForm({...productForm,price_credits:e.target.value})} className={`p-3 rounded-xl outline-none ${neoPressedClass}`}/></div><textarea placeholder="Description" value={productForm.description} onChange={e=>setProductForm({...productForm,description:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} rows="3"/><input placeholder="Delivery link (digital product)" value={productForm.delivery_link} onChange={e=>setProductForm({...productForm,delivery_link:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/><label className={`flex gap-3 items-center p-3 rounded-xl cursor-pointer ${neoPressedClass}`}><input type="checkbox" checked={productForm.has_expiry} onChange={e=>setProductForm({...productForm,has_expiry:e.target.checked})}/> သက်တမ်းပါသည်</label>{productForm.has_expiry&&<input required type="datetime-local" value={productForm.expiry_at} onChange={e=>setProductForm({...productForm,expiry_at:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}/>}<label className={`flex gap-3 items-center p-3 rounded-xl cursor-pointer ${neoPressedClass}`}><Upload className="w-5 h-5 text-amber-500"/>{productForm.image?productForm.image.name:'Product photo ရွေးပါ'}<input required={!productForm.image} type="file" accept="image/*" className="hidden" onChange={e=>setProductForm({...productForm,image:e.target.files[0]})}/></label><div className={`p-3 rounded-xl ${neoPressedClass}`}><div className="flex justify-between items-center mb-2"><span className="text-sm font-bold">Payment accounts</span><button type="button" onClick={()=>setProductForm({...productForm,payment_accounts:[...productForm.payment_accounts,{provider:'Other',number:'',holder:''}]})} className="text-xs text-amber-500 font-bold">+ Add</button></div>{productForm.payment_accounts.map((a,i)=><div key={i} className="grid grid-cols-3 gap-2 mb-2"><input placeholder="KPay/Wave" value={a.provider} onChange={e=>{const v=[...productForm.payment_accounts];v[i]={...v[i],provider:e.target.value};setProductForm({...productForm,payment_accounts:v})}} className={`p-2 rounded-lg outline-none text-xs ${neoClass}`}/><input placeholder="Phone number" value={a.number} onChange={e=>{const v=[...productForm.payment_accounts];v[i]={...v[i],number:e.target.value};setProductForm({...productForm,payment_accounts:v})}} className={`p-2 rounded-lg outline-none text-xs ${neoClass}`}/><input placeholder="Holder" value={a.holder} onChange={e=>{const v=[...productForm.payment_accounts];v[i]={...v[i],holder:e.target.value};setProductForm({...productForm,payment_accounts:v})}} className={`p-2 rounded-lg outline-none text-xs ${neoClass}`}/></div>)}</div><button className="w-full py-4 rounded-xl bg-amber-500 text-black font-black">Create & Publish Product</button></form><div className="space-y-2 mt-6">{adminProducts.slice(0,8).map(p=><div key={p.id} className={`flex gap-3 items-center p-3 rounded-xl ${neoPressedClass}`}><img src={p.image_url} className="w-12 h-12 rounded-lg object-cover"/><div className="flex-1 min-w-0"><b className="block truncate">{p.name}</b><small className="opacity-60">{p.category} · {p.price_credits} CR</small></div><button onClick={async()=>{await apiFetch(`/api/admin/products/${p.id}/toggle`,{method:'PATCH'});loadAdminExtended()}} className={`text-xs px-2 py-1 rounded-lg ${p.is_active?'bg-green-500 text-white':'bg-slate-500 text-white'}`}>{p.is_active?'Live':'Off'}</button></div>)}</div></div>
+                                <div className={`p-7 rounded-3xl ${neoClass}`}><h2 className="text-xl font-black text-sky-500 mb-5">📦 Store Orders</h2>{adminOrders.length===0?<p className="opacity-60">Order မရှိသေးပါ။</p>:<div className="space-y-3 max-h-[600px] overflow-y-auto">{adminOrders.map(o=><div key={o.id} className={`p-4 rounded-2xl ${neoPressedClass}`}><div className="flex justify-between gap-3"><div><b>{o.product_name}</b><small className="block opacity-60">{o.buyer_email} · {o.delivery_email}</small></div><span className="text-xs font-black text-amber-500">{o.status}</span></div>{o.receipt_url&&<img src={o.receipt_url} className="w-24 h-24 object-cover rounded-xl mt-3"/>}{o.status==='pending'&&<button onClick={()=>approveStoreOrder(o)} className="mt-3 w-full py-2 rounded-xl bg-green-500 text-white font-bold">Approve & Send Link</button>}</div>)}</div>}</div>
                             </div>
+                            <div className={`p-7 rounded-3xl ${neoClass}`}><div className="flex justify-between items-center"><h2 className="text-xl font-black text-sky-500">💬 User Messages</h2><button onClick={()=>{loadAdminExtended();setCurrentView('admin_messages')}} className="px-4 py-2 rounded-xl bg-sky-500 text-white font-bold">Open Message Center</button></div><p className="text-sm opacity-60 mt-2">User တစ်ယောက်ချင်းစီကို စာ၊ ပုံ၊ အသံ၊ video ဖြင့် ပြန်ကြားနိုင်ပါသည်။</p><div className="flex gap-2 flex-wrap mt-4">{adminConversations.slice(0,12).map(c=><button key={c.email} onClick={()=>openAdminConversation(c.email)} className={`px-3 py-2 rounded-xl text-xs ${neoPressedClass}`}>{c.email}{c.unread>0&&<span className="ml-2 text-red-500">{c.unread}</span>}</button>)}</div></div>
                         </div>
                     </div>
                 );
             }
 
             return (
+
                 <div>
-                    {globalSettings.announcement && (<div className="marquee-container" style={{ backgroundColor: globalSettings.marquee_color || '#ef4444' }}><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
+                    {globalSettings.announcement && (<div className="marquee-container" style={{ backgroundColor: globalSettings.announcement_bg || globalSettings.marquee_color || '#ef4444', color: globalSettings.announcement_text_color || '#ffffff' }}><div className="marquee-content text-sm">{globalSettings.announcement}</div></div>)}
                     
                     {/* --- Profile Modal --- */}
                     {showProfile && user && (
@@ -933,7 +1121,7 @@
 
                     {/* --- Buy Modal --- */}
                     {buyModalOpen && (
-                        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <div className="purchase-modal fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-[1000] p-4 overflow-y-auto">
                             <div className={`w-full max-w-xl p-5 md:p-7 rounded-[2rem] shadow-2xl ${neoClass}`}>
                                 <div className="flex items-start justify-between gap-4 mb-6">
                                     <div><div className="inline-flex p-3 rounded-2xl bg-yellow-500/15 text-yellow-500 mb-3"><CreditCard className="w-6 h-6"/></div><h2 className="text-2xl font-black">Credit Top Up</h2><p className="text-sm opacity-60 mt-1">Package ရွေးပြီး ငွေလွှဲပြေစာတင်ပါ</p></div>
@@ -975,11 +1163,16 @@
                                 {!user ? (
                                     <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md w-full text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><svg className="w-10 h-10 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 11c0 3.517-1.009 6.799-2.753 9.571m-3.44-2.04l.054-.09A13.916 13.916 0 008 11a4 4 0 118 0c0 1.017-.07 2.019-.203 3m-2.118 6.844A21.88 21.88 0 0015.171 17m3.839 1.132c.645-2.266.99-4.659.99-7.132A8 8 0 008 4.07M3 15.364c.64-1.319 1-2.8 1-4.364 0-1.457.39-2.823 1.07-4" /></svg></div><h2 className="text-2xl font-bold mb-3">Welcome Back!</h2><p className="opacity-70 mb-8 text-sm">လုပ်ဆောင်ချက်များကို အသုံးပြုရန် သင့် Gmail အကောင့်ဖြင့် အရင်ဆုံး ဝင်ရောက်ပေးပါ။</p><div id="google-login-btn"></div></div>
                                 ) : (
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 w-full max-w-6xl animate-in slide-in-from-bottom-8">
-                                        <button onClick={() => setCurrentView('recap')} className={`group p-8 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all duration-300 transform hover:-translate-y-2 ${neoClass}`}><div className={`p-6 rounded-full mb-6 transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-900 text-indigo-400' : 'bg-[#d1d9e6] text-indigo-600'}`}><Film className="w-10 h-10" /></div><h2 className="text-xl font-black mb-2">One Click Recap</h2><p className="text-sm opacity-70">Voiceover & Subtitle</p></button>
-                                        <button onClick={() => setCurrentView('subtitle')} className={`group p-8 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all duration-300 transform hover:-translate-y-2 ${neoClass}`}><div className={`p-6 rounded-full mb-6 transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-900 text-emerald-400' : 'bg-[#d1d9e6] text-emerald-600'}`}><SubtitleIcon className="w-10 h-10" /></div><h2 className="text-xl font-black mb-2">AI Subtitle Tool</h2><p className="text-sm opacity-70">Auto Translate Subs Only</p></button>
-                                        <button onClick={() => setCurrentView('tts')} className={`group p-8 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all duration-300 transform hover:-translate-y-2 ${neoClass}`}><div className={`p-6 rounded-full mb-6 transition-transform group-hover:scale-110 ${isDark ? 'bg-slate-900 text-rose-400' : 'bg-[#d1d9e6] text-rose-600'}`}><Mic className="w-10 h-10" /></div><h2 className="text-xl font-black mb-2">Text to Speech</h2><p className="text-sm opacity-70">Human-like Voices</p></button>
+                                    <>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5 w-full max-w-7xl animate-in slide-in-from-bottom-8">
+                                        <button onClick={() => openTool('recap')} className={`group p-6 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full mb-4 bg-indigo-500/10 text-indigo-500"><Film className="w-9 h-9" /></div><h2 className="text-lg font-black mb-2">One Click Recap</h2><p className="text-xs opacity-70">Voiceover & Subtitle</p></button>
+                                        <button onClick={() => openTool('subtitle')} className={`group p-6 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full mb-4 bg-emerald-500/10 text-emerald-500"><SubtitleIcon className="w-9 h-9" /></div><h2 className="text-lg font-black mb-2">AI Subtitle Tool</h2><p className="text-xs opacity-70">Auto Translate Subs Only</p></button>
+                                        <button onClick={() => openTool('tts')} className={`group p-6 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full mb-4 bg-rose-500/10 text-rose-500"><Mic className="w-9 h-9" /></div><h2 className="text-lg font-black mb-2">Text to Speech</h2><p className="text-xs opacity-70">Human-like Voices</p></button>
+                                        <button onClick={openStore} className={`group p-6 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full mb-4 bg-amber-500/10 text-amber-500"><StoreIcon className="w-9 h-9" /></div><h2 className="text-lg font-black mb-2">Online Store</h2><p className="text-xs opacity-70">Products & Digital Links</p></button>
+                                        <button onClick={openHistory} className={`group p-6 rounded-[2rem] flex flex-col items-center justify-center text-center transition-all hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full mb-4 bg-sky-500/10 text-sky-500"><HistoryIcon className="w-9 h-9" /></div><h2 className="text-lg font-black mb-2">My History</h2><p className="text-xs opacity-70">Video, Credits & Orders</p></button>
                                     </div>
+                                    <div className="flex flex-wrap justify-center gap-3 mt-8"><button onClick={openMessages} className={`px-5 py-3 rounded-2xl font-bold flex items-center gap-2 ${neoBtnClass}`}><MessageIcon className="w-5 h-5 text-sky-500"/> Admin နှင့် Message</button><button onClick={()=>{loadNotifications(); setCurrentView('notifications')}} className={`px-5 py-3 rounded-2xl font-bold flex items-center gap-2 ${neoBtnClass}`}><BellIcon className="w-5 h-5 text-yellow-500"/> Notifications {notifications.filter(n=>!n.is_read).length > 0 && <span className="bg-red-500 text-white rounded-full px-2 text-xs">{notifications.filter(n=>!n.is_read).length}</span>}</button></div>
+                                    </>
                                 )}
                             </div>
                         )}
@@ -1029,7 +1222,7 @@
                                             {systemLogs.length > 0 && !finalVideoUrl && (<div className={`p-4 rounded-2xl text-xs font-mono h-32 overflow-y-auto ${neoPressedClass} ${isDark ? 'text-yellow-400/80' : 'text-orange-600/80'}`}>{systemLogs.map((log, idx) => <div key={idx} className="mb-1 leading-relaxed border-b border-current border-opacity-10 pb-1">{log}</div>)}</div>)}
                                             
                                             <div className={`p-6 rounded-3xl flex-1 flex flex-col min-h-[400px] ${neoClass}`}>
-                                                <div className="p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className={`w-5 h-5 ${currentView === 'recap' ? 'text-indigo-500' : 'text-emerald-500'}`}/>} {finalVideoUrl ? "အပြီးသတ် MP4 ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည်" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
+                                                <div className="p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className={`w-5 h-5 ${currentView === 'recap' ? 'text-indigo-500' : 'text-emerald-500'}`}/>} {finalVideoUrl ? "အပြီးသတ် ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည်" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
                                                 
                                                 <div className={`flex-1 rounded-2xl overflow-hidden flex items-center justify-center relative ${neoPressedClass} mx-auto`}
                                                      style={{ 
@@ -1040,7 +1233,7 @@
                                                      }}>
                                                     {(!isRecapProcessing || (isRecapProcessing && renderProgress < 80)) && !finalVideoUrl && (videoUrl ? <video src={videoUrl} controls playsInline className={`w-full h-full object-cover transition-all duration-500 ${isRecapProcessing ? 'opacity-30 blur-sm scale-95' : 'opacity-100'}`} style={{ filter: activeFilter }} /> : <div className="opacity-30 flex flex-col items-center p-10"><Film className="w-16 h-16 mb-4"/><p className="font-semibold text-center">ဗီဒီယို တင်လိုက်ပါက<br/>ဤနေရာတွင် ပေါ်လာပါမည်</p></div>)}
                                                     <canvas ref={canvasRef} className={`w-full h-full object-contain transition-all duration-500 ${isRecapProcessing && renderProgress >= 80 && !finalVideoUrl ? 'block blur-md opacity-70 scale-95' : 'hidden'}`} />
-                                                    {finalVideoUrl && <video src={finalVideoUrl} controls playsInline className="w-full h-full object-contain animate-in zoom-in-95 duration-500" />}
+                                                    {finalVideoUrl && <video src={previewVideoUrl || finalVideoUrl} controls playsInline preload="metadata" className="w-full h-full object-contain animate-in zoom-in-95 duration-500" />}
                                                 </div>
                                                 {finalVideoUrl && (<button onClick={downloadFinalFile} className="w-full mt-6 py-5 bg-green-500 hover:bg-green-600 text-white font-black text-lg rounded-2xl flex items-center justify-center gap-3 transition-colors shadow-lg shadow-green-500/40"><Download className="w-6 h-6" /> MP4 ဗီဒီယိုကို ဒေါင်းလုဒ်ဆွဲမည် (Credits နုတ်မည်)</button>)}
                                             </div>
