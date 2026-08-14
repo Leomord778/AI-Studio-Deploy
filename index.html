@@ -627,7 +627,7 @@
                     reject(error instanceof Error ? error : new Error(message));
                 };
 
-                // 🌟 FFmpeg.wasm Ultrafast Re-encoding (H.264 MP4 Export) 🌟
+                // 🌟 FFmpeg.wasm Timestamps Fix + Ultrafast Re-encoding 🌟
                 const finalize = async () => {
                     if (isStopped) return; isStopped = true; cleanupRender();
                     setProcessStage("Browser အတွင်း MP4 အမြန်ပြောင်းလဲနေပါသည် (FFmpeg.wasm)...");
@@ -644,15 +644,30 @@
                         
                         ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
                         
-                        addSysLog("MP4 Format သို့ အပြည့်အဝ ပြန်လည် Render လုပ်နေပါသည် (H.264 Ultrafast)...");
-                        await ffmpeg.run('-i', 'input.webm', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-avoid_negative_ts', 'make_zero', 'output.mp4');
+                        addSysLog("MP4 Format သို့ အပြည့်အဝ ပြန်လည် Render လုပ်နေပါသည် (H.264 Ultrafast, Frame Sync)...");
+                        // Add -fflags +genpts, -r 30, and -vsync 1 to force correct timestamps for editing software
+                        await ffmpeg.run(
+                            '-fflags', '+genpts',
+                            '-i', 'input.webm',
+                            '-r', '30',
+                            '-c:v', 'libx264',
+                            '-preset', 'ultrafast',
+                            '-crf', '28',
+                            '-c:a', 'aac',
+                            '-b:a', '128k',
+                            '-vsync', '1',
+                            '-async', '1',
+                            '-avoid_negative_ts', 'make_zero',
+                            '-movflags', '+faststart',
+                            'output.mp4'
+                        );
                         
                         const data = ffmpeg.FS('readFile', 'output.mp4');
-                        const mp4Blob = new Blob([data], { type: 'video/mp4' });
+                        const mp4Blob = new Blob([data.buffer], { type: 'video/mp4' });
                         
                         setFinalVideoUrl(URL.createObjectURL(mp4Blob));
                         await saveRenderedVideoHistory(mp4Blob, mode);
-                        addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
+                        addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။ (Edit လုပ်ရန် အဆင်သင့်ပါ)");
                     } catch (err) {
                         addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ (WebM ကိုသာ ပြပေးပါမည်): ${err.message}`);
                         const webmFallbackBlob = new Blob(recordedChunks, { type: mimeType });
@@ -838,7 +853,6 @@
                 } catch (e) { alert(e.message); }
             };
 
-            // 🌟 ERROR FIX: SEND CHAT MESSAGE 🌟
             const sendChatMessage = async () => {
                 const recipient = userData?.role === 'admin' ? adminChatPeer : '';
                 if (!messageText.trim() && !messageAttachment) return;
@@ -863,7 +877,6 @@
                     setMessageText(''); 
                     setMessageAttachment(null); 
                     
-                    // ပူးတွဲဖိုင်ကို ရှင်းလင်းရန်
                     const fileInput = document.getElementById('msgFile');
                     if (fileInput) fileInput.value = '';
                     
