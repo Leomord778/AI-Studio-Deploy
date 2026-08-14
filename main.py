@@ -32,10 +32,11 @@ orders_col = db["store_orders"]
 notifications_col = db["notifications"]
 messages_col = db["messages"]
 
-# လုံခြုံရေး Tokens
+# လုံခြုံရေး Tokens & Keys
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-session-secret")
 BOT_TOKEN = "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8"
 CHAT_ID = "-1003802670362"
+GOOGLE_CLIENT_ID = "135328538466-76vbcm81m07i03cqc105d5rrrt3967t4.apps.googleusercontent.com"
 GROQ_API_KEYS = [
     "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",
     "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",
@@ -194,6 +195,78 @@ async def serve_media(media_path: str):
     path = (MEDIA_ROOT / media_path).resolve()
     if not path.exists() or not path.is_file(): raise HTTPException(status_code=404, detail="Media not found")
     return FileResponse(path)
+
+# --- 🌟 GOOGLE LOGIN API FIX 🌟 ---
+class GoogleAuthData(BaseModel):
+    credential: str
+
+@app.post("/api/auth/google")
+async def google_auth(data: GoogleAuthData):
+    async with httpx.AsyncClient(timeout=20) as http:
+        response = await http.get("https://oauth2.googleapis.com/tokeninfo", params={"id_token": data.credential})
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Google sign-in verification failed")
+    
+    info = response.json()
+    if info.get("aud") != GOOGLE_CLIENT_ID or info.get("email_verified") not in (True, "true"):
+        raise HTTPException(status_code=401, detail="Google account verification failed")
+    
+    email = normalize_email(info.get("email", ""))
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    user = users_col.find_one({"email": email})
+    
+    if not user:
+        new_user = {
+            "email": email, 
+            "name": info.get("name") or email.split("@")[0],
+            "picture": info.get("picture") or "",
+            "role": "admin" if email == "778leomord@gmail.com" else "user", 
+            "credits": 0, 
+            "free_mins_used": 0, 
+            "last_free_date": today, 
+            "has_bought_3000": False, 
+            "is_new": True,
+            "created_at": datetime.utcnow()
+        }
+        users_col.insert_one(new_user)
+        user = new_user
+    else:
+        updates = {}
+        if user.get("last_free_date") != today:
+            updates["free_mins_used"] = 0
+            updates["last_free_date"] = today
+            user["free_mins_used"] = 0
+            user["last_free_date"] = today
+        
+        if info.get("name") and info.get("name") != user.get("name"):
+            updates["name"] = info.get("name")
+            user["name"] = info.get("name")
+        if info.get("picture") and info.get("picture") != user.get("picture"):
+            updates["picture"] = info.get("picture")
+            user["picture"] = info.get("picture")
+            
+        if updates:
+            users_col.update_one({"email": email}, {"$set": updates})
+
+    settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
+    
+    return { 
+        "user": {
+            "email": user["email"], 
+            "name": user.get("name", ""),
+            "picture": user.get("picture", "")
+        },
+        "email": user["email"], 
+        "name": user.get("name", ""),
+        "picture": user.get("picture", ""),
+        "role": user.get("role", "user"), 
+        "credits": user.get("credits", 0), 
+        "free_mins_used": user.get("free_mins_used", 0), 
+        "has_bought_3000": user.get("has_bought_3000", False), 
+        "is_new": user.get("is_new", False), 
+        "settings": settings,
+        "token": _encode_session(email, user.get("role", "user"))
+    }
 
 class LoginData(BaseModel):
     email: str
