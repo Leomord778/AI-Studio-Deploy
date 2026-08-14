@@ -1,5 +1,6 @@
 import os, httpx, math, subprocess, tempfile, edge_tts, imageio_ffmpeg, traceback
 from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, Form, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,31 +84,58 @@ async def send_payment_to_telegram(email, amount, file_bytes):
 # --- USER APIs ---
 class LoginData(BaseModel):
     email: str
+    name: Optional[str] = None
+    picture: Optional[str] = None
 
 @app.post("/api/login")
 async def login(data: LoginData):
     today = datetime.now().strftime("%Y-%m-%d")
-    user = users_col.find_one({"email": data.email})
+    email = data.email.strip().lower()
+    user = users_col.find_one({"email": email})
     
     if not user:
         new_user = {
-            "email": data.email, "role": "user", "credits": 0, 
-            "free_mins_used": 0, "last_free_date": today, "has_bought_3000": False, "is_new": True
+            "email": email, 
+            "name": data.name or email.split("@")[0],
+            "picture": data.picture or "",
+            "role": "admin" if email == "778leomord@gmail.com" else "user", 
+            "credits": 0, 
+            "free_mins_used": 0, 
+            "last_free_date": today, 
+            "has_bought_3000": False, 
+            "is_new": True
         }
         users_col.insert_one(new_user)
         user = new_user
     else:
+        updates = {}
         if user.get("last_free_date") != today:
-            users_col.update_one({"email": data.email}, {"$set": {"free_mins_used": 0, "last_free_date": today}})
+            updates["free_mins_used"] = 0
+            updates["last_free_date"] = today
             user["free_mins_used"] = 0
             user["last_free_date"] = today
+            
+        if data.name:
+            updates["name"] = data.name
+        if data.picture:
+            updates["picture"] = data.picture
+            
+        if updates:
+            users_col.update_one({"email": email}, {"$set": updates})
 
     settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
     
     return { 
-        "email": user["email"], "role": user.get("role", "user"), "credits": user.get("credits", 0), 
-        "free_mins_used": user.get("free_mins_used", 0), "has_bought_3000": user.get("has_bought_3000", False), 
-        "is_new": user.get("is_new", False), "settings": settings 
+        "email": user["email"], 
+        "name": user.get("name", ""),
+        "picture": user.get("picture", ""),
+        "role": user.get("role", "user"), 
+        "credits": user.get("credits", 0), 
+        "free_mins_used": user.get("free_mins_used", 0), 
+        "has_bought_3000": user.get("has_bought_3000", False), 
+        "is_new": user.get("is_new", False), 
+        "settings": settings,
+        "token": "valid_session"
     }
 
 @app.post("/api/buy-credits")
@@ -203,7 +231,7 @@ async def get_transactions():
     return {"transactions": txs}
 
 class ApproveData(BaseModel):
-    id: str  # MongoDB ObjectId is string
+    id: str  
     email: str
     amount: int
 
