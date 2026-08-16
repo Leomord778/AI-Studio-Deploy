@@ -30,7 +30,6 @@
         .marquee-container { width: 100%; overflow: hidden; white-space: nowrap; background: #ef4444; color: white; padding: 10px 0; font-weight: bold; position: sticky; top: 0; z-index: 50; }
         .marquee-content { display: inline-block; animation: marquee 25s linear infinite; }
         @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
-        /* External translation widgets must never sit above a purchase/order dialog. */
         .purchase-modal { z-index: 1000; }
         .tool-language-menu { z-index: 20; }
         .goog-te-banner-frame, .goog-te-gadget, #google_translate_element, .skiptranslate iframe { display: none !important; }
@@ -364,7 +363,6 @@
             const authHeaders = () => ({ ...(sessionToken ? {Authorization:`Bearer ${sessionToken}`} : {}), 'x-user-email': user?.email || '' });
             const apiFetch = (url, options = {}) => fetch(url, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
 
-            // 🌟 Video Tool Reset Feature 🌟
             const resetToolState = () => {
                 if (animationRef.current) cancelAnimationFrame(animationRef.current);
                 isRecordingRef.current = false;
@@ -584,11 +582,17 @@
                 video.muted = false; video.crossOrigin = "anonymous";
                 if (video.readyState < 2) await new Promise((res) => { video.onloadeddata = res; video.load(); });
                 
+                const isMobile = window.innerWidth <= 768; // 📱 Check for mobile
                 const currentRatio = videoRatioRef.current;
-                const maxRes = 1280; let cWidth = video.videoWidth || 1280; let cHeight = video.videoHeight || 720;
-                if (currentRatio === '9:16') { cWidth = 720; cHeight = 1280; }
-                else if (currentRatio === '1:1') { cWidth = 1080; cHeight = 1080; }
-                else { if (cWidth > maxRes) { cHeight = Math.floor(cHeight * (maxRes / cWidth)); cWidth = maxRes; } }
+                
+                // 📱 Optimize Resolution for Mobile to prevent freezing
+                let cWidth = video.videoWidth || 1280; let cHeight = video.videoHeight || 720;
+                if (currentRatio === '9:16') { cWidth = isMobile ? 540 : 720; cHeight = isMobile ? 960 : 1280; }
+                else if (currentRatio === '1:1') { cWidth = isMobile ? 720 : 1080; cHeight = isMobile ? 720 : 1080; }
+                else { 
+                    const maxRes = isMobile ? 854 : 1280;
+                    if (cWidth > maxRes) { cHeight = Math.floor(cHeight * (maxRes / cWidth)); cWidth = maxRes; } 
+                }
                 
                 canvas.width = cWidth; canvas.height = cHeight;
                 const ctx = canvas.getContext('2d', { alpha: false }); ctx.imageSmoothingEnabled = true; 
@@ -606,10 +610,12 @@
                 videoSource.connect(videoGain); audioSource.connect(audioGain);
                 videoGain.connect(audioDest); audioGain.connect(audioDest);
                 
-                // 🌟 30 FPS Render 🌟
                 let canvasStream; try { canvasStream = canvas.captureStream(30); } catch (e) { try { canvasStream = canvas.mozCaptureStream(30); } catch(err) { return reject(err); } }
                 let mimeType = 'video/webm; codecs=vp8,opus'; if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
-                const mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: 2500000 });
+                
+                // 📱 Lower Bitrate for Mobile to reduce memory usage
+                const vBitrate = isMobile ? 1500000 : 2500000; 
+                const mediaRecorder = new MediaRecorder(new MediaStream([...canvasStream.getVideoTracks(), ...audioDest.stream.getAudioTracks()]), { mimeType, videoBitsPerSecond: vBitrate });
                 const recordedChunks = []; let isStopped = false; let stopRequested = false;
 
                 const cleanupRender = () => {
@@ -627,7 +633,6 @@
                     reject(error instanceof Error ? error : new Error(message));
                 };
 
-                // 🌟 FFmpeg.wasm Timestamps Fix + Ultrafast Re-encoding 🌟
                 const finalize = async () => {
                     if (isStopped) return; isStopped = true; cleanupRender();
                     setProcessStage("Browser အတွင်း MP4 အမြန်ပြောင်းလဲနေပါသည် (FFmpeg.wasm)...");
@@ -644,15 +649,15 @@
                         
                         ffmpeg.FS('writeFile', 'input.webm', await fetchFile(rawBlob));
                         
-                        addSysLog("MP4 Format သို့ အပြည့်အဝ ပြန်လည် Render လုပ်နေပါသည် (H.264 Ultrafast, Frame Sync)...");
-                        // Add -fflags +genpts, -r 30, and -vsync 1 to force correct timestamps for editing software
+                        addSysLog("MP4 Format သို့ အပြည့်အဝ ပြန်လည် Render လုပ်နေပါသည်...");
                         await ffmpeg.run(
                             '-fflags', '+genpts',
                             '-i', 'input.webm',
+                            '-threads', isMobile ? '2' : '4',
                             '-r', '30',
                             '-c:v', 'libx264',
                             '-preset', 'ultrafast',
-                            '-crf', '28',
+                            '-crf', isMobile ? '30' : '28',
                             '-c:a', 'aac',
                             '-b:a', '128k',
                             '-vsync', '1',
@@ -667,7 +672,7 @@
                         
                         setFinalVideoUrl(URL.createObjectURL(mp4Blob));
                         await saveRenderedVideoHistory(mp4Blob, mode);
-                        addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။ (Edit လုပ်ရန် အဆင်သင့်ပါ)");
+                        addSysLog("FFmpeg.wasm ဖြင့် MP4 ပြောင်းလဲခြင်း အောင်မြင်ပါသည်။");
                     } catch (err) {
                         addSysLog(`MP4 ပြောင်းလဲခြင်း မအောင်မြင်ပါ (WebM ကိုသာ ပြပေးပါမည်): ${err.message}`);
                         const webmFallbackBlob = new Blob(recordedChunks, { type: mimeType });
@@ -749,7 +754,9 @@
                     let drawWidth, drawHeight, startX, startY;
                     
                     if (currentRatio !== '16:9') {
-                        ctx.save(); ctx.filter = 'blur(40px) brightness(0.5)';
+                        // 📱 Reduce blur intensity on mobile to prevent crashes
+                        const blurVal = isMobile ? 'blur(15px)' : 'blur(40px)';
+                        ctx.save(); ctx.filter = `${blurVal} brightness(0.5)`;
                         let bgWidth = canvas.width, bgHeight = canvas.width / vRatio;
                         if (bgHeight < canvas.height) { bgHeight = canvas.height; bgWidth = canvas.height * vRatio; }
                         ctx.drawImage(video, (canvas.width - bgWidth)/2, (canvas.height - bgHeight)/2, bgWidth, bgHeight);
@@ -779,9 +786,10 @@
                     
                     if (autoBlurCaption && aiBlurBoxRef.current && renderPhase === 'main') {
                         const { yMin, yMax } = aiBlurBoxRef.current; const blurY = startY + (drawHeight * yMin); const blurH = drawHeight * (yMax - yMin);
+                        const subBlur = isMobile ? 'blur(10px)' : 'blur(20px)';
                         ctx.save();
-                        if (isFrozenFrame) { ctx.translate(canvas.width / 2, canvas.height / 2); ctx.scale(applyZoom, applyZoom); ctx.translate(-canvas.width / 2, -canvas.height / 2); ctx.beginPath(); ctx.rect(startX, blurY, drawWidth, blurH); ctx.clip(); ctx.filter = 'blur(20px)'; ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height); } 
-                        else { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.beginPath(); ctx.rect(startX, blurY, drawWidth, blurH); ctx.clip(); ctx.filter = 'blur(20px)'; ctx.drawImage(video, startX, startY, drawWidth, drawHeight); }
+                        if (isFrozenFrame) { ctx.translate(canvas.width / 2, canvas.height / 2); ctx.scale(applyZoom, applyZoom); ctx.translate(-canvas.width / 2, -canvas.height / 2); ctx.beginPath(); ctx.rect(startX, blurY, drawWidth, blurH); ctx.clip(); ctx.filter = subBlur; ctx.drawImage(offscreenCanvas, 0, 0, canvas.width, canvas.height); } 
+                        else { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); ctx.beginPath(); ctx.rect(startX, blurY, drawWidth, blurH); ctx.clip(); ctx.filter = subBlur; ctx.drawImage(video, startX, startY, drawWidth, drawHeight); }
                         ctx.restore();
                     }
                     
