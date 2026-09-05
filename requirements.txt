@@ -1,10 +1,9 @@
 fastapi
-uvicorn[standard]
-python-multipart
+uvicorn
+pymongo
+python-dotenv
 httpx
 edge-tts
 imageio-ffmpeg
-pymongo
-python-dotenv
+python-multipart
 pydantic
-boto3

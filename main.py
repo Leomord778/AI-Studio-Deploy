@@ -1,25 +1,39 @@
-import os, httpx, math, subprocess, tempfile, edge_tts, imageio_ffmpeg, traceback
-import base64, hashlib, hmac, json, mimetypes, shutil, smtplib, uuid, time, asyncio
-from datetime import datetime, timedelta
-from typing import Optional
-from email.message import EmailMessage
+import os
+import httpx
+import math
+import tempfile
+import edge_tts
+import base64
+import hashlib
+import hmac
+import json
+import uuid
+import time
+import asyncio
+import mimetypes
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Any
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, Form, Response, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
 from bson.objectid import ObjectId
-from bson.errors import InvalidId
 
-from starlette.middleware.base import BaseHTTPMiddleware
+mimetypes.add_type('application/wasm', '.wasm')
+mimetypes.add_type('text/javascript', '.js')
 
-# --- ENV & MONGODB SETUP ---
-load_dotenv()
+APP_DIR = Path(__file__).resolve().parent
+load_dotenv(APP_DIR / ".env")
+
 MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI: 
+    raise ValueError("Error: MONGO_URI is missing in .env file.")
+
 client = MongoClient(MONGO_URI)
 db = client['ai_video_studio']
 
@@ -32,580 +46,1001 @@ orders_col = db["store_orders"]
 notifications_col = db["notifications"]
 messages_col = db["messages"]
 
-# လုံခြုံရေး Tokens
-SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-session-secret")
-BOT_TOKEN = "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8"
-CHAT_ID = "-1003802670362"
-GOOGLE_CLIENT_ID = "135328538466-76vbcm81m07i03cqc105d5rrrt3967t4.apps.googleusercontent.com"
-GROQ_API_KEYS = [
-    "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",
-    "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",
-    "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",
-    "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"
+SESSION_SECRET = os.getenv("SESSION_SECRET", "ai-studio-super-secret-key-2026")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "778leomord@gmail.com").strip().lower()
+
+# Telegram Integration
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1002377284481").strip()
+
+DEFAULT_GROQ_KEYS = [
+    k.strip() for k in os.getenv(
+        "GROQ_API_KEYS", 
+        "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,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"
+    ).split(",") if k.strip()
 ]
 
-APP_DIR = Path(__file__).resolve().parent
+SERVER_GEMINI_KEYS = [
+    k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(",") if k.strip()
+]
+gemini_key_index = 0
+
+def get_server_gemini_key() -> str:
+    global gemini_key_index
+    if not SERVER_GEMINI_KEYS: return ""
+    key = SERVER_GEMINI_KEYS[gemini_key_index % len(SERVER_GEMINI_KEYS)]
+    gemini_key_index += 1
+    return key
+
 MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", APP_DIR / "media")).resolve()
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 
-# Email Setup
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
-SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+STATIC_ROOT = (APP_DIR / "static").resolve()
+STATIC_ROOT.mkdir(parents=True, exist_ok=True)
 
-# --- Database & 48h Cleanup Loop ---
+def current_utc(): 
+    return datetime.now(timezone.utc)
+
 def init_db():
     defaults = {
-        "deduction_rate": "200",
-        "free_daily_mins": "2",
-        "trial_mins": "5",
-        "announcement": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ ၅ မိနစ်စာ အခမဲ့ စမ်းသပ်နိုင်ပါသည်။",
-        "marquee_color": "#ef4444",
-        "announcement_text_color": "#ffffff"
+        "deduction_rate_per_min": "50", 
+        "first_two_min_rate": "30",
+        "free_minutes_per_day": "0",
+        "tts_mode": "ads", # "ads" သို့မဟုတ် "credits"
+        "tts_chars_per_credit": "100",
+        "ads_smart_link": "https://heiressnicholasfitful.com/q1hniexdb?key=fd1f82d2494bc60d62f89d9e2472f9c8",
+        "announcement": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ အရည်အသွေးမြင့် ဗီဒီယိုများကို အချိန်တိုအတွင်း ဖန်တီးလိုက်ပါ။",
+        "marquee_bg": "#4f46e5", 
+        "marquee_color": "#ffffff",
+        "telegram_username": "Awthu75",
+        "admin_payment_accounts": json.dumps([
+            {"provider": "KBZPay", "number": "09421619437", "holder": "Aung Win Thu"},
+            {"provider": "WavePay", "number": "09421619437", "holder": "Aung Win Thu"}
+        ])
     }
-    for key, value in defaults.items():
+    for key, value in defaults.items(): 
         settings_col.update_one({"key": key}, {"$setOnInsert": {"value": value}}, upsert=True)
     
-    if not users_col.find_one({"email": "778leomord@gmail.com"}):
+    if not users_col.find_one({"email": ADMIN_EMAIL}):
         users_col.insert_one({
-            "email": "778leomord@gmail.com", "role": "admin", "credits": 999999, 
-            "free_mins_used": 0, "last_free_date": "", "has_bought_3000": False, "is_new": False
+            "email": ADMIN_EMAIL, 
+            "role": "admin", 
+            "credits": 999999, 
+            "credits_expire_at": None,
+            "created_at": current_utc()
         })
-    video_history_col.create_index([( "expires_at", ASCENDING)], expireAfterSeconds=0)
+    
+    video_history_col.create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)
 
-def cleanup_expired_media():
-    expired = list(video_history_col.find({"expires_at": {"$lte": datetime.utcnow()}}, {"media_key": 1}))
-    for item in expired:
+async def send_telegram_notification(caption: str, photo_path: Optional[Path] = None):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as http_client:
+            if photo_path and photo_path.exists():
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+                with open(photo_path, "rb") as f:
+                    files = {"photo": f}
+                    data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption, "parse_mode": "HTML"}
+                    await http_client.post(url, data=data, files=files)
+            else:
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                payload = {"chat_id": TELEGRAM_CHAT_ID, "text": caption, "parse_mode": "HTML"}
+                await http_client.post(url, json=payload)
+    except Exception as e:
+        print(f"[Telegram Notification Error] {e}")
+
+def refund_and_cleanup():
+    now = current_utc()
+    # ၄၈ နာရီကျော်သွားပြီး Download မဆွဲခဲ့သော ဗီဒီယိုများအတွက် အလိုအလျောက် Refund ပေးခြင်း
+    expired_videos = list(video_history_col.find({"expires_at": {"$lte": now}}))
+    for item in expired_videos:
+        u_email = item.get("email")
+        cost = int(item.get("cost", 0))
+        downloaded = item.get("downloaded", False)
+        created_time_str = item.get("created_at").strftime("%Y-%m-%d %H:%M") if item.get("created_at") else "ယခင်"
+
+        if not downloaded and cost > 0 and u_email != ADMIN_EMAIL:
+            users_col.update_one({"email": u_email}, {"$inc": {"credits": cost}})
+            create_notification(
+                u_email,
+                "Credit ပြန်လည်အမ်းငွေ ရရှိပါသည်",
+                f"{created_time_str} တွင် ဖန်တီးခဲ့သော ဗီဒီယိုအား ၄၈ နာရီအတွင်း Download ရယူခြင်းမရှိပါသဖြင့် ကုန်ကျခဲ့သော {cost} Credits အား အကောင့်ထဲသို့ ပြန်လည် ထည့်သွင်းပေးလိုက်ပါပြီခင်ဗျာ။"
+            )
+            create_notification(
+                ADMIN_EMAIL,
+                "Auto-Refund သတိပေးချက်",
+                f"User ({u_email}) မှ {created_time_str} တွင် လုပ်ခဲ့သော ဗီဒီယိုအား Download မဆွဲခဲ့သဖြင့် {cost} Credits အား စနစ်မှ အလိုအလျောက် Refund ပေးလိုက်ပါသည်။"
+            )
         delete_media(item.get("media_key"))
-    if expired:
-        video_history_col.delete_many({"_id": {"$in": [item["_id"] for item in expired]}})
+        video_history_col.delete_one({"_id": item["_id"]})
+
+    # သက်တမ်းကုန်သွားသော User Credits များ ရှင်းထုတ်ခြင်း
+    expired_users = list(users_col.find({
+        "role": {"$ne": "admin"},
+        "credits_expire_at": {"$ne": None, "$lte": now},
+        "credits": {"$gt": 0}
+    }))
+    for u in expired_users:
+        users_col.update_one(
+            {"_id": u["_id"]},
+            {"$set": {"credits": 0, "credits_expire_at": None}}
+        )
+        create_notification(
+            u["email"], 
+            "Credit သက်တမ်းကုန်ဆုံးပါပြီ", 
+            "ဝယ်ယူထားသော Credit များ သက်တမ်းကုန်ဆုံးသွားပါပြီခင်ဗျာ။ ဆက်လက်အသုံးပြုလိုပါက ပြန်လည်ဖြည့်သွင်းပေးပါရန် မေတ္တာရပ်ခံအပ်ပါသည်။"
+        )
 
 async def cleanup_loop():
     while True:
-        await asyncio.sleep(60 * 60)
-        cleanup_expired_media()
+        await asyncio.sleep(1800)
+        refund_and_cleanup()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    cleanup_expired_media()
+    refund_and_cleanup()
     task = asyncio.create_task(cleanup_loop())
     yield
     task.cancel()
 
-app = FastAPI(title="AI Studio", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(title="AI Studio Pro", lifespan=lifespan)
 
-# --- CORS & Isolation Middleware (For Google Login and FFmpeg) ---
-class CrossOriginIsolationMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
-        response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
-        return response
+@app.middleware("http")
+async def add_cross_origin_isolation_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
+    response.headers["Cross-Origin-Embedder-Policy"] = "credentialless"
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return response
 
-app.add_middleware(CrossOriginIsolationMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- UTILS ---
+app.mount("/static", StaticFiles(directory=str(STATIC_ROOT)), name="static")
+
 def _encode_session(email: str, role: str) -> str:
     payload = {"email": email, "role": role, "exp": int(time.time()) + 60 * 60 * 24 * 7}
     raw = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(SESSION_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return f"{raw}.{signature}"
 
-def normalize_email(value: str) -> str:
-    return (value or "").strip().lower()
+def _decode_session(token: str) -> Optional[dict]:
+    try:
+        raw, signature = token.split(".", 1)
+        expected = hmac.new(SESSION_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected): return None
+        padded = raw + "=" * (-len(raw) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        if int(payload.get("exp", 0)) < int(time.time()): return None
+        return payload
+    except Exception: return None
 
 def get_request_email(request: Request) -> str:
-    email = request.headers.get("x-user-email")
-    if email: return normalize_email(email)
-    raise HTTPException(status_code=401, detail="Please sign in first")
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        payload = _decode_session(auth[7:].strip())
+        if payload and payload.get("email"): return str(payload["email"]).strip().lower()
+    raise HTTPException(status_code=401, detail="ကျေးဇူးပြု၍ အကောင့် Login အရင်ဝင်ပေးပါ။")
 
 def require_admin(request: Request) -> str:
     email = get_request_email(request)
     user = users_col.find_one({"email": email})
-    if email != "778leomord@gmail.com" and (not user or user.get("role") != "admin"):
-        raise HTTPException(status_code=403, detail="Admin permission required")
+    if email != ADMIN_EMAIL and (not user or user.get("role") != "admin"): 
+        raise HTTPException(status_code=403, detail="Admin လုပ်ပိုင်ခွင့် လိုအပ်ပါသည်။")
     return email
 
 def media_key(namespace: str, filename: str) -> str:
     safe_name = "".join(char if char.isalnum() or char in ".-_" else "_" for char in (filename or "file"))
-    return f"{namespace}/{datetime.utcnow().strftime('%Y/%m/%d')}/{uuid.uuid4().hex}_{safe_name[:90]}"
+    return f"{namespace}/{current_utc().strftime('%Y/%m/%d')}/{uuid.uuid4().hex}_{safe_name[:90]}"
 
-def upload_bytes(data: bytes, key: str, content_type: str) -> str:
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(500 * 1024 * 1024)))
+
+async def save_upload(upload: UploadFile, namespace: str) -> dict:
+    content_type = upload.content_type or "application/octet-stream"
+    key = media_key(namespace, upload.filename or "file")
     path = (MEDIA_ROOT / key).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    return key
-
-async def save_upload(upload: UploadFile, namespace: str, allowed_prefixes: tuple) -> dict:
-    content_type = upload.content_type or mimetypes.guess_type(upload.filename)[0] or "application/octet-stream"
-    data = await upload.read()
-    key = media_key(namespace, upload.filename)
-    upload_bytes(data, key, content_type)
-    return {"key": key, "name": upload.filename, "content_type": content_type, "size": len(data)}
-
-def public_media_url(key: Optional[str]) -> Optional[str]:
-    if not key: return None
-    return f"/media/{key}"
+    total = 0
+    try:
+        with path.open("wb") as output:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk: break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=413, detail="File အရွယ်အစား ကြီးလွန်းပါသည်။")
+                output.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        await upload.close()
+    return {"key": key, "name": upload.filename, "content_type": content_type, "size": total}
 
 def delete_media(key: Optional[str]) -> None:
     if not key: return
     try:
         path = (MEDIA_ROOT / key).resolve()
-        if MEDIA_ROOT in path.parents and path.exists(): path.unlink()
+        if path.exists(): path.unlink()
     except Exception: pass
 
-def create_notification(email: str, title: str, body: str, notification_type: str = "system", data: Optional[dict] = None) -> None:
+def create_notification(email: str, title: str, body: str, notification_type: str = "system") -> None:
+    if not email: return
     notifications_col.insert_one({
-        "email": normalize_email(email), "type": notification_type, "title": title,
-        "body": body, "data": data or {}, "is_read": False, "created_at": datetime.utcnow(),
+        "email": email.strip().lower(),
+        "type": notification_type,
+        "title": title,
+        "body": body,
+        "is_read": False,
+        "created_at": current_utc()
     })
 
-def send_email_sync(recipient: str, subject: str, html: str) -> None:
-    if not (SMTP_HOST and SMTP_USER and SMTP_PASSWORD): return
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = SMTP_FROM
-    message["To"] = recipient
-    message.set_content("Please open this message in an HTML-compatible mail application.")
-    message.add_alternative(html, subtype="html")
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=25) as server:
-        if SMTP_USE_TLS: server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(message)
+# --- CORE PAGE & MEDIA ---
 
-async def send_payment_to_telegram(email: str, amount: int, file_bytes: bytes, caption_extra: str = "") -> None:
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    caption = f"Payment received\nUser: {email}\nAmount: {amount} MMK\n{caption_extra}".strip()
-    async with httpx.AsyncClient(timeout=30) as http:
-        await http.post(url, data={"chat_id": CHAT_ID, "caption": caption}, files={"photo": ("payment.jpg", file_bytes, "image/jpeg")})
-
-# --- APIs ---
 @app.get("/")
 async def serve_index():
-    with open("index.html", "r", encoding="utf-8") as f: return HTMLResponse(content=f.read())
+    index_path = APP_DIR / "index.html"
+    if not index_path.exists(): 
+        return HTMLResponse(content="<h1 style='color:red;'>Error: index.html ဖိုင်ကို ရှာမတွေ့ပါ။</h1>", status_code=404)
+    with open(index_path, "r", encoding="utf-8") as f: 
+        return HTMLResponse(content=f.read())
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon(): 
+    return Response(status_code=204)
 
 @app.get("/media/{media_path:path}")
 async def serve_media(media_path: str):
     path = (MEDIA_ROOT / media_path).resolve()
-    if not path.exists() or not path.is_file(): raise HTTPException(status_code=404, detail="Media not found")
+    if not path.exists() or not path.is_file(): 
+        raise HTTPException(status_code=404, detail="Media ဖိုင် ရှာမတွေ့ပါ။")
     return FileResponse(path)
 
-class GoogleAuthData(BaseModel):
-    credential: str
-
-@app.post("/api/auth/google")
-async def google_auth(data: GoogleAuthData):
-    async with httpx.AsyncClient(timeout=20) as http:
-        response = await http.get("https://oauth2.googleapis.com/tokeninfo", params={"id_token": data.credential})
-    if response.status_code != 200:
-        raise HTTPException(status_code=401, detail="Google sign-in verification failed")
-    
-    info = response.json()
-    if info.get("aud") != GOOGLE_CLIENT_ID or info.get("email_verified") not in (True, "true"):
-        raise HTTPException(status_code=401, detail="Google account verification failed")
-    
-    email = normalize_email(info.get("email", ""))
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    user = users_col.find_one({"email": email})
-    
-    if not user:
-        new_user = {
-            "email": email, 
-            "name": info.get("name") or email.split("@")[0],
-            "picture": info.get("picture") or "",
-            "role": "admin" if email == "778leomord@gmail.com" else "user", 
-            "credits": 0, 
-            "free_mins_used": 0, 
-            "last_free_date": today, 
-            "has_bought_3000": False, 
-            "is_new": True,
-            "created_at": datetime.utcnow()
-        }
-        users_col.insert_one(new_user)
-        user = new_user
-    else:
-        updates = {}
-        if user.get("last_free_date") != today:
-            updates["free_mins_used"] = 0
-            updates["last_free_date"] = today
-            user["free_mins_used"] = 0
-            user["last_free_date"] = today
-        
-        if info.get("name") and info.get("name") != user.get("name"):
-            updates["name"] = info.get("name")
-            user["name"] = info.get("name")
-        if info.get("picture") and info.get("picture") != user.get("picture"):
-            updates["picture"] = info.get("picture")
-            user["picture"] = info.get("picture")
-            
-        if updates:
-            users_col.update_one({"email": email}, {"$set": updates})
-
-    settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
-    
-    return { 
-        "user": {
-            "email": user["email"], 
-            "name": user.get("name", ""),
-            "picture": user.get("picture", "")
-        },
-        "email": user["email"], 
-        "name": user.get("name", ""),
-        "picture": user.get("picture", ""),
-        "role": user.get("role", "user"), 
-        "credits": user.get("credits", 0), 
-        "free_mins_used": user.get("free_mins_used", 0), 
-        "has_bought_3000": user.get("has_bought_3000", False), 
-        "is_new": user.get("is_new", False), 
-        "settings": settings,
-        "token": _encode_session(email, user.get("role", "user"))
-    }
-
-class LoginData(BaseModel):
-    email: str
-    name: Optional[str] = None
-    picture: Optional[str] = None
+# --- AUTH & USER PROFILE ---
 
 @app.post("/api/login")
-async def login(data: LoginData):
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-    email = normalize_email(data.email)
+async def login(data: dict):
+    email = data.get("email", "").strip().lower()
+    if not email: return JSONResponse(status_code=400, content={"error": "Email is required"})
     user = users_col.find_one({"email": email})
+    role = "admin" if email == ADMIN_EMAIL else "user"
     if not user:
-        new_user = { "email": email, "name": data.name or email.split("@")[0], "picture": data.picture or "", "role": "admin" if email == "778leomord@gmail.com" else "user", "credits": 0, "free_mins_used": 0, "last_free_date": today, "has_bought_3000": False, "is_new": True, "created_at": datetime.utcnow() }
-        users_col.insert_one(new_user)
-        user = new_user
-    else:
-        updates = {}
-        if user.get("last_free_date") != today: updates["free_mins_used"] = 0; updates["last_free_date"] = today
-        if data.name: updates["name"] = data.name
-        if data.picture: updates["picture"] = data.picture
-        if updates: users_col.update_one({"email": email}, {"$set": updates})
+        user = { 
+            "email": email, 
+            "name": data.get("name") or email.split("@")[0], 
+            "picture": data.get("picture") or "", 
+            "role": role, 
+            "credits": 1000, 
+            "credits_expire_at": None,
+            "created_at": current_utc() 
+        }
+        users_col.insert_one(user)
+
+    if user.get("role") != "admin" and user.get("credits_expire_at"):
+        exp_at = user["credits_expire_at"]
+        if isinstance(exp_at, datetime):
+            if exp_at.tzinfo is None:
+                exp_at = exp_at.replace(tzinfo=timezone.utc)
+            if exp_at <= current_utc():
+                users_col.update_one({"email": email}, {"$set": {"credits": 0, "credits_expire_at": None}})
+                user["credits"] = 0
+                user["credits_expire_at"] = None
 
     settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
-    return { "email": user["email"], "name": user.get("name", ""), "picture": user.get("picture", ""), "role": user.get("role", "user"), "credits": user.get("credits", 0), "free_mins_used": user.get("free_mins_used", 0), "has_bought_3000": user.get("has_bought_3000", False), "is_new": user.get("is_new", False), "settings": settings, "token": _encode_session(email, user.get("role", "user")) }
-
-class DeductData(BaseModel):
-    email: str
-    duration_seconds: float
-
-@app.post("/api/check-credits")
-async def check_credits(data: DeductData):
-    settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
-    user = users_col.find_one({"email": data.email})
-    if not user: return JSONResponse(status_code=400, content={"error": "User not found"})
-    required_mins = max(1, math.ceil((data.duration_seconds - 30) / 60))
-    if user.get("is_new") and (user.get("free_mins_used", 0) + required_mins <= float(settings.get('trial_mins', 5))): return {"status": "ok"}
-    if user.get("credits", 0) >= required_mins * int(settings.get('deduction_rate', 200)): return {"status": "ok"}
-    if (not user.get("is_new")) and (user.get("free_mins_used", 0) + required_mins <= float(settings.get('free_daily_mins', 2))): return {"status": "ok"}
-    return JSONResponse(status_code=403, content={"error": "Credits မလုံလောက်ပါ။ ကျေးဇူးပြု၍ ထပ်မံဝယ်ယူပါ။"})
-
-@app.post("/api/deduct")
-async def deduct_credits(data: DeductData):
-    settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
-    user = users_col.find_one({"email": data.email})
-    if not user: return JSONResponse(status_code=400, content={"error": "User not found"})
-    required_mins = max(1, math.ceil((data.duration_seconds - 30) / 60))
-    deduction_rate = int(settings.get('deduction_rate', 200))
+    if "_id" in user: del user["_id"]
     
-    if user.get("is_new"):
-        if user.get("free_mins_used", 0) + required_mins <= float(settings.get('trial_mins', 5)):
-            users_col.update_one({"email": data.email}, {"$inc": {"free_mins_used": required_mins}})
-            if user.get("free_mins_used", 0) + required_mins >= float(settings.get('trial_mins', 5)): users_col.update_one({"email": data.email}, {"$set": {"is_new": False}})
-            return {"status": "success"}
-        else: users_col.update_one({"email": data.email}, {"$set": {"is_new": False}})
+    remaining_days = None
+    if user.get("credits_expire_at") and isinstance(user["credits_expire_at"], datetime):
+        exp_date = user["credits_expire_at"]
+        if exp_date.tzinfo is None: exp_date = exp_date.replace(tzinfo=timezone.utc)
+        diff = exp_date - current_utc()
+        remaining_days = max(0, diff.days + 1)
+        user["credits_expire_at"] = exp_date.strftime("%Y-%m-%d")
 
-    if user.get("credits", 0) >= required_mins * deduction_rate:
-        users_col.update_one({"email": data.email}, {"$inc": {"credits": -(required_mins * deduction_rate)}})
-        return {"status": "success"}
-
-    if user.get("free_mins_used", 0) + required_mins <= float(settings.get('free_daily_mins', 2)):
-        users_col.update_one({"email": data.email}, {"$inc": {"free_mins_used": required_mins}})
-        return {"status": "success"}
-        
-    return JSONResponse(status_code=403, content={"error": "Credits မလုံလောက်ပါ။ ကျေးဇူးပြု၍ ထပ်မံဝယ်ယူပါ။"})
+    return { 
+        **user, 
+        "remaining_days": remaining_days,
+        "settings": settings, 
+        "token": _encode_session(email, user.get("role", "user")) 
+    }
 
 @app.post("/api/buy-credits")
-async def buy_credits(request: Request, background_tasks: BackgroundTasks, email: str = Form(...), amount: int = Form(...), file: UploadFile = File(...)):
-    proof = await save_upload(file, "payment-proofs/credits", ("image/",))
-    tx = { "type": "credit_topup", "email": email, "amount": int(amount), "status": "pending", "proof": proof, "created_at": datetime.utcnow() }
-    result = transactions_col.insert_one(tx)
-    try:
-        proof_bytes = (MEDIA_ROOT / proof["key"]).read_bytes()
-        background_tasks.add_task(send_payment_to_telegram, email, int(amount), proof_bytes)
-    except: pass
-    create_notification(email, "Credit top-up submitted", "ငွေလွှဲပြေစာကို Admin စစ်ဆေးနေပါသည်။", "payment", {"transaction_id": str(result.inserted_id)})
-    return {"status": "success"}
+async def buy_credits(email: str = Form(...), amount: int = Form(...), file: UploadFile = File(...)):
+    proof = await save_upload(file, "payment-proofs/credits")
+    transactions_col.insert_one({ 
+        "type": "credit_topup", 
+        "email": email.strip().lower(), 
+        "amount": int(amount), 
+        "status": "pending", 
+        "proof": proof["key"], 
+        "created_at": current_utc() 
+    })
+    create_notification(
+        email, 
+        "ငွေလွှဲပြေစာ လက်ခံရရှိပါသည်", 
+        "AI Studio မှ Credit ဝယ်ယူမှုအတွက် ကျေးဇူးတင်ရှိပါသည်။ Admin မှ ငွေလွှဲပြေစာအား အမြန်ဆုံး အတည်ပြုပေးပါမည်ခင်ဗျာ။"
+    )
+    return {"status": "success", "message": "ငွေလွှဲပြေစာ ပေးပို့ပြီးပါပြီ။ ဝယ်ယူအားပေးမှုကို ကျေးဇူးတင်ရှိပါသည်။ Admin ဘက်မှ အတည်ပြုပေးသည်အထိ ခေတ္တစောင့်ဆိုင်းပေးပါခင်ဗျာ။"}
 
 @app.get("/api/credit-history")
-async def credit_history(request: Request):
+async def get_credit_history(request: Request):
     email = get_request_email(request)
-    docs = transactions_col.find({"email": email}).sort("_id", DESCENDING).limit(100)
-    return {"transactions": [{"id": str(d["_id"]), "amount": d.get("amount", 0), "status": d.get("status", "pending"), "created_at": d.get("created_at", d.get("date")).isoformat()+"Z" if type(d.get("created_at"))==datetime else d.get("date")} for d in docs]}
-
-# History
-@app.post("/api/history/videos")
-async def save_video_history(request: Request, file: UploadFile = File(...), title: str = Form("AI Studio video"), tool: str = Form("recap")):
-    email = get_request_email(request)
-    media = await save_upload(file, "video-history", ("video/",))
-    expires_at = datetime.utcnow() + timedelta(hours=48)
-    doc = { "email": email, "title": title[:140], "tool": tool[:40], "media_key": media["key"], "content_type": media["content_type"], "created_at": datetime.utcnow(), "expires_at": expires_at }
-    video_history_col.insert_one(doc)
-    return {"status": "success"}
-
-@app.get("/api/history/videos")
-async def get_video_history(request: Request):
-    cleanup_expired_media()
-    email = get_request_email(request)
-    docs = video_history_col.find({"email": email, "expires_at": {"$gt": datetime.utcnow()}}).sort("created_at", DESCENDING)
-    return {"items": [{"id": str(d["_id"]), "title": d.get("title", "Video"), "tool": d.get("tool"), "url": public_media_url(d.get("media_key")), "expires_at": d.get("expires_at").isoformat()+"Z"} for d in docs]}
-
-@app.delete("/api/history/videos/{history_id}")
-async def delete_video_history(history_id: str, request: Request):
-    email = get_request_email(request)
-    doc = video_history_col.find_one_and_delete({"_id": ObjectId(history_id), "email": email})
-    if doc: delete_media(doc.get("media_key"))
-    return {"status": "deleted"}
-
-# Store & Orders
-@app.get("/api/products")
-async def list_products():
-    docs = products_col.find({"is_active": True, "$or": [{"has_expiry": False}, {"expiry_at": {"$gt": datetime.utcnow()}}]}).sort("created_at", DESCENDING)
-    return {"products": [{"id": str(d["_id"]), "name": d.get("name"), "category": d.get("category"), "description": d.get("description"), "price_credits": d.get("price_credits"), "has_expiry": d.get("has_expiry"), "expiry_at": d.get("expiry_at").isoformat()+"Z" if d.get("expiry_at") else None, "image_url": public_media_url(d.get("image_key")), "payment_accounts": d.get("payment_accounts", [])} for d in docs]}
-
-@app.post("/api/orders/credit")
-async def create_credit_order(request: Request, data: dict, background_tasks: BackgroundTasks):
-    buyer_email = get_request_email(request)
-    product = products_col.find_one({"_id": ObjectId(data["product_id"]), "is_active": True})
-    amount = int(product["price_credits"])
-    updated_user = users_col.find_one_and_update({"email": buyer_email, "credits": {"$gte": amount}}, {"$inc": {"credits": -amount}}, return_document=ReturnDocument.AFTER)
-    if not updated_user: raise HTTPException(status_code=403, detail="Credits မလုံလောက်ပါ")
-    
-    order = { "buyer_email": buyer_email, "delivery_email": data["delivery_email"], "product_id": product["_id"], "product_name": product["name"], "price_credits": amount, "payment_method": "credit", "status": "delivered", "delivery_link": product.get("delivery_link", ""), "created_at": datetime.utcnow() }
-    orders_col.insert_one(order)
-    create_notification(buyer_email, "Product delivered", f"Credit ဖြင့်ဝယ်ယူမှု အောင်မြင်ပါသည်။\nDownload: {product.get('delivery_link', '')}", "order")
-    background_tasks.add_task(send_email_sync, data["delivery_email"], f"Your product is ready", f"<p>Download Link: {product.get('delivery_link', '')}</p>")
-    return {"status": "success", "credits": updated_user["credits"]}
-
-@app.post("/api/orders/transfer")
-async def create_transfer_order(request: Request, product_id: str = Form(...), delivery_email: str = Form(...), payment_provider: str = Form(...), payment_number: str = Form(...), receipt: UploadFile = File(...)):
-    buyer_email = get_request_email(request)
-    product = products_col.find_one({"_id": ObjectId(product_id)})
-    proof = await save_upload(receipt, "payment-proofs/orders", ("image/",))
-    order = { "buyer_email": buyer_email, "delivery_email": delivery_email, "product_id": product["_id"], "product_name": product["name"], "price_credits": int(product["price_credits"]), "payment_method": "transfer", "payment_account": {"provider": payment_provider, "number": payment_number}, "receipt_key": proof["key"], "status": "pending", "created_at": datetime.utcnow() }
-    orders_col.insert_one(order)
-    create_notification(buyer_email, "Store payment submitted", "ငွေလွှဲပြေစာကို Admin စစ်ဆေးနေပါသည်။", "order")
-    return {"status": "pending"}
-
-@app.get("/api/orders/me")
-async def my_orders(request: Request):
-    email = get_request_email(request)
-    docs = orders_col.find({"buyer_email": email}).sort("created_at", DESCENDING)
-    return {"orders": [{"id": str(d["_id"]), "product_name": d.get("product_name"), "status": d.get("status"), "created_at": d.get("created_at").isoformat()+"Z"} for d in docs]}
-
-# Messaging
-@app.get("/api/messages")
-async def get_messages(request: Request, peer: Optional[str] = None):
-    email = get_request_email(request)
-    target = peer if peer else ("778leomord@gmail.com" if email != "778leomord@gmail.com" else "")
-    query = {"participants": {"$all": [email, target]}}
-    docs = list(messages_col.find(query).sort("created_at", ASCENDING).limit(300))
-    messages_col.update_many({**query, "recipient_email": email}, {"$set": {"is_read": True}})
-    return {"messages": [{"id": str(d["_id"]), "sender_email": d.get("sender_email"), "body": d.get("body", ""), "attachment": {"url": public_media_url(d.get("attachment", {}).get("key")), "content_type": d.get("attachment", {}).get("content_type")} if d.get("attachment") else None, "created_at": d.get("created_at").isoformat()+"Z"} for d in docs]}
-
-# 🌟 ERROR FIX: SEND CHAT MESSAGE IN BACKEND 🌟
-@app.post("/api/messages")
-async def send_message(request: Request, recipient_email: str = Form(default=""), body: str = Form(default=""), attachment: Optional[UploadFile] = File(default=None)):
-    sender = get_request_email(request)
-    recipient = recipient_email if recipient_email else "778leomord@gmail.com"
-    attachment_info = await save_upload(attachment, "messages", ("image/", "audio/", "video/")) if attachment else None
-    doc = { "sender_email": sender, "recipient_email": recipient, "participants": sorted([sender, recipient]), "body": body.strip()[:5000], "attachment": attachment_info, "created_at": datetime.utcnow(), "is_read": False }
-    messages_col.insert_one(doc)
-    create_notification(recipient, "New message", f"{sender} မှ message အသစ်ရောက်ရှိပါသည်။", "message")
-    return {"message": {"id": str(doc["_id"]), "sender_email": doc["sender_email"], "body": doc["body"], "attachment": {"url": public_media_url(attachment_info["key"]), "content_type": attachment_info["content_type"]} if attachment_info else None, "created_at": doc["created_at"].isoformat()+"Z"}}
+    txs = list(transactions_col.find({"email": email}).sort("created_at", DESCENDING))
+    return {
+        "transactions": [{
+            "id": str(d["_id"]),
+            "amount": d.get("amount", 0),
+            "status": d.get("status", "pending"),
+            "created_at": d.get("created_at").isoformat() if d.get("created_at") else ""
+        } for d in txs]
+    }
 
 @app.get("/api/notifications")
 async def get_notifications(request: Request):
     email = get_request_email(request)
-    docs = notifications_col.find({"email": email}).sort("created_at", DESCENDING).limit(100)
-    return {"notifications": [{"id": str(d["_id"]), "title": d.get("title"), "body": d.get("body"), "is_read": d.get("is_read"), "created_at": d.get("created_at").isoformat()+"Z"} for d in docs]}
+    notifs = list(notifications_col.find({"email": email}).sort("created_at", DESCENDING).limit(30))
+    unread_count = notifications_col.count_documents({"email": email, "is_read": False})
+    return {
+        "notifications": [{
+            "id": str(n["_id"]),
+            "title": n.get("title", ""),
+            "body": n.get("body", ""),
+            "is_read": n.get("is_read", False),
+            "created_at": n.get("created_at").strftime("%Y-%m-%d %H:%M") if n.get("created_at") else ""
+        } for n in notifs],
+        "unread_count": unread_count
+    }
 
-@app.post("/api/notifications/read")
+@app.post("/api/notifications/mark-read")
 async def mark_notifications_read(request: Request):
     email = get_request_email(request)
     notifications_col.update_many({"email": email, "is_read": False}, {"$set": {"is_read": True}})
     return {"status": "success"}
 
-# --- ADMIN APIs ---
+# --- VIDEO COST CALCULATION & BILLING ---
+
+def calculate_video_cost(email: str, dur_sec: float) -> tuple[int, bool]:
+    dur_mins = max(1, math.ceil(dur_sec / 60.0))
+
+    free_setting = settings_col.find_one({"key": "free_minutes_per_day"})
+    free_mins = int(free_setting.get("value", "0")) if free_setting else 0
+
+    rate_setting = settings_col.find_one({"key": "deduction_rate_per_min"})
+    base_rate = int(rate_setting.get("value", "50")) if rate_setting else 50
+
+    first_two_setting = settings_col.find_one({"key": "first_two_min_rate"})
+    first_two_rate = int(first_two_setting.get("value", "30")) if first_two_setting else 30
+
+    if free_mins > 0:
+        if dur_mins <= free_mins:
+            return 0, True
+        else:
+            dur_mins -= free_mins
+
+    # ပထမ ၂ မိနစ်အတွက် ၁ မိနစ်စာနှုန်းသာ ကောက်ခံပြီး ၂ မိနစ်ကျော်လွန်မှ ပုံမှန်နှုန်းထားအတိုင်း တွက်ချက်ခြင်း
+    if dur_mins <= 2:
+        cost = first_two_rate
+    else:
+        cost = first_two_rate + ((dur_mins - 2) * base_rate)
+
+    return cost, False
+
+@app.post("/api/video/pre-deduct")
+async def pre_deduct_video_cost(request: Request, data: dict):
+    email = get_request_email(request)
+    dur_sec = float(data.get("duration", 60))
+    cost, is_free = calculate_video_cost(email, dur_sec)
+
+    user = users_col.find_one({"email": email})
+    if email != ADMIN_EMAIL and not is_free:
+        if not user or user.get("credits", 0) < cost:
+            raise HTTPException(
+                status_code=402, 
+                detail=f"Credit မလုံလောက်ပါ။ ဗီဒီယိုအတွက် {cost} Credits လိုအပ်ပါသည်။"
+            )
+        # ဗီဒီယို စတင်သည်နှင့် Credit ချက်ချင်း နှုတ်ယူခြင်း
+        users_col.update_one({"email": email}, {"$inc": {"credits": -cost}})
+
+    return {"status": "success", "deducted": cost if email != ADMIN_EMAIL else 0, "is_free": is_free}
+
+@app.post("/api/video/save-client-rendered")
+async def save_client_rendered(request: Request, file: UploadFile = File(...), duration: str = Form("60"), tool: str = Form("recap")):
+    email = get_request_email(request)
+    dur_sec = float(duration)
+    cost, is_free = calculate_video_cost(email, dur_sec)
+
+    upload_res = await save_upload(file, "rendered_videos")
+    final_key = upload_res["key"]
+
+    video_doc = {
+        "email": email,
+        "title": f"{'Recap' if tool=='recap' else 'Subtitle'} Video ({datetime.now().strftime('%d/%m %H:%M')})",
+        "tool": tool,
+        "duration": duration,
+        "cost": cost if email != ADMIN_EMAIL else 0,
+        "downloaded": False,
+        "media_key": final_key,
+        "content_type": "video/mp4",
+        "created_at": current_utc(),
+        "expires_at": current_utc() + timedelta(hours=48)
+    }
+    inserted = video_history_col.insert_one(video_doc)
+    return {"status": "success", "result_url": f"/media/{final_key}", "video_id": str(inserted.inserted_id), "media_key": final_key}
+
+@app.post("/api/video/consume-download")
+async def consume_download(request: Request, data: dict):
+    email = get_request_email(request)
+    media_key = data.get("media_key")
+    video_id = data.get("video_id")
+
+    query = {"_id": ObjectId(video_id)} if video_id else {"media_key": media_key}
+    video = video_history_col.find_one(query)
+    if not video:
+        raise HTTPException(status_code=404, detail="ဗီဒီယို ရှာမတွေ့ပါ")
+
+    # Download လုပ်ပြီးသွားပါက Refund ပေးစရာ မလိုတော့ကြောင်း မှတ်သားခြင်း
+    video_history_col.update_one({"_id": video["_id"]}, {"$set": {"downloaded": True}})
+    return {"status": "success"}
+
+@app.get("/api/history/videos")
+async def get_video_history(request: Request):
+    email = get_request_email(request)
+    return {
+        "items": [{
+            "id": str(d["_id"]), 
+            "title": d.get("title", "Video"), 
+            "tool": d.get("tool"), 
+            "url": f"/media/{d.get('media_key')}", 
+            "expires_at": d.get("expires_at").strftime("%Y-%m-%d %H:%M") if d.get("expires_at") else "",
+            "created_at": d.get("created_at").isoformat() if d.get("created_at") else ""
+        } for d in video_history_col.find({"email": email}).sort("created_at", DESCENDING)]
+    }
+
+# --- STORE & TELEGRAM ORDER API ---
+
+@app.get("/api/products")
+async def get_products():
+    prods = list(products_col.find().sort("created_at", DESCENDING))
+    return {
+        "products": [{
+            "id": str(p["_id"]),
+            "name": p.get("name", ""),
+            "category": p.get("category", ""),
+            "description": p.get("description", ""),
+            "image_url": f"/media/{p['image_key']}" if p.get("image_key") else (f"/media/{p['image_keys'][0]}" if p.get("image_keys") else None),
+            "image_urls": [f"/media/{k}" for k in p.get("image_keys", [])] if p.get("image_keys") else ([f"/media/{p['image_key']}"] if p.get("image_key") else []),
+            "variants": p.get("variants", []),
+            "payment_accounts": p.get("payment_accounts", [])
+        } for p in prods]
+    }
+
+@app.post("/api/store/order")
+async def submit_store_order(
+    request: Request,
+    product_name: str = Form(...),
+    variant_name: str = Form(...),
+    price_mmk: int = Form(...),
+    user_email: str = Form(...),
+    payment_provider: str = Form("KBZPay"),
+    game_account_id: Optional[str] = Form(None),
+    game_server_id: Optional[str] = Form(None),
+    file: UploadFile = File(...)
+):
+    user = get_request_email(request)
+    proof = await save_upload(file, "store_proofs")
+    proof_path = (MEDIA_ROOT / proof["key"]).resolve()
+    
+    order_doc = {
+        "user_email": user_email.strip().lower(),
+        "product_name": product_name,
+        "variant_name": variant_name,
+        "price_mmk": price_mmk,
+        "payment_provider": payment_provider,
+        "game_account_id": game_account_id,
+        "game_server_id": game_server_id,
+        "proof_url": f"/media/{proof['key']}",
+        "status": "pending",
+        "created_at": current_utc()
+    }
+    inserted = orders_col.insert_one(order_doc)
+
+    caption = (
+        f"🛒 <b>[New Store Order Received]</b>\n\n"
+        f"👤 <b>User:</b> {user_email}\n"
+        f"📦 <b>Item:</b> {product_name} ({variant_name})\n"
+        f"💰 <b>Price:</b> {price_mmk:,} MMK\n"
+        f"💳 <b>Payment:</b> {payment_provider}\n"
+    )
+    if game_account_id:
+        caption += f"🎮 <b>Game ID:</b> <code>{game_account_id}</code>\n"
+    if game_server_id:
+        caption += f"🌐 <b>Server ID:</b> <code>{game_server_id}</code>\n"
+    caption += f"🕒 <b>Time:</b> {current_utc().strftime('%Y-%m-%d %H:%M:%S UTC')}"
+
+    await send_telegram_notification(caption, photo_path=proof_path)
+
+    create_notification(
+        user_email,
+        "အော်ဒါတင်ခြင်း အောင်မြင်ပါသည်",
+        f"သင်ဝယ်ယူထားသော {product_name} ({variant_name}) အတွက် ငွေလွှဲပြေစာ လက်ခံရရှိပါပြီခင်ဗျာ။ Admin မှ စစ်ဆေးပြီး ပစ္စည်းအမြန်ဆုံး ဖြည့်သွင်းပေးပါမည်။"
+    )
+    return {"status": "success", "order_id": str(inserted.inserted_id)}
+
+# --- ADMIN CONTROL PANEL ---
+
+@app.get("/api/admin/badges")
+async def admin_get_badges(request: Request):
+    require_admin(request)
+    pending_approvals = transactions_col.count_documents({"status": "pending"})
+    unread_messages = messages_col.count_documents({"recipient_email": ADMIN_EMAIL, "is_read": False})
+    pending_orders = orders_col.count_documents({"status": "pending"})
+    return {
+        "pending_approvals": pending_approvals,
+        "unread_messages": unread_messages,
+        "pending_orders": pending_orders,
+        "total_alerts": pending_approvals + unread_messages + pending_orders
+    }
+
+@app.get("/api/admin/orders")
+async def admin_get_orders(request: Request):
+    require_admin(request)
+    orders = list(orders_col.find().sort("created_at", DESCENDING))
+    return {
+        "orders": [{
+            "id": str(o["_id"]),
+            "user_email": o.get("user_email"),
+            "product_name": o.get("product_name"),
+            "variant_name": o.get("variant_name"),
+            "price_mmk": o.get("price_mmk", 0),
+            "payment_provider": o.get("payment_provider"),
+            "game_account_id": o.get("game_account_id"),
+            "game_server_id": o.get("game_server_id"),
+            "proof_url": o.get("proof_url"),
+            "status": o.get("status", "pending"),
+            "created_at": o.get("created_at").strftime("%Y-%m-%d %H:%M") if o.get("created_at") else ""
+        } for o in orders]
+    }
+
+@app.post("/api/admin/orders/deliver")
+async def admin_deliver_order(
+    request: Request,
+    order_id: str = Form(...),
+    message: str = Form(...),
+    file: Optional[UploadFile] = File(None)
+):
+    require_admin(request)
+    order = orders_col.find_one({"_id": ObjectId(order_id)})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order ရှာမတွေ့ပါ")
+
+    user_email = order["user_email"]
+    attachment = None
+    if file:
+        att = await save_upload(file, "chat_attachments")
+        attachment = {"url": f"/media/{att['key']}", "type": att["content_type"], "name": att["name"]}
+
+    doc = {
+        "sender_email": ADMIN_EMAIL,
+        "recipient_email": user_email,
+        "participants": sorted([ADMIN_EMAIL, user_email]),
+        "body": f"🎁 [Order Delivered: {order.get('product_name')} - {order.get('variant_name')}]\n\n{message.strip()}",
+        "attachment": attachment,
+        "created_at": current_utc(),
+        "is_read": False
+    }
+    messages_col.insert_one(doc)
+    orders_col.update_one({"_id": ObjectId(order_id)}, {"$set": {"status": "completed"}})
+    
+    create_notification(
+        user_email,
+        "ပစ္စည်းပို့ဆောင်ပြီးပါပြီ",
+        f"သင်ဝယ်ယူထားသော {order.get('product_name')} အတွက် ပစ္စည်းပို့ဆောင်မှု ရောက်ရှိပါပြီ။ Support Chat တွင် ဝင်ရောက်စစ်ဆေးနိုင်ပါပြီခင်ဗျာ။"
+    )
+    return {"status": "success"}
+
+@app.get("/api/admin/users")
+async def admin_get_users(request: Request):
+    require_admin(request)
+    all_users = list(users_col.find().sort("created_at", DESCENDING))
+    res = []
+    for u in all_users:
+        u_email = u.get("email")
+        vid_count = video_history_col.count_documents({"email": u_email})
+        
+        rem_days = None
+        exp_date_str = ""
+        if u.get("credits_expire_at") and isinstance(u["credits_expire_at"], datetime):
+            exp_date = u["credits_expire_at"]
+            if exp_date.tzinfo is None: exp_date = exp_date.replace(tzinfo=timezone.utc)
+            diff = exp_date - current_utc()
+            rem_days = max(0, diff.days + 1)
+            exp_date_str = exp_date.strftime("%Y-%m-%d")
+
+        res.append({
+            "email": u_email,
+            "name": u.get("name", u_email.split("@")[0]),
+            "role": u.get("role", "user"),
+            "credits": u.get("credits", 0),
+            "credits_expire_at": exp_date_str,
+            "remaining_days": rem_days,
+            "video_count": vid_count,
+            "picture": u.get("picture", ""),
+            "created_at": u.get("created_at").strftime("%Y-%m-%d %H:%M") if u.get("created_at") else ""
+        })
+    return {"users": res}
+
+@app.get("/api/admin/chats")
+async def admin_get_all_chats(request: Request):
+    require_admin(request)
+    distinct_senders = messages_col.distinct("sender_email")
+    chat_users = [e for e in distinct_senders if e and e != ADMIN_EMAIL]
+    
+    threads = []
+    for u_email in chat_users:
+        last_msg = messages_col.find_one(
+            {"participants": u_email},
+            sort=[("created_at", DESCENDING)]
+        )
+        threads.append({
+            "user_email": u_email,
+            "last_message": last_msg.get("body", "") if last_msg else "",
+            "last_time": last_msg.get("created_at").strftime("%Y-%m-%d %H:%M") if last_msg and last_msg.get("created_at") else ""
+        })
+    return {"threads": threads}
+
+@app.get("/api/admin/user-details/{user_email}")
+async def admin_get_user_details(request: Request, user_email: str):
+    require_admin(request)
+    target_email = user_email.strip().lower()
+    user = users_col.find_one({"email": target_email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User ရှာမတွေ့ပါ")
+    
+    videos = list(video_history_col.find({"email": target_email}).sort("created_at", DESCENDING))
+    transactions = list(transactions_col.find({"email": target_email}).sort("created_at", DESCENDING))
+    
+    return {
+        "user": {
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "credits": user.get("credits", 0),
+            "credits_expire_at": user.get("credits_expire_at").strftime("%Y-%m-%d") if user.get("credits_expire_at") else None,
+            "role": user.get("role", "user")
+        },
+        "videos": [{
+            "id": str(v["_id"]),
+            "title": v.get("title", "Video"),
+            "tool": v.get("tool"),
+            "url": f"/media/{v.get('media_key')}",
+            "created_at": v.get("created_at").isoformat() if v.get("created_at") else ""
+        } for v in videos],
+        "transactions": [{
+            "id": str(t["_id"]),
+            "amount": t.get("amount", 0),
+            "status": t.get("status", "pending"),
+            "created_at": t.get("created_at").isoformat() if t.get("created_at") else ""
+        } for t in transactions]
+    }
+
+@app.post("/api/admin/settings")
+async def update_settings(request: Request, data: dict):
+    require_admin(request)
+    for key, value in data.items():
+        settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
+    return {"status": "success"}
+
 @app.get("/api/admin/stats")
 async def admin_stats(request: Request):
     require_admin(request)
-    current_month = datetime.utcnow().strftime("%Y-%m")
-    approved = transactions_col.find({"status": "approved", "created_at": {"$gte": datetime.strptime(current_month, "%Y-%m")}})
-    return { "total_users": users_col.count_documents({"role": {"$ne": "admin"}}), "monthly_profit": sum(tx.get("amount", 0) for tx in approved) }
+    monthly_approved = list(transactions_col.find({"status": "approved", "type": "credit_topup"}))
+    return {
+        "total_users": users_col.count_documents({}),
+        "total_videos": video_history_col.count_documents({}),
+        "monthly_profit": sum(tx.get("amount", 0) for tx in monthly_approved),
+        "yearly_profit": sum(tx.get("amount", 0) for tx in monthly_approved)
+    }
 
 @app.get("/api/admin/transactions")
 async def get_transactions(request: Request):
     require_admin(request)
-    docs = transactions_col.find({"status": "pending"}).sort("_id", DESCENDING)
-    return {"transactions": [{"id": str(d["_id"]), "email": d["email"], "amount": d["amount"], "status": d["status"], "date": d.get("created_at", d.get("date")).isoformat()+"Z" if type(d.get("created_at"))==datetime else d.get("date")} for d in docs]}
-
-class ApproveData(BaseModel):
-    id: str  
-    email: Optional[str] = None
-    amount: Optional[int] = None
+    return {
+        "transactions": [{
+            "id": str(d["_id"]), 
+            "email": d.get("email", ""), 
+            "amount": d.get("amount", 0), 
+            "status": d.get("status", "pending"), 
+            "proof": f"/media/{d.get('proof')}" if d.get('proof') else ""
+        } for d in transactions_col.find({"status": "pending"}).sort("_id", DESCENDING)]
+    }
 
 @app.post("/api/admin/approve")
-async def approve_transaction(request: Request, data: ApproveData):
+async def approve_transaction(request: Request, data: dict):
     require_admin(request)
-    tx = transactions_col.find_one_and_update({"_id": ObjectId(data.id)}, {"$set": {"status": "approved"}}, return_document=ReturnDocument.AFTER)
-    if tx:
-        users_col.update_one({"email": tx["email"]}, {"$inc": {"credits": tx["amount"]}})
-        create_notification(tx["email"], "Credits added", f"{tx['amount']:,} credits ထည့်ပေးပြီးပါပြီ။", "payment")
-    return {"status": "success"}
+    tx_id = data.get('id')
+    valid_days = int(data.get('valid_days', 30))
 
-class AddCreditData(BaseModel):
-    email: str
-    amount: int
+    tx = transactions_col.find_one_and_update(
+        {"_id": ObjectId(tx_id)}, 
+        {"$set": {"status": "approved"}}, 
+        return_document=ReturnDocument.AFTER
+    )
+    if tx:
+        user_email = tx.get("email", "")
+        amount = int(tx.get("amount", 0))
+        if user_email and amount > 0:
+            expire_time = current_utc() + timedelta(days=valid_days)
+            users_col.update_one(
+                {"email": user_email}, 
+                {
+                    "$inc": {"credits": amount},
+                    "$set": {"credits_expire_at": expire_time}
+                }
+            )
+            exp_date_str = expire_time.strftime('%Y-%m-%d')
+            create_notification(
+                user_email, 
+                "Credit ရောက်ရှိပါပြီ", 
+                f"AI Studio မှ Credit ဝယ်ယူမှုအတွက် အထူးကျေးဇူးတင်ရှိပါသည်။ {amount} credits အား သင့်အကောင့်ထဲသို့ ထည့်သွင်းပေးပြီးပါပြီ။ သက်တမ်းကုန်ဆုံးမည့်ရက်စွဲမှာ {exp_date_str} ({valid_days} ရက်) ဖြစ်ပါသည်။"
+            )
+    return {"status": "success"}
 
 @app.post("/api/admin/add-credit")
-async def admin_add_credit(request: Request, data: AddCreditData):
+async def admin_add_credit(request: Request, data: dict):
     require_admin(request)
-    users_col.update_one({"email": data.email}, {"$inc": {"credits": data.amount}})
-    create_notification(data.email, "Credits added", f"Admin မှ {data.amount:,} credits ထည့်ပေးပြီးပါပြီ။")
-    return {"status": "success"}
+    user_email = data.get('email', '').strip().lower()
+    amount = int(data.get('amount', 0))
+    valid_days = int(data.get('valid_days', 30))
 
-class SettingsData(BaseModel):
-    deduction_rate: str
-    free_daily_mins: str
-    trial_mins: str
-    announcement: str
-    marquee_color: str = "#ef4444"
-    announcement_bg: str = "#ef4444"
-    announcement_text_color: str = "#ffffff"
-
-@app.post("/api/admin/settings")
-async def update_settings(request: Request, data: SettingsData):
-    require_admin(request)
-    for key, value in data.dict().items(): settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
+    if user_email and amount > 0:
+        expire_time = current_utc() + timedelta(days=valid_days)
+        users_col.update_one(
+            {"email": user_email}, 
+            {
+                "$inc": {"credits": amount},
+                "$set": {"credits_expire_at": expire_time}
+            }
+        )
+        exp_date_str = expire_time.strftime('%Y-%m-%d')
+        create_notification(
+            user_email, 
+            "Credit ရောက်ရှိပါပြီ", 
+            f"AI Studio မှ ဝယ်ယူအားပေးမှုအတွက် အထူးပင်ကျေးဇူးတင်ရှိပါသည်။ {amount} credits ရောက်ရှိပါပြီခင်ဗျာ။ သင့် Credit များသည် {exp_date_str} ရက်နေ့တွင် သက်တမ်းကုန်ဆုံးပါမည်။"
+        )
     return {"status": "success"}
 
 @app.get("/api/admin/products")
-async def admin_products(request: Request):
+async def admin_get_products(request: Request):
     require_admin(request)
-    docs = products_col.find().sort("created_at", DESCENDING)
-    return {"products": [{"id": str(d["_id"]), "name": d.get("name"), "category": d.get("category"), "price_credits": d.get("price_credits"), "is_active": d.get("is_active", True), "image_url": public_media_url(d.get("image_key"))} for d in docs]}
+    prods = list(products_col.find().sort("created_at", DESCENDING))
+    return {
+        "products": [{
+            "id": str(p["_id"]),
+            "name": p.get("name", ""),
+            "category": p.get("category", ""),
+            "description": p.get("description", ""),
+            "image_url": f"/media/{p['image_key']}" if p.get("image_key") else (f"/media/{p['image_keys'][0]}" if p.get("image_keys") else None),
+            "image_urls": [f"/media/{k}" for k in p.get("image_keys", [])] if p.get("image_keys") else ([f"/media/{p['image_key']}"] if p.get("image_key") else []),
+            "variants": p.get("variants", [])
+        } for p in prods]
+    }
 
 @app.post("/api/admin/products")
-async def create_product(request: Request, name: str = Form(...), category: str = Form(...), description: str = Form(""), price_credits: int = Form(...), has_expiry: bool = Form(False), expiry_at: str = Form(""), delivery_link: str = Form(""), payment_accounts_json: str = Form("[]"), image: UploadFile = File(...)):
+async def admin_create_product(
+    request: Request,
+    name: str = Form(...),
+    category: str = Form(...),
+    description: str = Form(""),
+    variants_json: str = Form("[]"),
+    payment_accounts_json: str = Form("[]"),
+    images: list[UploadFile] = File(None)
+):
     require_admin(request)
-    expiration = datetime.fromisoformat(expiry_at.replace("Z", "+00:00")).replace(tzinfo=None) if has_expiry and expiry_at else None
-    uploaded = await save_upload(image, "products", ("image/",))
-    doc = { "name": name, "category": category, "description": description, "price_credits": int(price_credits), "has_expiry": bool(has_expiry), "expiry_at": expiration, "image_key": uploaded["key"], "payment_accounts": json.loads(payment_accounts_json), "delivery_link": delivery_link, "is_active": True, "created_at": datetime.utcnow() }
-    result = products_col.insert_one(doc)
-    for user in users_col.find({"role": {"$ne": "admin"}}, {"email": 1}): create_notification(user["email"], "New product added", f"{name} ကို Online Store တွင် ကြည့်ရှုနိုင်ပါသည်။", "store")
-    return {"status": "created"}
-
-@app.patch("/api/admin/products/{product_id}/toggle")
-async def toggle_product(product_id: str, request: Request):
-    require_admin(request)
-    current = products_col.find_one({"_id": ObjectId(product_id)})
-    products_col.update_one({"_id": ObjectId(product_id)}, {"$set": {"is_active": not bool(current.get("is_active", True))}})
+    image_keys = []
+    if images:
+        for img in images:
+            if img.filename:
+                upload_data = await save_upload(img, "products")
+                image_keys.append(upload_data["key"])
+    
+    doc = {
+        "name": name.strip(),
+        "category": category.strip(),
+        "description": description.strip(),
+        "variants": json.loads(variants_json),
+        "payment_accounts": json.loads(payment_accounts_json),
+        "image_keys": image_keys,
+        "image_key": image_keys[0] if image_keys else None,
+        "created_at": current_utc()
+    }
+    products_col.insert_one(doc)
     return {"status": "success"}
 
-@app.get("/api/admin/orders")
-async def admin_orders(request: Request):
+@app.delete("/api/admin/products/{product_id}")
+async def admin_delete_product(request: Request, product_id: str):
     require_admin(request)
-    docs = orders_col.find().sort("created_at", DESCENDING)
-    return {"orders": [{"id": str(d["_id"]), "buyer_email": d.get("buyer_email"), "delivery_email": d.get("delivery_email"), "product_name": d.get("product_name"), "status": d.get("status"), "receipt_url": public_media_url(d.get("receipt_key"))} for d in docs]}
-
-class DeliveryData(BaseModel):
-    delivery_link: Optional[str] = None
-    message: Optional[str] = None
-
-@app.post("/api/admin/orders/{order_id}/approve")
-async def approve_order(order_id: str, request: Request, data: DeliveryData, background_tasks: BackgroundTasks):
-    require_admin(request)
-    order = orders_col.find_one_and_update({"_id": ObjectId(order_id)}, {"$set": {"status": "delivered", "delivery_link": data.delivery_link}}, return_document=ReturnDocument.AFTER)
-    if order:
-        body = data.message or "သင်ဝယ်ယူထားသော Product ကို ပို့ပေးပြီးပါပြီ။"
-        if data.delivery_link: body += f"\n\nDownload Link: {data.delivery_link}"
-        create_notification(order["buyer_email"], "Product delivered", body, "order")
-        background_tasks.add_task(send_email_sync, order["delivery_email"], f"Your product is ready: {order['product_name']}", f"<h2>Product delivered</h2><p>{body.replace(chr(10), '<br>')}</p>")
+    prod = products_col.find_one({"_id": ObjectId(product_id)})
+    if prod:
+        for k in prod.get("image_keys", []):
+            delete_media(k)
+        if prod.get("image_key"):
+            delete_media(prod["image_key"])
+    products_col.delete_one({"_id": ObjectId(product_id)})
     return {"status": "success"}
 
-@app.get("/api/admin/messages/conversations")
-async def admin_conversations(request: Request):
-    require_admin(request)
-    pipeline = [ {"$match": {"participants": "778leomord@gmail.com"}}, {"$sort": {"created_at": -1}}, {"$group": {"_id": "$participants", "unread": {"$sum": {"$cond": [{"$and": [{"$eq": ["$recipient_email", "778leomord@gmail.com"]}, {"$eq": ["$is_read", False]}]}, 1, 0]}}}} ]
-    items = [{"email": next((e for e in doc["_id"] if e != "778leomord@gmail.com"), ""), "unread": doc["unread"]} for doc in messages_col.aggregate(pipeline)]
-    return {"conversations": items}
+# --- RICH MEDIA MESSAGING ---
 
-# --- SYSTEM APIs ---
+@app.get("/api/messages")
+async def get_messages(request: Request, peer: Optional[str] = None):
+    email = get_request_email(request)
+    target = peer if peer else (ADMIN_EMAIL if email != ADMIN_EMAIL else "")
+    query = {"participants": {"$all": [email, target]}} if target else {"participants": email}
+    docs = list(messages_col.find(query).sort("created_at", ASCENDING))
+    return {
+        "messages": [{
+            "id": str(d["_id"]), 
+            "sender_email": d.get("sender_email"), 
+            "body": d.get("body", ""), 
+            "attachment": d.get("attachment"), 
+            "created_at": d.get("created_at").isoformat() if d.get("created_at") else ""
+        } for d in docs]
+    }
+
+@app.post("/api/messages")
+async def send_message(
+    request: Request, 
+    recipient_email: str = Form(""), 
+    body: str = Form(""), 
+    file: Optional[UploadFile] = File(None)
+):
+    sender = get_request_email(request)
+    recipient = recipient_email.strip().lower() if recipient_email else ADMIN_EMAIL
+    attachment = None
+    if file:
+        att = await save_upload(file, "chat_attachments")
+        attachment = {
+            "url": f"/media/{att['key']}", 
+            "type": att["content_type"], 
+            "name": att["name"]
+        }
+    
+    doc = {
+        "sender_email": sender,
+        "recipient_email": recipient,
+        "participants": sorted([sender, recipient]),
+        "body": body.strip(),
+        "attachment": attachment,
+        "created_at": current_utc(),
+        "is_read": False
+    }
+    messages_col.insert_one(doc)
+    return {"status": "sent"}
+
+# --- AI & TTS PROXY (WITH STRICT DEDUCTION CHECK) ---
+
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     try:
         data = await request.json()
         text = data.get("text", "").strip()
         voice = data.get("voice", "my-MM-ThihaNeural")
-        if not text: return Response(content='{"error": "စာသား မရှိပါ"}', status_code=400)
-        communicate = edge_tts.Communicate(text, voice)
+        rate = data.get("rate", "+10%")
+        
+        # User Authentication & Credit Billing Check
+        auth = request.headers.get("authorization", "")
+        if not auth.lower().startswith("bearer "):
+            raise HTTPException(status_code=401, detail="Login ဝင်ရောက်ပေးပါ")
+
+        payload = _decode_session(auth[7:].strip())
+        if not payload or not payload.get("email"):
+            raise HTTPException(status_code=401, detail="Session သက်တမ်းကုန်ဆုံးသွားပါသည်")
+
+        u_email = str(payload["email"]).strip().lower()
+        tts_mode_setting = settings_col.find_one({"key": "tts_mode"})
+        tts_mode = tts_mode_setting.get("value", "ads") if tts_mode_setting else "ads"
+        
+        # Admin က Credit စနစ် ရွေးချယ်ထားပါက စာလုံးရေအလိုက် Credit နှုတ်ယူခြင်း
+        if tts_mode == "credits" and u_email != ADMIN_EMAIL:
+            char_rate_setting = settings_col.find_one({"key": "tts_chars_per_credit"})
+            chars_per_credit = int(char_rate_setting.get("value", "100")) if char_rate_setting else 100
+            cost = max(1, math.ceil(len(text) / chars_per_credit))
+            
+            user = users_col.find_one({"email": u_email})
+            if not user or user.get("credits", 0) < cost:
+                raise HTTPException(
+                    status_code=402, 
+                    detail=f"Credit မလုံလောက်ပါ။ စာလုံးရေ ({len(text)}) အတွက် {cost} Credits လိုအပ်ပါသည်။"
+                )
+            users_col.update_one({"email": u_email}, {"$inc": {"credits": -cost}})
+
+        communicate = edge_tts.Communicate(text, voice, rate=rate)
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
         tmp_file.close()
         await communicate.save(tmp_file.name)
         background_tasks.add_task(os.remove, tmp_file.name)
         return FileResponse(tmp_file.name, media_type="audio/mpeg")
-    except Exception as e: return Response(content=f'{{"error": "{str(e)}"}}', status_code=500)
+    except HTTPException:
+        raise
+    except Exception as e: 
+        return JSONResponse(status_code=500, content={"error": f"Edge TTS Error: {str(e)}"})
 
-@app.post("/api/convert-mp4")
-async def convert_to_mp4(request: Request, background_tasks: BackgroundTasks):
-    try:
-        form = await request.form()
-        file = form.get("file")
-        in_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".webm")
-        in_temp.write(await file.read())
-        in_temp.close()
-        out_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        out_temp.close()
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        subprocess.run([ffmpeg_exe, "-y", "-i", in_temp.name, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart", out_temp.name], check=True)
-        background_tasks.add_task(os.remove, in_temp.name)
-        background_tasks.add_task(os.remove, out_temp.name)
-        return FileResponse(out_temp.name, media_type="video/mp4", filename="final_video.mp4")
-    except Exception as e: return Response(content=f'{{"error": "{str(e)}"}}', status_code=500)
-
-@app.api_route("/api/gemini/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+@app.api_route("/api/gemini/{path:path}", methods=["GET", "POST"])
 async def proxy_gemini(path: str, request: Request):
-    url = f"https://generativelanguage.googleapis.com/{path}"
-    async with httpx.AsyncClient() as client:
-        req = client.build_request(request.method, url, params=dict(request.query_params), headers={"Content-Type": "application/json"}, content=await request.body(), timeout=120.0)
-        try:
-            res = await client.send(req)
-            return Response(content=res.content, status_code=res.status_code, media_type=res.headers.get("content-type", "application/json"))
-        except Exception as e: return Response(content=str(e), status_code=500)
+    query_params = dict(request.query_params)
+    client_key = query_params.get("key", "").strip()
+    keys_to_try = []
+    if client_key: keys_to_try.append(client_key)
+    for _ in range(len(SERVER_GEMINI_KEYS)):
+        k = get_server_gemini_key()
+        if k and k not in keys_to_try: keys_to_try.append(k)
+
+    body_bytes = await request.body()
+    async with httpx.AsyncClient(timeout=120.0) as client_http:
+        for key in keys_to_try:
+            try:
+                q = dict(query_params)
+                q["key"] = key
+                url = f"https://generativelanguage.googleapis.com/{path}"
+                res = await client_http.request(request.method, url, params=q, headers={"Content-Type": "application/json"}, content=body_bytes)
+                if res.status_code == 200:
+                    return Response(content=res.content, status_code=200, media_type="application/json")
+            except Exception: 
+                continue
+    return JSONResponse(status_code=500, content={"error": "Server Gemini API Error"})
 
 @app.post("/api/groq/transcriptions")
 async def proxy_groq(request: Request):
     try:
         form = await request.form()
         file = form.get("file")
+        if not file: 
+            return JSONResponse(status_code=400, content={"error": "အသံဖိုင် မပါရှိပါ"})
+            
         file_bytes = await file.read()
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
-        async with httpx.AsyncClient() as client:
-            for key in GROQ_API_KEYS:
-                if not key.strip() or "YOUR_" in key: continue
+        
+        custom_groq_key = request.headers.get("x-groq-key", "").strip()
+        keys_to_try = []
+        if custom_groq_key: 
+            keys_to_try.append(custom_groq_key)
+        for k in DEFAULT_GROQ_KEYS:
+            if k and k not in keys_to_try: 
+                keys_to_try.append(k)
+
+        if not keys_to_try:
+            return JSONResponse(status_code=400, content={"error": "Groq API Key ထည့်သွင်းထားခြင်း မရှိပါ"})
+
+        last_error_detail = "Keys မအောင်မြင်ပါ"
+        async with httpx.AsyncClient(timeout=120.0) as client_http:
+            for key in keys_to_try:
                 try:
-                    res = await client.post(url, headers={"Authorization": f"Bearer {key.strip()}"}, files={"file": (file.filename, file_bytes, file.content_type)}, data={"model": form.get("model", "whisper-large-v3-turbo"), "response_format": form.get("response_format", "verbose_json")}, timeout=120.0)
-                    if res.status_code == 200: return Response(content=res.content, status_code=res.status_code, media_type=res.headers.get("content-type"))
-                except: continue
-        return Response(content='{"error": "Groq Error"}', status_code=500)
-    except Exception as e: return Response(content=f'{{"error": "{str(e)}"}}', status_code=500)
+                    res = await client_http.post(
+                        url, 
+                        headers={"Authorization": f"Bearer {key.strip()}"}, 
+                        files={"file": (file.filename or "audio.wav", file_bytes, "audio/wav")}, 
+                        data={"model": "whisper-large-v3-turbo", "response_format": "verbose_json"}
+                    )
+                    if res.status_code == 200: 
+                        return Response(content=res.content, status_code=200, media_type="application/json")
+                    else:
+                        err_json = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
+                        last_error_detail = err_json.get("error", {}).get("message", res.text)
+                except Exception as e:
+                    last_error_detail = str(e)
+                    continue
+
+        return JSONResponse(status_code=502, content={"error": f"Groq Error: {last_error_detail}"})
+    except Exception as e: 
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
