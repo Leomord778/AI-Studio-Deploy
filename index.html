@@ -284,7 +284,6 @@
 
             return (
                 <div className="space-y-6">
-                    {/* Filter Selector Bar */}
                     <div className={`p-4 rounded-3xl flex flex-wrap items-center justify-between gap-4 ${neoClass}`}>
                         <div className="flex items-center gap-2">
                             <span className="text-xs font-bold opacity-70">ကာလရွေးချယ်ရန်:</span>
@@ -304,7 +303,6 @@
                         )}
                     </div>
 
-                    {/* Total Revenue & Net Profit Cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
                         <div className={`p-6 rounded-3xl border-l-4 border-yellow-500 ${neoClass}`}>
                             <p className="text-xs opacity-70 font-bold">စုစုပေါင်း ဝင်ငွေ (Total Revenue)</p>
@@ -331,7 +329,6 @@
                         </div>
                     </div>
 
-                    {/* Service-wise Breakdown Cards */}
                     <div className={`p-6 rounded-3xl space-y-4 ${neoClass}`}>
                         <h3 className="text-base font-bold text-purple-400">Service တစ်ခုချင်းစီအလိုက် ရရှိသော ဝင်ငွေနှင့် သုံးစွဲမှု အခြေအနေ</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -373,7 +370,6 @@
                         </div>
                     </div>
 
-                    {/* User Breakdown Table */}
                     <div className={`p-6 rounded-3xl space-y-4 ${neoClass}`}>
                         <h3 className="text-base font-bold text-indigo-400">User တစ်ဦးချင်းအလိုက် ဝယ်ယူမှုနှင့် အမြတ်ငွေ စာရင်းဇယား</h3>
                         <div className="overflow-x-auto">
@@ -408,7 +404,6 @@
                         </div>
                     </div>
 
-                    {/* User Item Details Modal */}
                     {selectedUserDetail && (
                         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[9999]">
                             <div className={`w-full max-w-2xl p-6 rounded-3xl max-h-[85vh] overflow-y-auto space-y-4 ${neoClass}`}>
@@ -770,24 +765,24 @@
                 setProgressStage("Uploading Video");
                 setIsProcessing(true);
                 setRenderProgress(5);
-                addSysLog("FFmpeg WASM ဖြင့် ဗီဒီယိုအား Real-time ချုံ့နေပါသည်...");
+                addSysLog("FFmpeg WASM ဖြင့် ဗီဒီယိုအား 1080p 18 FPS အတိုင်း စစ်ဆေးချုံ့နေပါသည်...");
 
                 try {
                     await ffmpeg.writeFile('raw_input.mp4', await window.FFmpegUtil.fetchFile(file));
                     await runFFmpeg([
-    '-i', 'raw_input.mp4',
-    '-vf', 'scale=trunc(iw*min(1280/iw\\,720/ih)/2)*2:trunc(ih*min(1280/iw\\,720/ih)/2)*2',
-    '-r', '18',                 // FPS ကို 25 ကနေ 18 သို့ လျှော့ချခြင်း (မျက်စိဖြင့် ကြည့်လျှင် သိသာမှုမရှိဘဲ render အလွန်မြန်သွားမည်)
-    '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-tune', 'fastdecode',      // decode/encode cycle ကို ပိုမြန်စေသည်
-    '-crf', '32',               // File size ပိုသေးသွားပြီး စက္ကန့်ပိုင်းအတွင်း compress ပြီးမည်
-    '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
-    '-b:a', '64k',              // Audio bitrate ချုံ့ပေးခြင်း
-    '-threads', '4',
-    'compressed.mp4'
-]);
+                        '-i', 'raw_input.mp4',
+                        '-vf', 'scale=trunc(iw*min(1920/iw\\,1080/ih)/2)*2:trunc(ih*min(1920/iw\\,1080/ih)/2)*2',
+                        '-r', '18',
+                        '-c:v', 'libx264',
+                        '-preset', 'ultrafast',
+                        '-tune', 'fastdecode',
+                        '-crf', '28',
+                        '-pix_fmt', 'yuv420p',
+                        '-c:a', 'aac',
+                        '-b:a', '128k',
+                        '-threads', '4',
+                        'compressed.mp4'
+                    ]);
 
                     const outData = await ffmpeg.readFile('compressed.mp4');
                     const compressedBlob = new Blob([outData.buffer], { type: 'video/mp4' });
@@ -1046,7 +1041,7 @@
 
                     try {
                         const { syncTimeline, totalAudioDur } = syncData;
-                        setProgressStage("Creating Video");
+                        setProgressStage("Creating Video (1080p)");
                         setRenderProgress(65);
 
                         const sampleRate = 44100;
@@ -1105,8 +1100,9 @@
                         }
 
                         const canvas = document.createElement('canvas');
-                        const vidW = Math.floor((meta.width || 1280) / 2) * 2;
-                        const vidH = Math.floor((meta.height || 720) / 2) * 2;
+                        // 1080p Resolution သတ်မှတ်ခြင်း
+                        const vidW = Math.floor((meta.width || 1920) / 2) * 2;
+                        const vidH = Math.floor((meta.height || 1080) / 2) * 2;
                         canvas.width = vidW;
                         canvas.height = vidH;
                         const ctx = canvas.getContext('2d');
@@ -1116,7 +1112,8 @@
                         freezeCanvas.height = vidH;
                         const freezeCtx = freezeCanvas.getContext('2d');
 
-                        const canvasStream = canvas.captureStream(25);
+                        // 18 FPS Stream ရယူခြင်း
+                        const canvasStream = canvas.captureStream(18);
                         const combinedStream = new MediaStream([
                             ...canvasStream.getVideoTracks(),
                             ...dest.stream.getAudioTracks()
@@ -1126,7 +1123,7 @@
                             ? 'video/webm; codecs=vp8,opus'
                             : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
 
-                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 3500000 } : undefined);
+                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 6000000 } : undefined);
                         const recordedChunks = [];
                         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
 
@@ -1166,23 +1163,21 @@
                                 return;
                             }
 
-                            // အမှန်ပြင်ဆင်ထားသော ကုဒ်:
-const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
+                            const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
 
-if (currentEvent) {
-    activeText = currentEvent.text || "";
-    
-    if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
-        currentEventIndex = syncTimeline.indexOf(currentEvent);
-        video.playbackRate = currentEvent.vSpeed;
-        if (Math.abs(video.currentTime - currentEvent.vStart) > 1.0) {
-            video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, currentEvent.vStart));
-        }
-    }
-} else {
-    // စကားမပြောသေးသည့်အချိန် (သို့မဟုတ်) စကားရပ်နားချိန်တွင် စာတန်းကို လုံးဝ ဖျောက်ထားမည်
-    activeText = "";
-}
+                            if (currentEvent) {
+                                activeText = currentEvent.text || "";
+                                
+                                if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
+                                    currentEventIndex = syncTimeline.indexOf(currentEvent);
+                                    video.playbackRate = currentEvent.vSpeed;
+                                    if (Math.abs(video.currentTime - currentEvent.vStart) > 1.0) {
+                                        video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, currentEvent.vStart));
+                                    }
+                                }
+                            } else {
+                                activeText = "";
+                            }
 
                             let zoom = 1.0;
                             if (freezeInterval > 0 && currentView === 'recap') {
@@ -1263,7 +1258,7 @@ if (currentEvent) {
                             }
 
                             if (autoCaption && activeText) {
-                                const baseFontSize = Math.max(14, Math.round(vidH * 0.028 * subSize));
+                                const baseFontSize = Math.max(16, Math.round(vidH * 0.028 * subSize));
                                 ctx.font = `600 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
                                 ctx.textAlign = 'center';
                                 ctx.textBaseline = 'middle';
@@ -1284,7 +1279,7 @@ if (currentEvent) {
 
                                     if (strokeColor !== 'none') {
                                         ctx.strokeStyle = strokeColor;
-                                        ctx.lineWidth = Math.max(2, baseFontSize * 0.08);
+                                        ctx.lineWidth = Math.max(2.5, baseFontSize * 0.08);
                                         ctx.lineJoin = 'round';
                                         ctx.strokeText(line, posX, posY);
                                     }
@@ -1305,52 +1300,50 @@ if (currentEvent) {
             };
 
             const convertWebmToMp4 = async (webmBlob) => {
-    const ffmpeg = ffmpegRef.current;
-    setProgressStage("Sending Final Video (Converting to MP4)");
-    setRenderProgress(0); // 0% မှ စတင်ရေတွက်မည်
-    addSysLog("FFmpeg WASM ဖြင့် Single-Pass MP4 သို့ စတင် Remux လုပ်နေပါသည်...");
+                const ffmpeg = ffmpegRef.current;
+                setProgressStage("Sending Final Video (Converting to 1080p MP4)");
+                setRenderProgress(0);
+                addSysLog("FFmpeg WASM ဖြင့် Single-Pass 1080p 18 FPS MP4 သို့ စတင် Remux လုပ်နေပါသည်...");
 
-    // FFmpeg ၏ Real-time Encoding Progress ကို တိုက်ရိုက်ဖမ်းယူခြင်း
-    const progressHandler = ({ progress }) => {
-        if (typeof progress === 'number' && !isNaN(progress)) {
-            const pct = Math.min(100, Math.max(0, Math.round(progress * 100)));
-            setRenderProgress(pct);
-        }
-    };
+                const progressHandler = ({ progress }) => {
+                    if (typeof progress === 'number' && !isNaN(progress)) {
+                        const pct = Math.min(100, Math.max(0, Math.round(progress * 100)));
+                        setRenderProgress(pct);
+                    }
+                };
 
-    ffmpeg.on('progress', progressHandler);
+                ffmpeg.on('progress', progressHandler);
 
-    try {
-        await ffmpeg.writeFile('input.webm', await window.FFmpegUtil.fetchFile(webmBlob));
+                try {
+                    await ffmpeg.writeFile('input.webm', await window.FFmpegUtil.fetchFile(webmBlob));
 
-        await runFFmpeg([
-            '-i', 'input.webm',
-            '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-            '-r', '18',
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-tune', 'fastdecode',
-            '-crf', '25',
-            '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-movflags', '+faststart',
-            'final_output.mp4'
-        ]);
+                    await runFFmpeg([
+                        '-i', 'input.webm',
+                        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+                        '-r', '18',
+                        '-c:v', 'libx264',
+                        '-preset', 'ultrafast',
+                        '-tune', 'fastdecode',
+                        '-crf', '22',
+                        '-pix_fmt', 'yuv420p',
+                        '-c:a', 'aac',
+                        '-b:a', '192k',
+                        '-movflags', '+faststart',
+                        'final_output.mp4'
+                    ]);
 
-        const outData = await ffmpeg.readFile('final_output.mp4');
-        const mp4Blob = new Blob([outData.buffer], { type: 'video/mp4' });
+                    const outData = await ffmpeg.readFile('final_output.mp4');
+                    const mp4Blob = new Blob([outData.buffer], { type: 'video/mp4' });
 
-        try { await ffmpeg.deleteFile('input.webm'); } catch(e){}
-        try { await ffmpeg.deleteFile('final_output.mp4'); } catch(e){}
+                    try { await ffmpeg.deleteFile('input.webm'); } catch(e){}
+                    try { await ffmpeg.deleteFile('final_output.mp4'); } catch(e){}
 
-        setRenderProgress(100);
-        return mp4Blob;
-    } finally {
-        // အလုပ်ပြီးပါက သီးသန့် listener ကို ပြန်လည်ဖြုတ်ပယ်ခြင်း
-        ffmpeg.off('progress', progressHandler);
-    }
-};
+                    setRenderProgress(100);
+                    return mp4Blob;
+                } finally {
+                    ffmpeg.off('progress', progressHandler);
+                }
+            };
 
             const handleOneClickRecap = async () => {
                 if (!videoFile) return;
@@ -1365,7 +1358,7 @@ if (currentEvent) {
                     v.preload = 'metadata';
                     v.src = videoLocalUrl;
                     await new Promise(r => v.onloadedmetadata = r);
-                    const meta = { duration: v.duration, width: v.videoWidth || 1280, height: v.videoHeight || 720 };
+                    const meta = { duration: v.duration, width: v.videoWidth || 1920, height: v.videoHeight || 1080 };
 
                     const deductRes = await apiFetch('/api/video/pre-deduct', {
                         method: 'POST',
@@ -1566,20 +1559,19 @@ if (currentEvent) {
             };
 
             const loadAdminThread = async (userEmail) => {
-    if (!userEmail) return;
-    setAdminSelectedChatUser(userEmail);
-    try {
-        const r = await apiFetch(`/api/messages?peer=${encodeURIComponent(userEmail)}`);
-        const d = await r.json();
-        setAdminSelectedChatMessages(Array.isArray(d.messages) ? d.messages : []);
-        
-        // စာဖတ်ပြီးသည်နှင့် Admin badge များကို ချက်ချင်း ပြန်လည် Update ခေါ်ယူပြီး Noti ဖြုတ်ချခြင်း
-        const badgesRes = await apiFetch('/api/admin/badges');
-        setAdminBadges(await badgesRes.json());
-    } catch(e){
-        setAdminSelectedChatMessages([]);
-    }
-};
+                if (!userEmail) return;
+                setAdminSelectedChatUser(userEmail);
+                try {
+                    const r = await apiFetch(`/api/messages?peer=${encodeURIComponent(userEmail)}`);
+                    const d = await r.json();
+                    setAdminSelectedChatMessages(Array.isArray(d.messages) ? d.messages : []);
+                    
+                    const badgesRes = await apiFetch('/api/admin/badges');
+                    setAdminBadges(await badgesRes.json());
+                } catch(e){
+                    setAdminSelectedChatMessages([]);
+                }
+            };
 
             const sendAdminReply = async () => {
                 const target = adminSelectedChatUser || adminDirectTargetEmail.trim().toLowerCase();
@@ -1764,62 +1756,61 @@ if (currentEvent) {
 
                     <div className="max-w-6xl mx-auto space-y-8 relative">
                         <header className={`flex flex-col md:flex-row justify-between items-center p-6 rounded-3xl ${neoClass}`}>
-                <div className="flex items-center gap-4 mb-4 md:mb-0">
-                    {currentView !== 'home' && (
-                        <button onClick={() => navigateTo('home')} className={`p-3 rounded-2xl ${neoBtnClass}`} title="Home သို့ ပြန်သွားမည်">
-                            <HomeIcon className="w-6 h-6 text-indigo-500" />
-                        </button>
-                    )}
-                    
-                    {/* Modern Geometric "R" Studio Emblem */}
-                    <div className="flex items-center gap-3.5 select-none">
-                        <div className="relative flex items-center justify-center p-2 rounded-2xl bg-[#111c2e]/80 border border-cyan-400/30 shadow-[0_0_20px_rgba(6,182,212,0.2)]">
-                            <svg className="w-9 h-9" viewBox="0 0 130 130" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                <defs>
-                                    <linearGradient id="logoTurquoise" x1="0%" y1="0%" x2="100%" y2="100%">
-                                        <stop offset="0%" stopColor="#00f2fe" />
-                                        <stop offset="100%" stopColor="#4facfe" />
-                                    </linearGradient>
-                                    <linearGradient id="logoAzure" x1="0%" y1="0%" x2="100%" y2="100%">
-                                        <stop offset="0%" stopColor="#38bdf8" />
-                                        <stop offset="100%" stopColor="#2563eb" />
-                                    </linearGradient>
-                                    <filter id="dotGlow" x="-20%" y="-20%" width="140%" height="140%">
-                                        <feGaussianBlur stdDeviation="4" result="blur" />
-                                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                                    </filter>
-                                </defs>
-                                <path d="M38 32 L38 98" stroke="url(#logoTurquoise)" strokeWidth="9" strokeLinecap="round" />
-                                <path d="M38 36 L68 36 C82 36, 92 46, 92 58 C92 70, 82 80, 68 80 L38 80" 
-                                      fill="none" stroke="url(#logoTurquoise)" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" />
-                                <path d="M64 78 L92 98" stroke="url(#logoAzure)" strokeWidth="9" strokeLinecap="round" />
-                                <circle cx="65" cy="58" r="5.5" fill="#00f2fe" filter="url(#dotGlow)" />
-                                <circle cx="108" cy="22" r="3" fill="#38bdf8" opacity="0.7" />
-                            </svg>
-                        </div>
+                            <div className="flex items-center gap-4 mb-4 md:mb-0">
+                                {currentView !== 'home' && (
+                                    <button onClick={() => navigateTo('home')} className={`p-3 rounded-2xl ${neoBtnClass}`} title="Home သို့ ပြန်သွားမည်">
+                                        <HomeIcon className="w-6 h-6 text-indigo-500" />
+                                    </button>
+                                )}
+                                
+                                <div className="flex items-center gap-3.5 select-none">
+                                    <div className="relative flex items-center justify-center p-2 rounded-2xl bg-[#111c2e]/80 border border-cyan-400/30 shadow-[0_0_20px_rgba(6,182,212,0.2)]">
+                                        <svg className="w-9 h-9" viewBox="0 0 130 130" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <defs>
+                                                <linearGradient id="logoTurquoise" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                    <stop offset="0%" stopColor="#00f2fe" />
+                                                    <stop offset="100%" stopColor="#4facfe" />
+                                                </linearGradient>
+                                                <linearGradient id="logoAzure" x1="0%" y1="0%" x2="100%" y2="100%">
+                                                    <stop offset="0%" stopColor="#38bdf8" />
+                                                    <stop offset="100%" stopColor="#2563eb" />
+                                                </linearGradient>
+                                                <filter id="dotGlow" x="-20%" y="-20%" width="140%" height="140%">
+                                                    <feGaussianBlur stdDeviation="4" result="blur" />
+                                                    <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                                                </filter>
+                                            </defs>
+                                            <path d="M38 32 L38 98" stroke="url(#logoTurquoise)" strokeWidth="9" strokeLinecap="round" />
+                                            <path d="M38 36 L68 36 C82 36, 92 46, 92 58 C92 70, 82 80, 68 80 L38 80" 
+                                                  fill="none" stroke="url(#logoTurquoise)" strokeWidth="9" strokeLinecap="round" strokeLinejoin="round" />
+                                            <path d="M64 78 L92 98" stroke="url(#logoAzure)" strokeWidth="9" strokeLinecap="round" />
+                                            <circle cx="65" cy="58" r="5.5" fill="#00f2fe" filter="url(#dotGlow)" />
+                                            <circle cx="108" cy="22" r="3" fill="#38bdf8" opacity="0.7" />
+                                        </svg>
+                                    </div>
 
-                        <div>
-                            <div className="flex items-baseline gap-2">
-                                <h1 className="text-2xl sm:text-3xl font-black tracking-wider bg-gradient-to-r from-cyan-400 to-sky-300 bg-clip-text text-transparent">
-                                    RECAP
-                                </h1>
-                                <span className="text-2xl sm:text-3xl font-light tracking-widest text-slate-100">
-                                    STUDIO
-                                </span>
-                            </div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                                <div className="flex items-center gap-1 opacity-70">
-                                    <span className="w-3 h-1 rounded-full bg-cyan-400"></span>
-                                    <span className="w-6 h-1 rounded-full bg-sky-400"></span>
-                                    <span className="w-2 h-1 rounded-full bg-blue-600"></span>
+                                    <div>
+                                        <div className="flex items-baseline gap-2">
+                                            <h1 className="text-2xl sm:text-3xl font-black tracking-wider bg-gradient-to-r from-cyan-400 to-sky-300 bg-clip-text text-transparent">
+                                                RECAP
+                                            </h1>
+                                            <span className="text-2xl sm:text-3xl font-light tracking-widest text-slate-100">
+                                                STUDIO
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-2 mt-0.5">
+                                            <div className="flex items-center gap-1 opacity-70">
+                                                <span className="w-3 h-1 rounded-full bg-cyan-400"></span>
+                                                <span className="w-6 h-1 rounded-full bg-sky-400"></span>
+                                                <span className="w-2 h-1 rounded-full bg-blue-600"></span>
+                                            </div>
+                                            <p className="text-[10px] font-semibold tracking-widest text-slate-400 uppercase">
+                                                Next-Gen Media Engine
+                                            </p>
+                                        </div>
+                                    </div>
                                 </div>
-                                <p className="text-[10px] font-semibold tracking-widest text-slate-400 uppercase">
-                                    Next-Gen Media Engine
-                                </p>
                             </div>
-                        </div>
-                    </div>
-                </div>
                             <div className="flex items-center gap-4">
                                 <button onClick={() => setShowSettings(!showSettings)} className={`p-3 rounded-2xl ${neoBtnClass}`} title="API Key Settings"><SettingsIcon className={`w-6 h-6 ${showSettings ? 'text-indigo-500' : ''}`} /></button>
                                 {user && (
@@ -1989,14 +1980,14 @@ if (currentEvent) {
 
                                         {(userData?.role === 'admin' || user?.email?.toLowerCase() === ADMIN_EMAIL) && (
                                             <button onClick={openAdmin} className={`col-span-full p-6 rounded-3xl flex items-center justify-center gap-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl hover:opacity-95 transition-all relative`}>
-    <UsersIcon className="w-8 h-8" />
-    <h2 className="text-xl font-black">Admin Management Dashboard</h2>
-    {adminBadges.total_alerts > 0 && (
-        <span className="absolute top-4 right-4 bg-red-500 text-white text-xs font-black px-3 py-1 rounded-full animate-bounce shadow-lg">
-            {adminBadges.total_alerts} New
-        </span>
-    )}
-</button>
+                                                <UsersIcon className="w-8 h-8" />
+                                                <h2 className="text-xl font-black">Admin Management Dashboard</h2>
+                                                {adminBadges.total_alerts > 0 && (
+                                                    <span className="absolute top-4 right-4 bg-red-500 text-white text-xs font-black px-3 py-1 rounded-full animate-bounce shadow-lg">
+                                                        {adminBadges.total_alerts} New
+                                                    </span>
+                                                )}
+                                            </button>
                                         )}
                                     </div>
                                 )}
@@ -2163,7 +2154,7 @@ if (currentEvent) {
                                     )}
 
                                     <div className={`p-6 rounded-3xl flex-1 flex flex-col min-h-[400px] ${neoClass}`}>
-                                        <div className="p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className="w-5 h-5 text-indigo-500"/>} {finalVideoUrl ? "အပြီးသတ် ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည်" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
+                                        <div className="p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className="w-5 h-5 text-indigo-500"/>} {finalVideoUrl ? "အပြီးသတ် ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည် (1080p)" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
 
                                         <div className={`flex-1 rounded-2xl overflow-hidden flex items-center justify-center relative ${neoPressedClass}`}>
                                             {!finalVideoUrl && videoUrl && (
@@ -2270,7 +2261,9 @@ if (currentEvent) {
                                                                 responseModalities: ["AUDIO"], 
                                                                 speechConfig: { 
                                                                     voiceConfig: { 
-                                                                        prebuiltVoiceConfig: { voiceName: ttsVoice } 
+                                                                        prebuiltVoiceConfig: { 
+                                                                            voiceName: ttsVoice 
+                                                                        } 
                                                                     } 
                                                                 } 
                                                             } 
@@ -2456,26 +2449,22 @@ if (currentEvent) {
                                             <p className="text-[10px] opacity-70 mb-1">{m?.sender_email || "System"}</p>
                                             {m?.body && <p className="text-sm mb-2 whitespace-pre-wrap">{m.body}</p>}
                                             {m?.attachment && (
-    <div className="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/20">
-        {/* ဗီဒီယိုဖိုင်ဖြစ်ပါက Video Player တိုက်ရိုက်ပြမည် */}
-        {m.attachment.type?.startsWith('video/') || m.attachment.url?.match(/\.(mp4|webm|mov|mkv)$/i) ? (
-            <video src={m.attachment.url} controls playsInline className="w-full max-h-60 rounded-xl bg-black object-contain" />
-        ) : 
-        /* ဓာတ်ပုံဖြစ်ပါက Image တိုက်ရိုက်ပြမည် */
-        m.attachment.type?.startsWith('image/') || m.attachment.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-            <img src={m.attachment.url} alt={m.attachment.name || "Attachment"} className="w-full max-h-60 rounded-xl object-contain cursor-pointer hover:opacity-95" onClick={() => window.open(m.attachment.url, '_blank')} />
-        ) : 
-        /* အသံဖိုင်ဖြစ်ပါက Audio Player တိုက်ရိုက်ပြမည် */
-        m.attachment.type?.startsWith('audio/') || m.attachment.url?.match(/\.(mp3|wav|ogg|m4a)$/i) ? (
-            <audio src={m.attachment.url} controls className="w-full mt-1" />
-        ) : (
-            /* အခြားဖိုင်များဖြစ်ပါက Download Link ပြမည် */
-            <a href={m.attachment.url} target="_blank" rel="noopener noreferrer" className="p-2 text-indigo-200 underline text-xs block truncate">
-                📁 {m.attachment.name || "ဖိုင်ဒေါင်းလုဒ်ဆွဲရန်"}
-            </a>
-        )}
-    </div>
-)}
+                                                <div className="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/20">
+                                                    {m.attachment.type?.startsWith('video/') || m.attachment.url?.match(/\.(mp4|webm|mov|mkv)$/i) ? (
+                                                        <video src={m.attachment.url} controls playsInline className="w-full max-h-60 rounded-xl bg-black object-contain" />
+                                                    ) : 
+                                                    m.attachment.type?.startsWith('image/') || m.attachment.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+                                                        <img src={m.attachment.url} alt={m.attachment.name || "Attachment"} className="w-full max-h-60 rounded-xl object-contain cursor-pointer hover:opacity-95" onClick={() => window.open(m.attachment.url, '_blank')} />
+                                                    ) : 
+                                                    m.attachment.type?.startsWith('audio/') || m.attachment.url?.match(/\.(mp3|wav|ogg|m4a)$/i) ? (
+                                                        <audio src={m.attachment.url} controls className="w-full mt-1" />
+                                                    ) : (
+                                                        <a href={m.attachment.url} target="_blank" rel="noopener noreferrer" className="p-2 text-indigo-200 underline text-xs block truncate">
+                                                            📁 {m.attachment.name || "ဖိုင်ဒေါင်းလုဒ်ဆွဲရန်"}
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
@@ -2495,8 +2484,8 @@ if (currentEvent) {
                                     <div className="flex gap-2 flex-wrap">
                                         <button key="overview" onClick={()=>setAdminTab('overview')} className={`px-4 py-2 rounded-xl font-bold text-xs ${adminTab==='overview' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>Overview</button>
                                         <button key="users" onClick={()=>setAdminTab('users')} className={`px-4 py-2 rounded-xl font-bold text-xs ${adminTab==='users' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>
-    Users Directory ({adminUsers.length})
-</button>
+                                            Users Directory ({adminUsers.length})
+                                        </button>
                                         <button key="orders" onClick={()=>setAdminTab('orders')} className={`px-4 py-2 rounded-xl font-bold text-xs relative ${adminTab==='orders' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>
                                             Store Orders {adminBadges.pending_orders > 0 && <span className="bg-amber-500 text-black text-[10px] px-2 py-0.5 rounded-full ml-1 font-black">{adminBadges.pending_orders}</span>}
                                         </button>
@@ -2517,119 +2506,115 @@ if (currentEvent) {
                                 )}
                                 
                                 {adminTab === 'users' && (
-    <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
-        <div className="flex justify-between items-center">
-            <h3 className="text-lg font-bold text-purple-400">User စာရင်းနှင့် အသေးစိတ်မှတ်တမ်းများ</h3>
-            <span className="text-xs opacity-70">စုစုပေါင်း: {adminUsers.length} ဦး</span>
-        </div>
+                                    <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
+                                        <div className="flex justify-between items-center">
+                                            <h3 className="text-lg font-bold text-purple-400">User စာရင်းနှင့် အသေးစိတ်မှတ်တမ်းများ</h3>
+                                            <span className="text-xs opacity-70">စုစုပေါင်း: {adminUsers.length} ဦး</span>
+                                        </div>
 
-        <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-                <thead>
-                    <tr className="border-b border-current/10 opacity-70">
-                        <th className="pb-3">အသုံးပြုသူ</th>
-                        <th className="pb-3">စတင်သုံးစွဲသည့်ရက်</th>
-                        <th className="pb-3">လက်ကျန် Credit</th>
-                        <th className="pb-3">ဝယ်ယူခဲ့သည့်ပမာဏ</th>
-                        <th className="pb-3">Video (အောင်မြင်/ပျက်စီး)</th>
-                        <th className="pb-3">TTS အကြိမ်</th>
-                        <th className="pb-3 text-right">အသေးစိတ်</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-current/5">
-                    {adminUsers.map(u => (
-                        <tr key={u.email} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                            <td className="py-3 font-bold">
-                                <div>{u.name}</div>
-                                <div className="text-[10px] opacity-60 font-mono">{u.email}</div>
-                            </td>
-                            <td className="py-3 opacity-80">{u.joined_date}</td>
-                            <td className="py-3">
-                                <span className="font-bold text-yellow-500">{u.credits}</span>
-                                {u.remaining_days && <span className="text-[10px] opacity-60 block">({u.remaining_days} ရက်ကျန်)</span>}
-                            </td>
-                            <td className="py-3 font-bold text-emerald-500">{u.total_spent_mmk?.toLocaleString()} MMK</td>
-                            <td className="py-3">
-                                <span className="text-blue-400 font-bold">{u.total_videos} ပုဒ်</span> 
-                                <span className="text-[10px] opacity-70 block">
-                                    (အောင်: <b className="text-green-500">{u.success_videos}</b> | ပျက်: <b className="text-red-500">{u.failed_videos}</b>)
-                                </span>
-                            </td>
-                            <td className="py-3 font-bold text-rose-400">{u.tts_count} ခါ</td>
-                            <td className="py-3 text-right">
-                                <button onClick={() => viewUserDetails(u.email)} className="px-3 py-1.5 bg-purple-600 text-white rounded-lg font-bold text-[11px] shadow">
-                                    ကြည့်မည်
-                                </button>
-                            </td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full text-left text-xs">
+                                                <thead>
+                                                    <tr className="border-b border-current/10 opacity-70">
+                                                        <th className="pb-3">အသုံးပြုသူ</th>
+                                                        <th className="pb-3">စတင်သုံးစွဲသည့်ရက်</th>
+                                                        <th className="pb-3">လက်ကျန် Credit</th>
+                                                        <th className="pb-3">ဝယ်ယူခဲ့သည့်ပမာဏ</th>
+                                                        <th className="pb-3">Video (အောင်မြင်/ပျက်စီး)</th>
+                                                        <th className="pb-3">TTS အကြိမ်</th>
+                                                        <th className="pb-3 text-right">အသေးစိတ်</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-current/5">
+                                                    {adminUsers.map(u => (
+                                                        <tr key={u.email} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                                                            <td className="py-3 font-bold">
+                                                                <div>{u.name}</div>
+                                                                <div className="text-[10px] opacity-60 font-mono">{u.email}</div>
+                                                            </td>
+                                                            <td className="py-3 opacity-80">{u.joined_date}</td>
+                                                            <td className="py-3">
+                                                                <span className="font-bold text-yellow-500">{u.credits}</span>
+                                                                {u.remaining_days && <span className="text-[10px] opacity-60 block">({u.remaining_days} ရက်ကျန်)</span>}
+                                                            </td>
+                                                            <td className="py-3 font-bold text-emerald-500">{u.total_spent_mmk?.toLocaleString()} MMK</td>
+                                                            <td className="py-3">
+                                                                <span className="text-blue-400 font-bold">{u.total_videos} ပုဒ်</span> 
+                                                                <span className="text-[10px] opacity-70 block">
+                                                                    (အောင်: <b className="text-green-500">{u.success_videos}</b> | ပျက်: <b className="text-red-500">{u.failed_videos}</b>)
+                                                                </span>
+                                                            </td>
+                                                            <td className="py-3 font-bold text-rose-400">{u.tts_count} ခါ</td>
+                                                            <td className="py-3 text-right">
+                                                                <button onClick={() => viewUserDetails(u.email)} className="px-3 py-1.5 bg-purple-600 text-white rounded-lg font-bold text-[11px] shadow">
+                                                                    ကြည့်မည်
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
 
-        {/* User Details Modal View */}
-        {selectedUserDetails && (
-            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[9999]">
-                <div className={`w-full max-w-2xl p-6 rounded-3xl max-h-[85vh] overflow-y-auto space-y-5 ${neoClass}`}>
-                    <div className="flex justify-between items-center border-b border-current/10 pb-3">
-                        <div>
-                            <h3 className="text-lg font-bold text-purple-400">{selectedUserDetails.user.name} ၏ အချက်အလက်အပြည့်အစုံ</h3>
-                            <p className="text-xs opacity-70">{selectedUserDetails.user.email} (စသုံးသည့်ရက်: {selectedUserDetails.user.joined_date})</p>
-                        </div>
-                        <button onClick={() => setSelectedUserDetails(null)}><XIcon className="w-5 h-5"/></button>
-                    </div>
+                                        {selectedUserDetails && (
+                                            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[9999]">
+                                                <div className={`w-full max-w-2xl p-6 rounded-3xl max-h-[85vh] overflow-y-auto space-y-5 ${neoClass}`}>
+                                                    <div className="flex justify-between items-center border-b border-current/10 pb-3">
+                                                        <div>
+                                                            <h3 className="text-lg font-bold text-purple-400">{selectedUserDetails.user.name} ၏ အချက်အလက်အပြည့်အစုံ</h3>
+                                                            <p className="text-xs opacity-70">{selectedUserDetails.user.email} (စသုံးသည့်ရက်: {selectedUserDetails.user.joined_date})</p>
+                                                        </div>
+                                                        <button onClick={() => setSelectedUserDetails(null)}><XIcon className="w-5 h-5"/></button>
+                                                    </div>
 
-                    {/* Store Orders History */}
-                    <div>
-                        <h4 className="font-bold text-xs text-amber-500 mb-2">ဝယ်ယူခဲ့သော Store ပစ္စည်းများ ({selectedUserDetails.orders.length})</h4>
-                        <div className={`p-3 rounded-xl max-h-36 overflow-y-auto space-y-2 text-xs ${neoPressedClass}`}>
-                            {selectedUserDetails.orders.map(o => (
-                                <div key={o.id} className="flex justify-between items-center border-b border-current/5 pb-1">
-                                    <span>{o.product_name} ({o.variant_name})</span>
-                                    <span className="font-bold text-yellow-500">{o.price_mmk?.toLocaleString()} MMK ({o.status})</span>
-                                </div>
-                            ))}
-                            {selectedUserDetails.orders.length === 0 && <p className="opacity-50">Store မှ ပစ္စည်း မဝယ်ဖူးသေးပါ။</p>}
-                        </div>
-                    </div>
+                                                    <div>
+                                                        <h4 className="font-bold text-xs text-amber-500 mb-2">ဝယ်ယူခဲ့သော Store ပစ္စည်းများ ({selectedUserDetails.orders.length})</h4>
+                                                        <div className={`p-3 rounded-xl max-h-36 overflow-y-auto space-y-2 text-xs ${neoPressedClass}`}>
+                                                            {selectedUserDetails.orders.map(o => (
+                                                                <div key={o.id} className="flex justify-between items-center border-b border-current/5 pb-1">
+                                                                    <span>{o.product_name} ({o.variant_name})</span>
+                                                                    <span className="font-bold text-yellow-500">{o.price_mmk?.toLocaleString()} MMK ({o.status})</span>
+                                                                </div>
+                                                            ))}
+                                                            {selectedUserDetails.orders.length === 0 && <p className="opacity-50">Store မှ ပစ္စည်း မဝယ်ဖူးသေးပါ။</p>}
+                                                        </div>
+                                                    </div>
 
-                    {/* Videos History */}
-                    <div>
-                        <h4 className="font-bold text-xs text-blue-500 mb-2">ဖန်တီးခဲ့သော Video စာရင်း ({selectedUserDetails.videos.length})</h4>
-                        <div className={`p-3 rounded-xl max-h-40 overflow-y-auto space-y-2 text-xs ${neoPressedClass}`}>
-                            {selectedUserDetails.videos.map(v => (
-                                <div key={v.id} className="flex justify-between items-center border-b border-current/5 pb-1">
-                                    <div>
-                                        <span className="font-bold">{v.title}</span>
-                                        <span className="text-[10px] opacity-60 block">{v.created_at}</span>
+                                                    <div>
+                                                        <h4 className="font-bold text-xs text-blue-500 mb-2">ဖန်တီးခဲ့သော Video စာရင်း ({selectedUserDetails.videos.length})</h4>
+                                                        <div className={`p-3 rounded-xl max-h-40 overflow-y-auto space-y-2 text-xs ${neoPressedClass}`}>
+                                                            {selectedUserDetails.videos.map(v => (
+                                                                <div key={v.id} className="flex justify-between items-center border-b border-current/5 pb-1">
+                                                                    <div>
+                                                                        <span className="font-bold">{v.title}</span>
+                                                                        <span className="text-[10px] opacity-60 block">{v.created_at}</span>
+                                                                    </div>
+                                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${v.status === 'failed' ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+                                                                        {v.status === 'failed' ? 'Failed / Error' : 'Success'} (-{v.cost} Cr)
+                                                                    </span>
+                                                                </div>
+                                                            ))}
+                                                            {selectedUserDetails.videos.length === 0 && <p className="opacity-50">ဗီဒီယို မလုပ်ဖူးသေးပါ။</p>}
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <h4 className="font-bold text-xs text-emerald-500 mb-2">Credit ဖြည့်သွင်းမှု မှတ်တမ်း ({selectedUserDetails.transactions.length})</h4>
+                                                        <div className={`p-3 rounded-xl max-h-36 overflow-y-auto space-y-2 text-xs ${neoPressedClass}`}>
+                                                            {selectedUserDetails.transactions.map(t => (
+                                                                <div key={t.id} className="flex justify-between items-center border-b border-current/5 pb-1">
+                                                                    <span>{t.created_at}</span>
+                                                                    <span className="font-bold">{t.amount?.toLocaleString()} MMK ({t.status})</span>
+                                                                </div>
+                                                            ))}
+                                                            {selectedUserDetails.transactions.length === 0 && <p className="opacity-50">ငွေဖြည့်မှတ်တမ်း မရှိသေးပါ။</p>}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${v.status === 'failed' ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
-                                        {v.status === 'failed' ? 'Failed / Error' : 'Success'} (-{v.cost} Cr)
-                                    </span>
-                                </div>
-                            ))}
-                            {selectedUserDetails.videos.length === 0 && <p className="opacity-50">ဗီဒီယို မလုပ်ဖူးသေးပါ။</p>}
-                        </div>
-                    </div>
-
-                    {/* Topup Transactions History */}
-                    <div>
-                        <h4 className="font-bold text-xs text-emerald-500 mb-2">Credit ဖြည့်သွင်းမှု မှတ်တမ်း ({selectedUserDetails.transactions.length})</h4>
-                        <div className={`p-3 rounded-xl max-h-36 overflow-y-auto space-y-2 text-xs ${neoPressedClass}`}>
-                            {selectedUserDetails.transactions.map(t => (
-                                <div key={t.id} className="flex justify-between items-center border-b border-current/5 pb-1">
-                                    <span>{t.created_at}</span>
-                                    <span className="font-bold">{t.amount?.toLocaleString()} MMK ({t.status})</span>
-                                </div>
-                            ))}
-                            {selectedUserDetails.transactions.length === 0 && <p className="opacity-50">ငွေဖြည့်မှတ်တမ်း မရှိသေးပါ။</p>}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        )}
-    </div>
-)}
+                                )}
 
                                 {adminTab === 'orders' && (
                                     <div className={`p-6 rounded-3xl space-y-4 ${neoClass}`}>
@@ -2646,14 +2631,14 @@ if (currentEvent) {
                                                     <div className="flex items-center gap-2">
                                                         {o.proof_url && <a href={o.proof_url} target="_blank" className="px-3 py-1.5 bg-slate-700 text-xs font-bold rounded-xl">ပြေစာကြည့်မည်</a>}
                                                         {o.status === 'completed' ? (
-    <span className="px-4 py-1.5 bg-emerald-500/20 text-emerald-400 font-black rounded-xl text-xs border border-emerald-500/30 flex items-center gap-1">
-        ✓ Done (ပို့ဆောင်ပြီး)
-    </span>
-) : (
-    <button onClick={() => setSelectedOrderToDeliver(o)} className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded-xl text-xs shadow-md transition-all">
-        ပစ္စည်းပို့မည်
-    </button>
-)}
+                                                            <span className="px-4 py-1.5 bg-emerald-500/20 text-emerald-400 font-black rounded-xl text-xs border border-emerald-500/30 flex items-center gap-1">
+                                                                ✓ Done (ပို့ဆောင်ပြီး)
+                                                            </span>
+                                                        ) : (
+                                                            <button onClick={() => setSelectedOrderToDeliver(o)} className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded-xl text-xs shadow-md transition-all">
+                                                                ပစ္စည်းပို့မည်
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ))}
@@ -2678,63 +2663,60 @@ if (currentEvent) {
                                                 </div>
 
                                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-    {/* ၁။ ရောင်းဈေး */}
-    <div>
-        <label className="text-xs font-bold opacity-70 block mb-1">ရောင်းဈေး (Selling Price MMK):</label>
-        <input 
-            type="number" 
-            placeholder="5000" 
-            value={productForm.variants[0]?.price_mmk || ''} 
-            onChange={e => {
-                const val = parseInt(e.target.value) || 0;
-                setProductForm({
-                    ...productForm, 
-                    variants: [{ ...productForm.variants[0], price_mmk: val }]
-                });
-            }} 
-            required 
-            className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} 
-        />
-    </div>
+                                                    <div>
+                                                        <label className="text-xs font-bold opacity-70 block mb-1">ရောင်းဈေး (Selling Price MMK):</label>
+                                                        <input 
+                                                            type="number" 
+                                                            placeholder="5000" 
+                                                            value={productForm.variants[0]?.price_mmk || ''} 
+                                                            onChange={e => {
+                                                                const val = parseInt(e.target.value) || 0;
+                                                                setProductForm({
+                                                                    ...productForm, 
+                                                                    variants: [{ ...productForm.variants[0], price_mmk: val }]
+                                                                });
+                                                            }} 
+                                                            required 
+                                                            className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} 
+                                                        />
+                                                    </div>
 
-    {/* ၂။ မူရင်းရင်းနှီးဈေး (Cost Price) - Admin သာ မြင်ရမည် */}
-    <div>
-        <label className="text-xs font-bold text-amber-500 block mb-1">🔒 မူရင်းရင်းနှီးဈေး (Cost Price MMK):</label>
-        <input 
-            type="number" 
-            placeholder="3500" 
-            value={productForm.variants[0]?.cost_price_mmk || ''} 
-            onChange={e => {
-                const val = parseInt(e.target.value) || 0;
-                setProductForm({
-                    ...productForm, 
-                    variants: [{ ...productForm.variants[0], cost_price_mmk: val }]
-                });
-            }} 
-            required 
-            className={`w-full p-3 rounded-xl outline-none border border-amber-500/30 ${neoPressedClass}`} 
-        />
-    </div>
+                                                    <div>
+                                                        <label className="text-xs font-bold text-amber-500 block mb-1">🔒 မူရင်းရင်းနှီးဈေး (Cost Price MMK):</label>
+                                                        <input 
+                                                            type="number" 
+                                                            placeholder="3500" 
+                                                            value={productForm.variants[0]?.cost_price_mmk || ''} 
+                                                            onChange={e => {
+                                                                const val = parseInt(e.target.value) || 0;
+                                                                setProductForm({
+                                                                    ...productForm, 
+                                                                    variants: [{ ...productForm.variants[0], cost_price_mmk: val }]
+                                                                });
+                                                            }} 
+                                                            required 
+                                                            className={`w-full p-3 rounded-xl outline-none border border-amber-500/30 ${neoPressedClass}`} 
+                                                        />
+                                                    </div>
 
-    {/* ၃။ Credits နှုန်းထား */}
-    <div>
-        <label className="text-xs font-bold opacity-70 block mb-1">Credits နှုန်းထား:</label>
-        <input 
-            type="number" 
-            placeholder="20" 
-            value={productForm.variants[0]?.price_credits || ''} 
-            onChange={e => {
-                const val = parseInt(e.target.value) || 0;
-                setProductForm({
-                    ...productForm, 
-                    variants: [{ ...productForm.variants[0], price_credits: val }]
-                });
-            }} 
-            required 
-            className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} 
-        />
-    </div>
-</div>
+                                                    <div>
+                                                        <label className="text-xs font-bold opacity-70 block mb-1">Credits နှုန်းထား:</label>
+                                                        <input 
+                                                            type="number" 
+                                                            placeholder="20" 
+                                                            value={productForm.variants[0]?.price_credits || ''} 
+                                                            onChange={e => {
+                                                                const val = parseInt(e.target.value) || 0;
+                                                                setProductForm({
+                                                                    ...productForm, 
+                                                                    variants: [{ ...productForm.variants[0], price_credits: val }]
+                                                                });
+                                                            }} 
+                                                            required 
+                                                            className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} 
+                                                        />
+                                                    </div>
+                                                </div>
 
                                                 <div className="flex gap-6 p-2 text-xs">
                                                     <label className="flex items-center gap-2 cursor-pointer font-bold">
@@ -2747,69 +2729,68 @@ if (currentEvent) {
                                                     </label>
                                                 </div>
 
-                                                {/* စိတ်ကြိုက် Payment အကောင့်များ ပေါင်းထည့်နိုင်သည့် UI */}
-<div className={`p-4 rounded-2xl space-y-3 ${neoPressedClass}`}>
-    <div className="flex justify-between items-center">
-        <label className="text-xs font-bold opacity-80">ငွေလက်ခံမည့် အကောင့်များ (Payment Options):</label>
-        <button type="button" onClick={() => {
-            setProductForm(prev => ({
-                ...prev,
-                payment_accounts: [...prev.payment_accounts, { provider: 'KBZPay', number: '', holder: '' }]
-            }));
-        }} className={`px-3 py-1 bg-indigo-500 text-white rounded-lg text-[11px] font-bold shadow`}>
-            + Add Payment
-        </button>
-    </div>
+                                                <div className={`p-4 rounded-2xl space-y-3 ${neoPressedClass}`}>
+                                                    <div className="flex justify-between items-center">
+                                                        <label className="text-xs font-bold opacity-80">ငွေလက်ခံမည့် အကောင့်များ (Payment Options):</label>
+                                                        <button type="button" onClick={() => {
+                                                            setProductForm(prev => ({
+                                                                ...prev,
+                                                                payment_accounts: [...prev.payment_accounts, { provider: 'KBZPay', number: '', holder: '' }]
+                                                            }));
+                                                        }} className={`px-3 py-1 bg-indigo-500 text-white rounded-lg text-[11px] font-bold shadow`}>
+                                                            + Add Payment
+                                                        </button>
+                                                    </div>
 
-    {productForm.payment_accounts.map((acc, accIdx) => (
-        <div key={accIdx} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
-            <input 
-                type="text" 
-                placeholder="Platform (KBZPay / WavePay / Binance Pay / AYA Pay)" 
-                value={acc.provider} 
-                onChange={e => {
-                    const newAccs = [...productForm.payment_accounts];
-                    newAccs[accIdx].provider = e.target.value;
-                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                }} 
-                required 
-                className={`md:col-span-4 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
-            />
-            <input 
-                type="text" 
-                placeholder="ဖုန်း / Wallet / Account နံပါတ်" 
-                value={acc.number} 
-                onChange={e => {
-                    const newAccs = [...productForm.payment_accounts];
-                    newAccs[accIdx].number = e.target.value;
-                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                }} 
-                required 
-                className={`md:col-span-4 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
-            />
-            <input 
-                type="text" 
-                placeholder="အကောင့်ပိုင်ရှင် အမည်" 
-                value={acc.holder} 
-                onChange={e => {
-                    const newAccs = [...productForm.payment_accounts];
-                    newAccs[accIdx].holder = e.target.value;
-                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                }} 
-                required 
-                className={`md:col-span-3 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
-            />
-            {productForm.payment_accounts.length > 1 && (
-                <button type="button" onClick={() => {
-                    const newAccs = productForm.payment_accounts.filter((_, i) => i !== accIdx);
-                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                }} className="md:col-span-1 p-2.5 text-red-500 flex justify-center items-center">
-                    <Trash2 className="w-4 h-4" />
-                </button>
-            )}
-        </div>
-    ))}
-</div>
+                                                    {productForm.payment_accounts.map((acc, accIdx) => (
+                                                        <div key={accIdx} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+                                                            <input 
+                                                                type="text" 
+                                                                placeholder="Platform (KBZPay / WavePay / Binance Pay / AYA Pay)" 
+                                                                value={acc.provider} 
+                                                                onChange={e => {
+                                                                    const newAccs = [...productForm.payment_accounts];
+                                                                    newAccs[accIdx].provider = e.target.value;
+                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
+                                                                }} 
+                                                                required 
+                                                                className={`md:col-span-4 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
+                                                            />
+                                                            <input 
+                                                                type="text" 
+                                                                placeholder="ဖုန်း / Wallet / Account နံပါတ်" 
+                                                                value={acc.number} 
+                                                                onChange={e => {
+                                                                    const newAccs = [...productForm.payment_accounts];
+                                                                    newAccs[accIdx].number = e.target.value;
+                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
+                                                                }} 
+                                                                required 
+                                                                className={`md:col-span-4 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
+                                                            />
+                                                            <input 
+                                                                type="text" 
+                                                                placeholder="အကောင့်ပိုင်ရှင် အမည်" 
+                                                                value={acc.holder} 
+                                                                onChange={e => {
+                                                                    const newAccs = [...productForm.payment_accounts];
+                                                                    newAccs[accIdx].holder = e.target.value;
+                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
+                                                                }} 
+                                                                required 
+                                                                className={`md:col-span-3 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
+                                                            />
+                                                            {productForm.payment_accounts.length > 1 && (
+                                                                <button type="button" onClick={() => {
+                                                                    const newAccs = productForm.payment_accounts.filter((_, i) => i !== accIdx);
+                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
+                                                                }} className="md:col-span-1 p-2.5 text-red-500 flex justify-center items-center">
+                                                                    <Trash2 className="w-4 h-4" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
 
                                                 <textarea placeholder="Product Description..." value={productForm.description} onChange={e=>setProductForm({...productForm, description:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}></textarea>
                                                 
@@ -2870,20 +2851,20 @@ if (currentEvent) {
                                                             <div key={m.id || Math.random()} className={`p-2.5 rounded-xl max-w-xs ${m?.sender_email === ADMIN_EMAIL ? 'ml-auto bg-purple-600 text-white' : 'mr-auto bg-slate-700 text-white'}`}>
                                                                 <p className="whitespace-pre-wrap">{m?.body}</p>
                                                                 {m?.attachment && (
-    <div className="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/20">
-        {m.attachment.type?.startsWith('video/') || m.attachment.url?.match(/\.(mp4|webm|mov|mkv)$/i) ? (
-            <video src={m.attachment.url} controls playsInline className="w-full max-h-48 rounded-xl bg-black object-contain" />
-        ) : m.attachment.type?.startsWith('image/') || m.attachment.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-            <img src={m.attachment.url} alt={m.attachment.name || "Attachment"} className="w-full max-h-48 rounded-xl object-contain cursor-pointer" onClick={() => window.open(m.attachment.url, '_blank')} />
-        ) : m.attachment.type?.startsWith('audio/') || m.attachment.url?.match(/\.(mp3|wav|ogg|m4a)$/i) ? (
-            <audio src={m.attachment.url} controls className="w-full mt-1" />
-        ) : (
-            <a href={m.attachment.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-indigo-200 underline text-xs block truncate">
-                📁 {m.attachment.name || "File Download"}
-            </a>
-        )}
-    </div>
-)}
+                                                                    <div className="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/20">
+                                                                        {m.attachment.type?.startsWith('video/') || m.attachment.url?.match(/\.(mp4|webm|mov|mkv)$/i) ? (
+                                                                            <video src={m.attachment.url} controls playsInline className="w-full max-h-48 rounded-xl bg-black object-contain" />
+                                                                        ) : m.attachment.type?.startsWith('image/') || m.attachment.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+                                                                            <img src={m.attachment.url} alt={m.attachment.name || "Attachment"} className="w-full max-h-48 rounded-xl object-contain cursor-pointer" onClick={() => window.open(m.attachment.url, '_blank')} />
+                                                                        ) : m.attachment.type?.startsWith('audio/') || m.attachment.url?.match(/\.(mp3|wav|ogg|m4a)$/i) ? (
+                                                                            <audio src={m.attachment.url} controls className="w-full mt-1" />
+                                                                        ) : (
+                                                                            <a href={m.attachment.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-indigo-200 underline text-xs block truncate">
+                                                                                📁 {m.attachment.name || "File Download"}
+                                                                            </a>
+                                                                        )}
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         ))}
                                                     </div>

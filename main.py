@@ -52,7 +52,7 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "778leomord@gmail.com").strip().lower()
 
 # Telegram Integration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", " -1003802670362").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003802670362").strip()
 
 DEFAULT_GROQ_KEYS = [
     k.strip() for k in os.getenv(
@@ -357,11 +357,9 @@ async def buy_credits(email: str = Form(...), amount: int = Form(...), file: Upl
     u_email = email.strip().lower()
     buy_amount = int(amount)
     
-    # ပြေစာပုံ သိမ်းဆည်းခြင်း
     proof = await save_upload(file, "payment-proofs/credits")
     proof_path = (MEDIA_ROOT / proof["key"]).resolve()
 
-    # Database ထဲသို့ Transaction ထည့်သွင်းခြင်း
     transactions_col.insert_one({ 
         "type": "credit_topup", 
         "email": u_email, 
@@ -371,14 +369,12 @@ async def buy_credits(email: str = Form(...), amount: int = Form(...), file: Upl
         "created_at": current_utc() 
     })
 
-    # User အတွက် Web Notification ပေးပို့ခြင်း
     create_notification(
         u_email, 
         "ငွေလွှဲပြေစာ လက်ခံရရှိပါသည်", 
         "AI Studio မှ Credit ဝယ်ယူမှုအတွက် ကျေးဇူးတင်ရှိပါသည်။ Admin မှ ငွေလွှဲပြေစာအား အမြန်ဆုံး အတည်ပြုပေးပါမည်ခင်ဗျာ။"
     )
 
-    # Admin Telegram ဆီသို့ ပြေစာဓာတ်ပုံနှင့်တကွ Noti တိုက်ရိုက် ပေးပို့ခြင်း
     caption = (
         f"💳 <b>[New Credit Topup Order]</b>\n\n"
         f"👤 <b>User Email:</b> <code>{u_email}</code>\n"
@@ -533,7 +529,6 @@ async def get_products():
     safe_products = []
     
     for p in prods:
-        # User တွေဆီ ပို့မည့် variants စာရင်းထဲမှ မူရင်းဈေး (cost_price_mmk) ကို လုံးဝ ဖြုတ်ပစ်ခြင်း
         safe_variants = []
         for v in p.get("variants", []):
             safe_variants.append({
@@ -542,7 +537,6 @@ async def get_products():
                 "price_credits": int(v.get("price_credits", 0)),
                 "requires_game_id": bool(v.get("requires_game_id", False)),
                 "requires_server_id": bool(v.get("requires_server_id", False))
-                # 🔒 cost_price_mmk မပါဝင်တော့ပါ
             })
             
         img_url = p.get("image_url", "")
@@ -622,6 +616,27 @@ async def submit_store_order(
 
 # --- ADMIN CONTROL PANEL ---
 
+@app.get("/api/admin/stats")
+async def admin_get_stats(request: Request):
+    require_admin(request)
+    now = current_utc()
+    total_users = users_col.count_documents({})
+    
+    start_of_month = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    start_of_year = datetime(now.year, 1, 1, tzinfo=timezone.utc)
+    
+    monthly_txs = list(transactions_col.find({"status": "approved", "created_at": {"$gte": start_of_month}}))
+    monthly_profit = sum(int(t.get("amount", 0)) for t in monthly_txs)
+    
+    yearly_txs = list(transactions_col.find({"status": "approved", "created_at": {"$gte": start_of_year}}))
+    yearly_profit = sum(int(t.get("amount", 0)) for t in yearly_txs)
+    
+    return {
+        "total_users": total_users,
+        "monthly_profit": monthly_profit,
+        "yearly_profit": yearly_profit
+    }
+
 @app.get("/api/admin/badges")
 async def admin_get_badges(request: Request):
     require_admin(request)
@@ -700,19 +715,14 @@ async def admin_get_users(request: Request):
     for u in all_users:
         u_email = u.get("email", "").strip().lower()
         
-        # ဗီဒီယိုစာရင်း (Total, Success, Error)
         total_vids = video_history_col.count_documents({"email": u_email})
         success_vids = video_history_col.count_documents({"email": u_email, "status": {"$ne": "failed"}})
         failed_vids = video_history_col.count_documents({"email": u_email, "status": "failed"})
         
-        # စုစုပေါင်း ဝယ်ယူထားသည့် ငွေပမာဏ (Approved Topups)
         approved_txs = list(transactions_col.find({"email": u_email, "status": "approved"}))
         total_spent_mmk = sum(int(t.get("amount", 0)) for t in approved_txs)
         
-        # Store Order စာရင်း
         store_orders_count = orders_col.count_documents({"user_email": u_email})
-
-        # TTS အသုံးပြုမှု စာရင်း
         tts_count = u.get("tts_count", 0)
 
         rem_days = None
@@ -1054,7 +1064,6 @@ async def create_product(
     except Exception:
         payment_accounts = []
 
-    # variants တစ်ခုချင်းစီထဲရှိ cost_price_mmk (မူရင်းရင်းနှီးဈေး) ကို float အဖြစ် သေချာပြောင်းလဲသိမ်းဆည်းခြင်း
     for v in variants:
         v["cost_price_mmk"] = float(v.get("cost_price_mmk", 0))
         v["price_mmk"] = float(v.get("price_mmk", 0))
@@ -1062,7 +1071,6 @@ async def create_product(
         v["requires_game_id"] = bool(v.get("requires_game_id", False))
         v["requires_server_id"] = bool(v.get("requires_server_id", False))
 
-    # ပုံများ Upload သိမ်းဆည်းခြင်း
     image_urls = []
     if images:
         for img in images:
@@ -1111,7 +1119,6 @@ async def get_messages(request: Request, peer: Optional[str] = None):
     query = {"participants": {"$all": [email, target]}} if target else {"participants": email}
     docs = list(messages_col.find(query).sort("created_at", ASCENDING))
     
-    # Admin က User ဆီက စာများကို ဖွင့်ဖတ်လိုက်သည်နှင့် unread ကို read အဖြစ် ပြောင်းပေးခြင်း
     if email == ADMIN_EMAIL and target:
         messages_col.update_many(
             {"sender_email": target, "recipient_email": ADMIN_EMAIL, "is_read": False},
@@ -1198,7 +1205,6 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
                 )
             users_col.update_one({"email": u_email}, {"$inc": {"credits": -cost}})
 
-        # TTS အသုံးပြုမှု အကြိမ်ရေ မှတ်သားခြင်း
         users_col.update_one({"email": u_email}, {"$inc": {"tts_count": 1}})
 
         communicate = edge_tts.Communicate(text, voice, rate=rate)
