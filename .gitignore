@@ -1,2 +1,8 @@
 .env
 __pycache__/
+media/
+rendered_videos/
+store_proofs/
+payment-proofs/
+*.mp4
+*.wasm

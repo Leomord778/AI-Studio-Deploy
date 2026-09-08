@@ -11,8 +11,9 @@ import uuid
 import time
 import asyncio
 import mimetypes
+import shutil
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Any
+from typing import Optional, Any, List
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -51,7 +52,7 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "778leomord@gmail.com").strip().lower()
 
 # Telegram Integration
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1002377284481").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", " -1003802670362").strip()
 
 DEFAULT_GROQ_KEYS = [
     k.strip() for k in os.getenv(
@@ -86,7 +87,7 @@ def init_db():
         "deduction_rate_per_min": "50", 
         "first_two_min_rate": "30",
         "free_minutes_per_day": "0",
-        "tts_mode": "ads", # "ads" သို့မဟုတ် "credits"
+        "tts_mode": "ads",
         "tts_chars_per_credit": "100",
         "ads_smart_link": "https://heiressnicholasfitful.com/q1hniexdb?key=fd1f82d2494bc60d62f89d9e2472f9c8",
         "announcement": "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ အရည်အသွေးမြင့် ဗီဒီယိုများကို အချိန်တိုအတွင်း ဖန်တီးလိုက်ပါ။",
@@ -132,7 +133,6 @@ async def send_telegram_notification(caption: str, photo_path: Optional[Path] = 
 
 def refund_and_cleanup():
     now = current_utc()
-    # ၄၈ နာရီကျော်သွားပြီး Download မဆွဲခဲ့သော ဗီဒီယိုများအတွက် အလိုအလျောက် Refund ပေးခြင်း
     expired_videos = list(video_history_col.find({"expires_at": {"$lte": now}}))
     for item in expired_videos:
         u_email = item.get("email")
@@ -155,7 +155,6 @@ def refund_and_cleanup():
         delete_media(item.get("media_key"))
         video_history_col.delete_one({"_id": item["_id"]})
 
-    # သက်တမ်းကုန်သွားသော User Credits များ ရှင်းထုတ်ခြင်း
     expired_users = list(users_col.find({
         "role": {"$ne": "admin"},
         "credits_expire_at": {"$ne": None, "$lte": now},
@@ -320,6 +319,7 @@ async def login(data: dict):
             "role": role, 
             "credits": 1000, 
             "credits_expire_at": None,
+            "tts_count": 0,
             "created_at": current_utc() 
         }
         users_col.insert_one(user)
@@ -354,21 +354,44 @@ async def login(data: dict):
 
 @app.post("/api/buy-credits")
 async def buy_credits(email: str = Form(...), amount: int = Form(...), file: UploadFile = File(...)):
+    u_email = email.strip().lower()
+    buy_amount = int(amount)
+    
+    # ပြေစာပုံ သိမ်းဆည်းခြင်း
     proof = await save_upload(file, "payment-proofs/credits")
+    proof_path = (MEDIA_ROOT / proof["key"]).resolve()
+
+    # Database ထဲသို့ Transaction ထည့်သွင်းခြင်း
     transactions_col.insert_one({ 
         "type": "credit_topup", 
-        "email": email.strip().lower(), 
-        "amount": int(amount), 
+        "email": u_email, 
+        "amount": buy_amount, 
         "status": "pending", 
         "proof": proof["key"], 
         "created_at": current_utc() 
     })
+
+    # User အတွက် Web Notification ပေးပို့ခြင်း
     create_notification(
-        email, 
+        u_email, 
         "ငွေလွှဲပြေစာ လက်ခံရရှိပါသည်", 
         "AI Studio မှ Credit ဝယ်ယူမှုအတွက် ကျေးဇူးတင်ရှိပါသည်။ Admin မှ ငွေလွှဲပြေစာအား အမြန်ဆုံး အတည်ပြုပေးပါမည်ခင်ဗျာ။"
     )
-    return {"status": "success", "message": "ငွေလွှဲပြေစာ ပေးပို့ပြီးပါပြီ။ ဝယ်ယူအားပေးမှုကို ကျေးဇူးတင်ရှိပါသည်။ Admin ဘက်မှ အတည်ပြုပေးသည်အထိ ခေတ္တစောင့်ဆိုင်းပေးပါခင်ဗျာ။"}
+
+    # Admin Telegram ဆီသို့ ပြေစာဓာတ်ပုံနှင့်တကွ Noti တိုက်ရိုက် ပေးပို့ခြင်း
+    caption = (
+        f"💳 <b>[New Credit Topup Order]</b>\n\n"
+        f"👤 <b>User Email:</b> <code>{u_email}</code>\n"
+        f"💰 <b>Amount:</b> <b>{buy_amount:,} Credits (MMK)</b>\n"
+        f"🕒 <b>Time:</b> {current_utc().strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        f"📌 <i>Admin Dashboard > Approvals တွင် အတည်ပြုပေးပါ။</i>"
+    )
+    await send_telegram_notification(caption, photo_path=proof_path)
+
+    return {
+        "status": "success", 
+        "message": "ငွေလွှဲပြေစာ ပေးပို့ပြီးပါပြီ။ ဝယ်ယူအားပေးမှုကို ကျေးဇူးတင်ရှိပါသည်။ Admin ဘက်မှ အတည်ပြုပေးသည်အထိ ခေတ္တစောင့်ဆိုင်းပေးပါခင်ဗျာ။"
+    }
 
 @app.get("/api/credit-history")
 async def get_credit_history(request: Request):
@@ -425,7 +448,6 @@ def calculate_video_cost(email: str, dur_sec: float) -> tuple[int, bool]:
         else:
             dur_mins -= free_mins
 
-    # ပထမ ၂ မိနစ်အတွက် ၁ မိနစ်စာနှုန်းသာ ကောက်ခံပြီး ၂ မိနစ်ကျော်လွန်မှ ပုံမှန်နှုန်းထားအတိုင်း တွက်ချက်ခြင်း
     if dur_mins <= 2:
         cost = first_two_rate
     else:
@@ -446,7 +468,6 @@ async def pre_deduct_video_cost(request: Request, data: dict):
                 status_code=402, 
                 detail=f"Credit မလုံလောက်ပါ။ ဗီဒီယိုအတွက် {cost} Credits လိုအပ်ပါသည်။"
             )
-        # ဗီဒီယို စတင်သည်နှင့် Credit ချက်ချင်း နှုတ်ယူခြင်း
         users_col.update_one({"email": email}, {"$inc": {"credits": -cost}})
 
     return {"status": "success", "deducted": cost if email != ADMIN_EMAIL else 0, "is_free": is_free}
@@ -466,6 +487,7 @@ async def save_client_rendered(request: Request, file: UploadFile = File(...), d
         "tool": tool,
         "duration": duration,
         "cost": cost if email != ADMIN_EMAIL else 0,
+        "status": "completed",
         "downloaded": False,
         "media_key": final_key,
         "content_type": "video/mp4",
@@ -486,7 +508,6 @@ async def consume_download(request: Request, data: dict):
     if not video:
         raise HTTPException(status_code=404, detail="ဗီဒီယို ရှာမတွေ့ပါ")
 
-    # Download လုပ်ပြီးသွားပါက Refund ပေးစရာ မလိုတော့ကြောင်း မှတ်သားခြင်း
     video_history_col.update_one({"_id": video["_id"]}, {"$set": {"downloaded": True}})
     return {"status": "success"}
 
@@ -509,18 +530,43 @@ async def get_video_history(request: Request):
 @app.get("/api/products")
 async def get_products():
     prods = list(products_col.find().sort("created_at", DESCENDING))
-    return {
-        "products": [{
+    safe_products = []
+    
+    for p in prods:
+        # User တွေဆီ ပို့မည့် variants စာရင်းထဲမှ မူရင်းဈေး (cost_price_mmk) ကို လုံးဝ ဖြုတ်ပစ်ခြင်း
+        safe_variants = []
+        for v in p.get("variants", []):
+            safe_variants.append({
+                "name": v.get("name", "Standard"),
+                "price_mmk": float(v.get("price_mmk", 0)),
+                "price_credits": int(v.get("price_credits", 0)),
+                "requires_game_id": bool(v.get("requires_game_id", False)),
+                "requires_server_id": bool(v.get("requires_server_id", False))
+                # 🔒 cost_price_mmk မပါဝင်တော့ပါ
+            })
+            
+        img_url = p.get("image_url", "")
+        if not img_url and p.get("image_key"):
+            img_url = f"/media/{p['image_key']}"
+        elif not img_url and p.get("image_urls"):
+            img_url = p.get("image_urls")[0]
+
+        img_urls = p.get("image_urls", [])
+        if not img_urls and p.get("image_keys"):
+            img_urls = [f"/media/{k}" for k in p.get("image_keys")]
+
+        safe_products.append({
             "id": str(p["_id"]),
             "name": p.get("name", ""),
             "category": p.get("category", ""),
             "description": p.get("description", ""),
-            "image_url": f"/media/{p['image_key']}" if p.get("image_key") else (f"/media/{p['image_keys'][0]}" if p.get("image_keys") else None),
-            "image_urls": [f"/media/{k}" for k in p.get("image_keys", [])] if p.get("image_keys") else ([f"/media/{p['image_key']}"] if p.get("image_key") else []),
-            "variants": p.get("variants", []),
+            "image_url": img_url,
+            "image_urls": img_urls,
+            "variants": safe_variants,
             "payment_accounts": p.get("payment_accounts", [])
-        } for p in prods]
-    }
+        })
+
+    return {"products": safe_products}
 
 @app.post("/api/store/order")
 async def submit_store_order(
@@ -652,9 +698,23 @@ async def admin_get_users(request: Request):
     all_users = list(users_col.find().sort("created_at", DESCENDING))
     res = []
     for u in all_users:
-        u_email = u.get("email")
-        vid_count = video_history_col.count_documents({"email": u_email})
+        u_email = u.get("email", "").strip().lower()
         
+        # ဗီဒီယိုစာရင်း (Total, Success, Error)
+        total_vids = video_history_col.count_documents({"email": u_email})
+        success_vids = video_history_col.count_documents({"email": u_email, "status": {"$ne": "failed"}})
+        failed_vids = video_history_col.count_documents({"email": u_email, "status": "failed"})
+        
+        # စုစုပေါင်း ဝယ်ယူထားသည့် ငွေပမာဏ (Approved Topups)
+        approved_txs = list(transactions_col.find({"email": u_email, "status": "approved"}))
+        total_spent_mmk = sum(int(t.get("amount", 0)) for t in approved_txs)
+        
+        # Store Order စာရင်း
+        store_orders_count = orders_col.count_documents({"user_email": u_email})
+
+        # TTS အသုံးပြုမှု စာရင်း
+        tts_count = u.get("tts_count", 0)
+
         rem_days = None
         exp_date_str = ""
         if u.get("credits_expire_at") and isinstance(u["credits_expire_at"], datetime):
@@ -671,9 +731,13 @@ async def admin_get_users(request: Request):
             "credits": u.get("credits", 0),
             "credits_expire_at": exp_date_str,
             "remaining_days": rem_days,
-            "video_count": vid_count,
-            "picture": u.get("picture", ""),
-            "created_at": u.get("created_at").strftime("%Y-%m-%d %H:%M") if u.get("created_at") else ""
+            "total_spent_mmk": total_spent_mmk,
+            "total_videos": total_vids,
+            "success_videos": success_vids,
+            "failed_videos": failed_vids,
+            "tts_count": tts_count,
+            "store_orders_count": store_orders_count,
+            "joined_date": u.get("created_at").strftime("%Y-%m-%d %H:%M") if u.get("created_at") else "N/A"
         })
     return {"users": res}
 
@@ -706,6 +770,7 @@ async def admin_get_user_details(request: Request, user_email: str):
     
     videos = list(video_history_col.find({"email": target_email}).sort("created_at", DESCENDING))
     transactions = list(transactions_col.find({"email": target_email}).sort("created_at", DESCENDING))
+    orders = list(orders_col.find({"user_email": target_email}).sort("created_at", DESCENDING))
     
     return {
         "user": {
@@ -713,21 +778,32 @@ async def admin_get_user_details(request: Request, user_email: str):
             "name": user.get("name"),
             "credits": user.get("credits", 0),
             "credits_expire_at": user.get("credits_expire_at").strftime("%Y-%m-%d") if user.get("credits_expire_at") else None,
-            "role": user.get("role", "user")
+            "role": user.get("role", "user"),
+            "tts_count": user.get("tts_count", 0),
+            "joined_date": user.get("created_at").strftime("%Y-%m-%d %H:%M") if user.get("created_at") else "N/A"
         },
         "videos": [{
             "id": str(v["_id"]),
             "title": v.get("title", "Video"),
             "tool": v.get("tool"),
-            "url": f"/media/{v.get('media_key')}",
-            "created_at": v.get("created_at").isoformat() if v.get("created_at") else ""
+            "status": v.get("status", "completed"),
+            "cost": v.get("cost", 0),
+            "created_at": v.get("created_at").strftime("%Y-%m-%d %H:%M") if v.get("created_at") else ""
         } for v in videos],
         "transactions": [{
             "id": str(t["_id"]),
             "amount": t.get("amount", 0),
             "status": t.get("status", "pending"),
-            "created_at": t.get("created_at").isoformat() if t.get("created_at") else ""
-        } for t in transactions]
+            "created_at": t.get("created_at").strftime("%Y-%m-%d %H:%M") if t.get("created_at") else ""
+        } for t in transactions],
+        "orders": [{
+            "id": str(o["_id"]),
+            "product_name": o.get("product_name"),
+            "variant_name": o.get("variant_name"),
+            "price_mmk": o.get("price_mmk", 0),
+            "status": o.get("status", "pending"),
+            "created_at": o.get("created_at").strftime("%Y-%m-%d %H:%M") if o.get("created_at") else ""
+        } for o in orders]
     }
 
 @app.post("/api/admin/settings")
@@ -737,15 +813,139 @@ async def update_settings(request: Request, data: dict):
         settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
     return {"status": "success"}
 
-@app.get("/api/admin/stats")
-async def admin_stats(request: Request):
+@app.get("/api/admin/revenue-analytics")
+async def get_revenue_analytics(
+    request: Request,
+    period: str = "monthly",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
     require_admin(request)
-    monthly_approved = list(transactions_col.find({"status": "approved", "type": "credit_topup"}))
+    now = current_utc()
+    date_filter = {}
+
+    if period == "monthly":
+        date_filter = {"$gte": datetime(now.year, now.month, 1, tzinfo=timezone.utc)}
+    elif period == "yearly":
+        date_filter = {"$gte": datetime(now.year, 1, 1, tzinfo=timezone.utc)}
+    elif period == "custom" and start_date and end_date:
+        try:
+            s = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            e = datetime.strptime(f"{end_date} 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            date_filter = {"$gte": s, "$lte": e}
+        except Exception:
+            pass
+
+    tx_query = {"status": "approved"}
+    order_query = {"status": {"$in": ["completed", "delivered"]}}
+    video_query = {}
+
+    if date_filter and period != "lifetime":
+        tx_query["created_at"] = date_filter
+        order_query["created_at"] = date_filter
+        video_query["created_at"] = date_filter
+
+    tx_list = list(transactions_col.find(tx_query))
+    order_list = list(orders_col.find(order_query))
+    video_list = list(video_history_col.find(video_query))
+
+    prod_docs = list(products_col.find({}))
+    cost_map = {}
+    for p in prod_docs:
+        for v in p.get("variants", []):
+            cost_map[f"{p.get('name')}_{v.get('name')}"] = float(v.get("cost_price_mmk", 0))
+
+    services_summary = {
+        "topup": {"name": "Credit Topup Packages", "revenue": 0, "profit": 0, "count": 0},
+        "store": {"name": "Digital Store & Games", "revenue": 0, "profit": 0, "count": 0},
+        "recap": {"name": "Movie Recap Tool", "credits_consumed": 0, "count": 0},
+        "subtitle": {"name": "AI Subtitle Burn-in", "credits_consumed": 0, "count": 0}
+    }
+
+    user_sales = {}
+    total_credit_revenue = 0
+    total_store_revenue = 0
+    total_store_cost = 0
+
+    for t in tx_list:
+        u_email = t.get("email", "Unknown")
+        amt = float(t.get("amount", 0))
+        total_credit_revenue += amt
+        services_summary["topup"]["revenue"] += amt
+        services_summary["topup"]["profit"] += amt
+        services_summary["topup"]["count"] += 1
+
+        user_sales.setdefault(u_email, {"revenue": 0, "profit": 0, "topup_count": 0, "orders_count": 0, "items": []})
+        user_sales[u_email]["revenue"] += amt
+        user_sales[u_email]["profit"] += amt
+        user_sales[u_email]["topup_count"] += 1
+        
+        c_at = t.get("created_at")
+        date_str = c_at.strftime("%Y-%m-%d %H:%M") if isinstance(c_at, datetime) else str(c_at or "-")
+        user_sales[u_email]["items"].append({
+            "service": "Credit Topup",
+            "item_name": f"{amt:,.0f} MMK Package",
+            "cost_price": 0,
+            "sale_price": amt,
+            "profit": amt,
+            "date": date_str
+        })
+
+    for o in order_list:
+        u_email = o.get("user_email", "Unknown")
+        sale = float(o.get("price_mmk", 0))
+        cost = cost_map.get(f"{o.get('product_name')}_{o.get('variant_name')}", 0)
+        profit = sale - cost
+        total_store_revenue += sale
+        total_store_cost += cost
+
+        services_summary["store"]["revenue"] += sale
+        services_summary["store"]["profit"] += profit
+        services_summary["store"]["count"] += 1
+
+        user_sales.setdefault(u_email, {"revenue": 0, "profit": 0, "topup_count": 0, "orders_count": 0, "items": []})
+        user_sales[u_email]["revenue"] += sale
+        user_sales[u_email]["profit"] += profit
+        user_sales[u_email]["orders_count"] += 1
+        
+        c_at = o.get("created_at")
+        date_str = c_at.strftime("%Y-%m-%d %H:%M") if isinstance(c_at, datetime) else str(c_at or "-")
+        user_sales[u_email]["items"].append({
+            "service": "Store Product",
+            "item_name": f"{o.get('product_name')} ({o.get('variant_name')})",
+            "cost_price": cost,
+            "sale_price": sale,
+            "profit": profit,
+            "date": date_str
+        })
+
+    for v in video_list:
+        tool = v.get("tool", "recap")
+        cost_cr = float(v.get("cost", 0))
+        if tool == "subtitle":
+            services_summary["subtitle"]["count"] += 1
+            services_summary["subtitle"]["credits_consumed"] += cost_cr
+        else:
+            services_summary["recap"]["count"] += 1
+            services_summary["recap"]["credits_consumed"] += cost_cr
+
+    real_total_users = users_col.count_documents({})
+    real_total_videos = video_history_col.count_documents({})
+
+    total_revenue = total_credit_revenue + total_store_revenue
+    total_profit = total_credit_revenue + (total_store_revenue - total_store_cost)
+
     return {
-        "total_users": users_col.count_documents({}),
-        "total_videos": video_history_col.count_documents({}),
-        "monthly_profit": sum(tx.get("amount", 0) for tx in monthly_approved),
-        "yearly_profit": sum(tx.get("amount", 0) for tx in monthly_approved)
+        "summary": {
+            "total_revenue": total_revenue,
+            "total_profit": total_profit,
+            "total_users": real_total_users,
+            "total_videos": real_total_videos
+        },
+        "services": services_summary,
+        "users_breakdown": [
+            {"email": k, **v} for k, v in sorted(user_sales.items(), key=lambda x: x[1]["revenue"], reverse=True)
+        ]
     }
 
 @app.get("/api/admin/transactions")
@@ -833,35 +1033,62 @@ async def admin_get_products(request: Request):
     }
 
 @app.post("/api/admin/products")
-async def admin_create_product(
+async def create_product(
     request: Request,
     name: str = Form(...),
     category: str = Form(...),
     description: str = Form(""),
-    variants_json: str = Form("[]"),
+    variants_json: str = Form(...),
     payment_accounts_json: str = Form("[]"),
-    images: list[UploadFile] = File(None)
+    images: List[UploadFile] = File(None)
 ):
     require_admin(request)
-    image_keys = []
+    
+    try:
+        variants = json.loads(variants_json)
+    except Exception:
+        variants = []
+
+    try:
+        payment_accounts = json.loads(payment_accounts_json)
+    except Exception:
+        payment_accounts = []
+
+    # variants တစ်ခုချင်းစီထဲရှိ cost_price_mmk (မူရင်းရင်းနှီးဈေး) ကို float အဖြစ် သေချာပြောင်းလဲသိမ်းဆည်းခြင်း
+    for v in variants:
+        v["cost_price_mmk"] = float(v.get("cost_price_mmk", 0))
+        v["price_mmk"] = float(v.get("price_mmk", 0))
+        v["price_credits"] = int(v.get("price_credits", 0))
+        v["requires_game_id"] = bool(v.get("requires_game_id", False))
+        v["requires_server_id"] = bool(v.get("requires_server_id", False))
+
+    # ပုံများ Upload သိမ်းဆည်းခြင်း
+    image_urls = []
     if images:
         for img in images:
             if img.filename:
-                upload_data = await save_upload(img, "products")
-                image_keys.append(upload_data["key"])
-    
+                file_ext = os.path.splitext(img.filename)[1]
+                saved_filename = f"prod_{uuid.uuid4().hex[:10]}{file_ext}"
+                dest_path = os.path.join("media", saved_filename)
+                with open(dest_path, "wb") as f:
+                    shutil.copyfileobj(img.file, f)
+                image_urls.append(f"/media/{saved_filename}")
+
+    primary_image = image_urls[0] if image_urls else ""
+
     doc = {
         "name": name.strip(),
         "category": category.strip(),
         "description": description.strip(),
-        "variants": json.loads(variants_json),
-        "payment_accounts": json.loads(payment_accounts_json),
-        "image_keys": image_keys,
-        "image_key": image_keys[0] if image_keys else None,
-        "created_at": current_utc()
+        "variants": variants,
+        "payment_accounts": payment_accounts,
+        "image_url": primary_image,
+        "image_urls": image_urls,
+        "created_at": datetime.utcnow()
     }
-    products_col.insert_one(doc)
-    return {"status": "success"}
+    
+    res = products_col.insert_one(doc)
+    return {"message": "Product created successfully", "id": str(res.inserted_id)}
 
 @app.delete("/api/admin/products/{product_id}")
 async def admin_delete_product(request: Request, product_id: str):
@@ -883,6 +1110,19 @@ async def get_messages(request: Request, peer: Optional[str] = None):
     target = peer if peer else (ADMIN_EMAIL if email != ADMIN_EMAIL else "")
     query = {"participants": {"$all": [email, target]}} if target else {"participants": email}
     docs = list(messages_col.find(query).sort("created_at", ASCENDING))
+    
+    # Admin က User ဆီက စာများကို ဖွင့်ဖတ်လိုက်သည်နှင့် unread ကို read အဖြစ် ပြောင်းပေးခြင်း
+    if email == ADMIN_EMAIL and target:
+        messages_col.update_many(
+            {"sender_email": target, "recipient_email": ADMIN_EMAIL, "is_read": False},
+            {"$set": {"is_read": True}}
+        )
+    elif email != ADMIN_EMAIL:
+        messages_col.update_many(
+            {"sender_email": ADMIN_EMAIL, "recipient_email": email, "is_read": False},
+            {"$set": {"is_read": True}}
+        )
+
     return {
         "messages": [{
             "id": str(d["_id"]), 
@@ -923,7 +1163,7 @@ async def send_message(
     messages_col.insert_one(doc)
     return {"status": "sent"}
 
-# --- AI & TTS PROXY (WITH STRICT DEDUCTION CHECK) ---
+# --- AI & TTS PROXY (WITH STRICT DEDUCTION & USAGE TRACKING) ---
 
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
@@ -933,7 +1173,6 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
         voice = data.get("voice", "my-MM-ThihaNeural")
         rate = data.get("rate", "+10%")
         
-        # User Authentication & Credit Billing Check
         auth = request.headers.get("authorization", "")
         if not auth.lower().startswith("bearer "):
             raise HTTPException(status_code=401, detail="Login ဝင်ရောက်ပေးပါ")
@@ -946,7 +1185,6 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
         tts_mode_setting = settings_col.find_one({"key": "tts_mode"})
         tts_mode = tts_mode_setting.get("value", "ads") if tts_mode_setting else "ads"
         
-        # Admin က Credit စနစ် ရွေးချယ်ထားပါက စာလုံးရေအလိုက် Credit နှုတ်ယူခြင်း
         if tts_mode == "credits" and u_email != ADMIN_EMAIL:
             char_rate_setting = settings_col.find_one({"key": "tts_chars_per_credit"})
             chars_per_credit = int(char_rate_setting.get("value", "100")) if char_rate_setting else 100
@@ -959,6 +1197,9 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
                     detail=f"Credit မလုံလောက်ပါ။ စာလုံးရေ ({len(text)}) အတွက် {cost} Credits လိုအပ်ပါသည်။"
                 )
             users_col.update_one({"email": u_email}, {"$inc": {"credits": -cost}})
+
+        # TTS အသုံးပြုမှု အကြိမ်ရေ မှတ်သားခြင်း
+        users_col.update_one({"email": u_email}, {"$inc": {"tts_count": 1}})
 
         communicate = edge_tts.Communicate(text, voice, rate=rate)
         tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
@@ -982,17 +1223,23 @@ async def proxy_gemini(path: str, request: Request):
         if k and k not in keys_to_try: keys_to_try.append(k)
 
     body_bytes = await request.body()
+    last_res = None
+
     async with httpx.AsyncClient(timeout=120.0) as client_http:
-        for key in keys_to_try:
+        for key in (keys_to_try or [""]):
             try:
                 q = dict(query_params)
-                q["key"] = key
+                if key: q["key"] = key
                 url = f"https://generativelanguage.googleapis.com/{path}"
                 res = await client_http.request(request.method, url, params=q, headers={"Content-Type": "application/json"}, content=body_bytes)
+                last_res = res
                 if res.status_code == 200:
                     return Response(content=res.content, status_code=200, media_type="application/json")
             except Exception: 
                 continue
+
+    if last_res is not None:
+        return Response(content=last_res.content, status_code=last_res.status_code, media_type="application/json")
     return JSONResponse(status_code=500, content={"error": "Server Gemini API Error"})
 
 @app.post("/api/groq/transcriptions")
