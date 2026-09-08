@@ -804,7 +804,7 @@
                 if (!file) return;
 
                 setVideoFile(file);
-                setVideoUrl(URL.createObjectURL(finalFile));
+                setVideoUrl(URL.createObjectURL(File));
                 setFinalVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProgressStage(''); setErrorMsg(''); setSocialContent(null);
                 extractionDataRef.current = null; translatedBlocksRef.current = null; ttsSegmentsRef.current = null;
             };
