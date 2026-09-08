@@ -772,7 +772,7 @@
                     await runFFmpeg([
                         '-i', 'raw_input.mp4',
                         '-vf', 'scale=trunc(iw*min(1920/iw\\,1080/ih)/2)*2:trunc(ih*min(1920/iw\\,1080/ih)/2)*2',
-                        '-r', '18',
+                        '-r', '15',
                         '-c:v', 'libx264',
                         '-preset', 'ultrafast',
                         '-tune', 'fastdecode',
@@ -1113,7 +1113,7 @@
                         const freezeCtx = freezeCanvas.getContext('2d');
 
                         // 18 FPS Stream ရယူခြင်း
-                        const canvasStream = canvas.captureStream(18);
+                        const canvasStream = canvas.captureStream(15);
                         const combinedStream = new MediaStream([
                             ...canvasStream.getVideoTracks(),
                             ...dest.stream.getAudioTracks()
@@ -1320,7 +1320,7 @@
                     await runFFmpeg([
                         '-i', 'input.webm',
                         '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                        '-r', '18',
+                        '-r', '15',
                         '-c:v', 'libx264',
                         '-preset', 'ultrafast',
                         '-tune', 'fastdecode',
