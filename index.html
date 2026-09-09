@@ -96,6 +96,7 @@
         const Gamepad = ({ className }) => <IconBase className={className}><line x1="6" y1="12" x2="10" y2="12"/><line x1="8" y1="10" x2="8" y2="14"/><line x1="15" y1="13" x2="15.01" y2="13"/><line x1="18" y1="11" x2="18.01" y2="11"/><rect x="2" y="6" width="20" height="12" rx="2"/></IconBase>;
         const Bell = ({ className }) => <IconBase className={className}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></IconBase>;
         const HomeIcon = ({ className }) => <IconBase className={className}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></IconBase>;
+
         const LANGUAGES = [
             { name: "မြန်မာ (Myanmar)", flag: "🇲🇲" }, { name: "English (US)", flag: "🇺🇸" }, { name: "English (UK)", flag: "🇬🇧" },
             { name: "中文 (Chinese)", flag: "🇨🇳" }, { name: "हिन्दी (Hindi)", flag: "🇮🇳" }, { name: "ไทย (Thai)", flag: "🇹🇭" },
@@ -758,55 +759,22 @@
                 if (ret !== 0) throw new Error(`FFmpeg error (code ${ret}) on: ${args.join(' ')}`);
             };
 
-            const compressUploadedVideo = async (file) => {
-                const ffmpeg = ffmpegRef.current;
-                if (!isFfmpegLoaded || !file) return file;
-
-                setProgressStage("Uploading Video");
-                setIsProcessing(true);
-                setRenderProgress(5);
-                addSysLog("FFmpeg WASM ဖြင့် ဗီဒီယိုအား 1080p 18 FPS အတိုင်း စစ်ဆေးချုံ့နေပါသည်...");
-
-                try {
-                    await ffmpeg.writeFile('raw_input.mp4', await window.FFmpegUtil.fetchFile(file));
-                    await runFFmpeg([
-                        '-i', 'raw_input.mp4',
-                        '-vf', 'scale=trunc(iw*min(1920/iw\\,1080/ih)/2)*2:trunc(ih*min(1920/iw\\,1080/ih)/2)*2',
-                        '-r', '15',
-                        '-c:v', 'libx264',
-                        '-preset', 'ultrafast',
-                        '-tune', 'fastdecode',
-                        '-crf', '28',
-                        '-pix_fmt', 'yuv420p',
-                        '-c:a', 'aac',
-                        '-b:a', '128k',
-                        '-threads', '4',
-                        'compressed.mp4'
-                    ]);
-
-                    const outData = await ffmpeg.readFile('compressed.mp4');
-                    const compressedBlob = new Blob([outData.buffer], { type: 'video/mp4' });
-
-                    try { await ffmpeg.deleteFile('raw_input.mp4'); } catch(e){}
-                    try { await ffmpeg.deleteFile('compressed.mp4'); } catch(e){}
-
-                    setIsProcessing(false);
-                    setProgressStage("");
-                    return new File([compressedBlob], `${file.name}`, { type: 'video/mp4' });
-                } catch (err) {
-                    setIsProcessing(false);
-                    return file;
-                }
-            };
-
-            const handleVideoUpload = async (e) => {
+            // Client-side compression ဖျက်ထားပြီး မူရင်းဖိုင်အတိုင်း တိုက်ရိုက် load ပြုလုပ်ပါသည်
+            const handleVideoUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
 
                 setVideoFile(file);
-                setVideoUrl(URL.createObjectURL(File));
-                setFinalVideoUrl(''); setSystemLogs([]); setRenderProgress(0); setProgressStage(''); setErrorMsg(''); setSocialContent(null);
-                extractionDataRef.current = null; translatedBlocksRef.current = null; ttsSegmentsRef.current = null;
+                setVideoUrl(URL.createObjectURL(file));
+                setFinalVideoUrl('');
+                setSystemLogs([]);
+                setRenderProgress(0);
+                setProgressStage('');
+                setErrorMsg('');
+                setSocialContent(null);
+                extractionDataRef.current = null;
+                translatedBlocksRef.current = null;
+                ttsSegmentsRef.current = null;
             };
 
             const performTranscription = async () => {
@@ -926,7 +894,7 @@
             };
 
             const performTTSGeneration = async (translatedBlocks) => {
-                setProgressStage("Voiceover ထုတ်ယူနေသည်");
+                setProgressStage("Voiceover ထုတ်နေပါသည်");
                 addSysLog(`${recapEngine === 'edge' ? recapVoice : 'Gemini TTS'} ဖြင့် Voiceover ထုတ်ယူပြီး Timeline တွက်ချက်နေပါသည်...`);
                 
                 const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -993,44 +961,35 @@
                     setRenderProgress(Math.min(60, Math.floor(45 + ((i + 1) / translatedBlocks.length) * 15)));
                 }
 
-                const rawTimeline = [];
-                let currentVTime = 0;
-                for (const chunk of processedChunks) {
-                    if (chunk.vStart > currentVTime) {
-                        rawTimeline.push({
-                            type: 'gap',
-                            vStart: currentVTime,
-                            vEnd: chunk.vStart,
-                            vSpeed: 1.0,
-                            durationReal: (chunk.vStart - currentVTime),
-                            text: "",
-                            audioBuffer: null
-                        });
-                    }
-                    const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    const calculatedSpeed = Math.max(0.25, Math.min(3.0, vDuration / chunk.audioDur));
+                // Adaptive Retiming: အသံနှင့် ဗီဒီယို အံဝင်ခွင်ကျဖြစ်အောင် Speed တွက်ချက်ခြင်း
+                let currentRealTime = 0;
+                const syncTimeline = processedChunks.map(chunk => {
+                    const startReal = currentRealTime;
+                    const endReal = startReal + chunk.audioDur;
+                    currentRealTime = endReal;
 
-                    rawTimeline.push({
+                    // မူရင်း ဗီဒီယို အရှည်
+                    const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
+                    
+                    // အသံကြာချိန်နှင့် အံဝင်ခွင်ကျဖြစ်မည့် ဗီဒီယို အမြန်နှုန်း (Speed) ကို တွက်ချက်ခြင်း
+                    const calculatedSpeed = Math.max(0.35, Math.min(2.0, vDuration / chunk.audioDur));
+
+                    return {
                         type: 'narrate',
+                        startReal: startReal,
+                        endReal: endReal,
                         vStart: chunk.vStart,
                         vEnd: chunk.vEnd,
                         vSpeed: calculatedSpeed,
-                        durationReal: chunk.audioDur,
                         text: chunk.text,
-                        audioBuffer: chunk.audioBuffer
-                    });
-                    currentVTime = chunk.vEnd;
-                }
-
-                let accumulatedReal = 0;
-                const syncTimeline = rawTimeline.map(t => {
-                    const item = { ...t, startReal: accumulatedReal, endReal: accumulatedReal + t.durationReal };
-                    accumulatedReal += t.durationReal;
-                    return item;
+                        audioBuffer: chunk.audioBuffer,
+                        durationReal: chunk.audioDur
+                    };
                 });
 
+                const totalAudioDur = currentRealTime > 0 ? currentRealTime : 10;
                 tempAudioCtx.close();
-                return { syncTimeline, totalAudioDur: accumulatedReal };
+                return { syncTimeline, totalAudioDur };
             };
 
             const renderToWebM = async (syncData, videoSrcUrl, meta) => {
@@ -1040,7 +999,7 @@
 
                     try {
                         const { syncTimeline, totalAudioDur } = syncData;
-                        setProgressStage("Creating Video (1080p)");
+                        setProgressStage("Creating Video");
                         setRenderProgress(65);
 
                         const sampleRate = 44100;
@@ -1099,9 +1058,14 @@
                         }
 
                         const canvas = document.createElement('canvas');
-                        // 1080p Resolution သတ်မှတ်ခြင်း
-                        const vidW = Math.floor((meta.width || 1920) / 2) * 2;
-                        const vidH = Math.floor((meta.height || 1080) / 2) * 2;
+                        
+                        // 720p Resolution သတ်မှတ်ခြင်း (Landscape/Portrait အလိုက် အချိုးကျ scale လုပ်သည်)
+                        const originalW = meta.width || 1280;
+                        const originalH = meta.height || 720;
+                        const scaleFactor = Math.min(1280 / originalW, 720 / originalH);
+                        const vidW = Math.floor((originalW * scaleFactor) / 2) * 2;
+                        const vidH = Math.floor((originalH * scaleFactor) / 2) * 2;
+
                         canvas.width = vidW;
                         canvas.height = vidH;
                         const ctx = canvas.getContext('2d');
@@ -1111,8 +1075,8 @@
                         freezeCanvas.height = vidH;
                         const freezeCtx = freezeCanvas.getContext('2d');
 
-                        // 18 FPS Stream ရယူခြင်း
-                        const canvasStream = canvas.captureStream(15);
+                        // 18 FPS Stream သတ်မှတ်ခြင်း
+                        const canvasStream = canvas.captureStream(18);
                         const combinedStream = new MediaStream([
                             ...canvasStream.getVideoTracks(),
                             ...dest.stream.getAudioTracks()
@@ -1122,7 +1086,7 @@
                             ? 'video/webm; codecs=vp8,opus'
                             : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
 
-                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 6000000 } : undefined);
+                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 3500000 } : undefined);
                         const recordedChunks = [];
                         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
 
@@ -1205,7 +1169,7 @@
                                 }
                             }
 
-                            setRenderProgress(Math.min(90, Math.max(65, Math.floor(65 + (elapsedSec / finalAudioLength) * 25))));
+                            setRenderProgress(Math.min(75, Math.max(65, Math.floor(65 + (elapsedSec / finalAudioLength) * 10))));
 
                             ctx.save();
                             if (mirrorVideo) {
@@ -1257,14 +1221,14 @@
                             }
 
                             if (autoCaption && activeText) {
-                                const baseFontSize = Math.max(16, Math.round(vidH * 0.028 * subSize));
-                                ctx.font = `600 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
+                                const baseFontSize = Math.max(16, Math.round(vidH * 0.035 * subSize));
+                                ctx.font = `700 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
                                 ctx.textAlign = 'center';
                                 ctx.textBaseline = 'middle';
 
-                                const maxSubWidth = vidW * 0.80;
+                                const maxSubWidth = vidW * 0.85;
                                 const lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
-                                const lineHeight = baseFontSize * 1.25;
+                                const lineHeight = baseFontSize * 1.3;
 
                                 const targetY = autoBlurCaption 
                                     ? vidH * ((manualBlurBox.yMin + manualBlurBox.yMax) / 2) 
@@ -1278,7 +1242,7 @@
 
                                     if (strokeColor !== 'none') {
                                         ctx.strokeStyle = strokeColor;
-                                        ctx.lineWidth = Math.max(2.5, baseFontSize * 0.08);
+                                        ctx.lineWidth = Math.max(3, baseFontSize * 0.1);
                                         ctx.lineJoin = 'round';
                                         ctx.strokeText(line, posX, posY);
                                     }
@@ -1298,15 +1262,16 @@
                 });
             };
 
+            // 720P 18 FPS MP4 Output သို့ Convert လုပ်ခြင်း
             const convertWebmToMp4 = async (webmBlob) => {
                 const ffmpeg = ffmpegRef.current;
-                setProgressStage("Sending Final Video (Converting to 1080p MP4)");
-                setRenderProgress(0);
-                addSysLog("FFmpeg WASM ဖြင့် Single-Pass 1080p 18 FPS MP4 သို့ စတင် Remux လုပ်နေပါသည်...");
+                setProgressStage("Sending Final Video(Please wait)...");
+                setRenderProgress(75);
+                addSysLog("FFmpeg WASM ဖြင့် 720p 18 FPS MP4 သို့ Remux ပြုလုပ်နေပါသည်...");
 
                 const progressHandler = ({ progress }) => {
-                    if (typeof progress === 'number' && !isNaN(progress)) {
-                        const pct = Math.min(100, Math.max(0, Math.round(progress * 100)));
+                    if (typeof progress === 'number' && !isNaN(progress) && progress > 0) {
+                        const pct = Math.min(94, Math.max(75, Math.round(75 + progress * 19)));
                         setRenderProgress(pct);
                     }
                 };
@@ -1318,18 +1283,21 @@
 
                     await runFFmpeg([
                         '-i', 'input.webm',
-                        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
-                        '-r', '15',
+                        '-vf', 'scale=trunc(iw*min(1280/iw\\,720/ih)/2)*2:trunc(ih*min(1280/iw\\,720/ih)/2)*2',
+                        '-r', '18',
                         '-c:v', 'libx264',
                         '-preset', 'ultrafast',
                         '-tune', 'fastdecode',
-                        '-crf', '22',
+                        '-crf', '24',
                         '-pix_fmt', 'yuv420p',
                         '-c:a', 'aac',
-                        '-b:a', '192k',
+                        '-b:a', '160k',
                         '-movflags', '+faststart',
                         'final_output.mp4'
                     ]);
+
+                    setProgressStage("ဖိုင် အပြီးသတ် ထုတ်ယူနေပါသည် (95%)...");
+                    setRenderProgress(95);
 
                     const outData = await ffmpeg.readFile('final_output.mp4');
                     const mp4Blob = new Blob([outData.buffer], { type: 'video/mp4' });
@@ -1357,7 +1325,7 @@
                     v.preload = 'metadata';
                     v.src = videoLocalUrl;
                     await new Promise(r => v.onloadedmetadata = r);
-                    const meta = { duration: v.duration, width: v.videoWidth || 1920, height: v.videoHeight || 1080 };
+                    const meta = { duration: v.duration, width: v.videoWidth || 1280, height: v.videoHeight || 720 };
 
                     const deductRes = await apiFetch('/api/video/pre-deduct', {
                         method: 'POST',
@@ -1372,7 +1340,7 @@
                     setIsProcessing(true);
                     setErrorMsg('');
                     setSystemLogs([]);
-                    setRenderProgress(0);
+                    setRenderProgress(5);
                     setFinalVideoUrl('');
 
                     if (!extractionDataRef.current) extractionDataRef.current = await performTranscription();
@@ -1399,18 +1367,17 @@
                     const webmBlob = await renderToWebM(renderTimelineData, videoLocalUrl, meta);
                     const finalMp4Blob = await convertWebmToMp4(webmBlob);
 
+                    setProgressStage("ဗီဒီယို ဖန်တီးမှု ပြီးဆုံးပါပြီ!");
+                    const finalBlobUrl = URL.createObjectURL(finalMp4Blob);
+                    setFinalVideoUrl(finalBlobUrl);
+
                     const fd = new FormData();
                     fd.append('file', finalMp4Blob, 'rendered.mp4');
                     fd.append('duration', String(meta.duration));
                     fd.append('tool', currentView);
-                    const saveRes = await apiFetch('/api/video/save-client-rendered', { method: 'POST', body: fd });
-                    const saveData = await saveRes.json();
-                    if (saveData.result_url) setFinalVideoUrl(saveData.result_url);
-                    else setFinalVideoUrl(URL.createObjectURL(finalMp4Blob));
+                    apiFetch('/api/video/save-client-rendered', { method: 'POST', body: fd }).catch(()=>{});
 
                     setIsProcessing(false);
-                    setProgressStage("");
-                    setRenderProgress(100);
                 } catch (err) {
                     console.error(err);
                     setErrorMsg(`လုပ်ငန်းစဉ် ရပ်တန့်သွားပါသည်: ${err.message}`);
@@ -1418,25 +1385,14 @@
                 }
             };
 
-            const handleDownloadWithAds = async (targetVideoUrl = finalVideoUrl, mediaKey = null, videoId = null) => {
+            const handleDownloadWithAds = (targetVideoUrl = finalVideoUrl) => {
                 const smartLink = globalSettings.ads_smart_link || ADS_LINK;
                 window.open(smartLink, '_blank');
 
-                try {
-                    await apiFetch('/api/video/consume-download', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ media_key: mediaKey, video_id: videoId })
-                    });
-                    if (user) fetchUserData(user.email);
-
-                    const a = document.createElement("a");
-                    a.href = targetVideoUrl;
-                    a.download = `AI_Video_${Date.now()}.mp4`;
-                    a.click();
-                } catch (err) {
-                    alert(err.message);
-                }
+                const a = document.createElement("a");
+                a.href = targetVideoUrl;
+                a.download = `AI_Video_${Date.now()}.mp4`;
+                a.click();
             };
 
             const playVoicePreview = async () => {
@@ -1564,7 +1520,6 @@
                     const r = await apiFetch(`/api/messages?peer=${encodeURIComponent(userEmail)}`);
                     const d = await r.json();
                     setAdminSelectedChatMessages(Array.isArray(d.messages) ? d.messages : []);
-                    
                     const badgesRes = await apiFetch('/api/admin/badges');
                     setAdminBadges(await badgesRes.json());
                 } catch(e){
@@ -1645,7 +1600,7 @@
                         requires_server_id: false,
                         images: [], 
                         payment_accounts:[{provider:'KBZPay', number:'', holder:''}], 
-                        variants:[{name:'Standard', price_mmk:5000, price_credits:20}] 
+                        variants:[{name:'Standard', price_mmk:5000, price_credits:20, cost_price_mmk:3500}] 
                     });
                     loadAdminData();
                 } catch (err) { alert(err.message); }
@@ -2152,31 +2107,72 @@
                                         </div>
                                     )}
 
-                                    <div className={`p-6 rounded-3xl flex-1 flex flex-col min-h-[400px] ${neoClass}`}>
-                                        <div className="p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className="w-5 h-5 text-indigo-500"/>} {finalVideoUrl ? "အပြီးသတ် ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည် (1080p)" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
+                                    {/* Video Preview Box (Full Responsive & Aspect-Ratio Fitting) */}
+                                    <div className={`p-6 rounded-3xl w-full flex flex-col items-center justify-center ${neoClass}`}>
+                                        <div className="w-full p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className="w-5 h-5 text-indigo-500"/>} {finalVideoUrl ? "အပြီးသတ် ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည်" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
 
-                                        <div className={`flex-1 rounded-2xl overflow-hidden flex items-center justify-center relative ${neoPressedClass}`}>
+                                        <div className="w-full flex items-center justify-center min-h-[420px]">
                                             {!finalVideoUrl && videoUrl && (
-                                                <div className="w-full h-full relative flex items-center justify-center overflow-hidden">
-                                                    <video ref={previewVideoRef} src={videoUrl} controls playsInline className="w-full h-full object-contain pointer-events-auto" style={{ filter: `${activeFilter !== 'none' ? activeFilter : ''} brightness(${manualAdjust.b}%) contrast(${manualAdjust.c}%) saturate(${manualAdjust.s}%)`, transform: mirrorVideo ? 'scaleX(-1)' : 'none' }} />
+                                                <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', borderRadius: '16px', overflow: 'hidden' }}>
+                                                    <video 
+                                                        key={videoUrl}
+                                                        ref={previewVideoRef} 
+                                                        src={videoUrl} 
+                                                        controls 
+                                                        playsInline 
+                                                        style={{ 
+                                                            width: '100%', 
+                                                            height: 'auto', 
+                                                            maxHeight: '75vh', 
+                                                            display: 'block', 
+                                                            objectFit: 'contain',
+                                                            filter: `${activeFilter !== 'none' ? activeFilter : ''} brightness(${manualAdjust.b}%) contrast(${manualAdjust.c}%) saturate(${manualAdjust.s}%)`, 
+                                                            transform: mirrorVideo ? 'scaleX(-1)' : 'none' 
+                                                        }} 
+                                                    />
                                                     {autoBlurCaption && (
-                                                        <div className="absolute border-2 border-red-500 bg-red-500/25 pointer-events-none flex items-center justify-center text-white text-[11px] font-bold shadow-lg backdrop-blur-sm z-30 transition-all duration-75" style={{
-                                                            top: `${manualBlurBox.yMin * 100}%`, height: `${(manualBlurBox.yMax - manualBlurBox.yMin) * 100}%`,
-                                                            left: `${manualBlurBox.xMin * 100}%`, width: `${(manualBlurBox.xMax - manualBlurBox.xMin) * 100}%`
-                                                        }}>
-                                                            <span className="bg-black/70 px-2 py-0.5 rounded text-[10px] text-yellow-300">
+                                                        <div 
+                                                            style={{
+                                                                position: 'absolute',
+                                                                border: '2px solid #ef4444',
+                                                                backgroundColor: 'rgba(239, 68, 68, 0.35)',
+                                                                pointerEvents: 'none',
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                justifyContent: 'center',
+                                                                color: '#fff',
+                                                                fontSize: '11px',
+                                                                fontWeight: 'bold',
+                                                                zIndex: 30,
+                                                                transition: 'all 75ms ease',
+                                                                top: `${manualBlurBox.yMin * 100}%`, 
+                                                                height: `${(manualBlurBox.yMax - manualBlurBox.yMin) * 100}%`,
+                                                                left: `${manualBlurBox.xMin * 100}%`, 
+                                                                width: `${(manualBlurBox.xMax - manualBlurBox.xMin) * 100}%`
+                                                            }}
+                                                        >
+                                                            <span style={{ backgroundColor: 'rgba(0,0,0,0.8)', padding: '2px 8px', borderRadius: '4px', fontSize: '10px', color: '#fde047' }}>
                                                                 Blur Area ({Math.round((manualBlurBox.yMax - manualBlurBox.yMin) * 100)}% H)
                                                             </span>
                                                         </div>
                                                     )}
                                                 </div>
                                             )}
-                                            {finalVideoUrl && <video src={finalVideoUrl} controls playsInline className="w-full h-full object-contain" />}
-                                            {!videoUrl && !finalVideoUrl && <div className="opacity-40 text-center p-10"><Film className="w-16 h-16 mx-auto mb-2"/><p>ဗီဒီယို တင်လိုက်ပါက ဤနေရာတွင် ပေါ်လာပါမည်</p></div>}
+                                            {finalVideoUrl && (
+                                                <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', borderRadius: '16px', overflow: 'hidden' }}>
+                                                    <video src={finalVideoUrl} controls playsInline style={{ width: '100%', height: 'auto', maxHeight: '75vh', display: 'block', objectFit: 'contain' }} />
+                                                </div>
+                                            )}
+                                            {!videoUrl && !finalVideoUrl && (
+                                                <div className="opacity-40 text-center p-10">
+                                                    <Film className="w-16 h-16 mx-auto mb-2"/>
+                                                    <p>ဗီဒီယို တင်လိုက်ပါက ဤနေရာတွင် ပေါ်လာပါမည်</p>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {autoBlurCaption && !finalVideoUrl && (
-                                            <div className={`mt-4 p-4 rounded-2xl space-y-3 ${neoPressedClass}`}>
+                                            <div className={`w-full mt-4 p-4 rounded-2xl space-y-3 ${neoPressedClass}`}>
                                                 <div className="text-xs font-bold opacity-80">Subtle Blur Box ချိန်ညှိရန် (Sliders):</div>
                                                 <div className="grid grid-cols-2 gap-3 text-xs">
                                                     <div><span>အမြင့် (Y Min): {Math.round(manualBlurBox.yMin * 100)}%</span><input type="range" min="0" max="90" value={manualBlurBox.yMin * 100} onChange={e => setManualBlurBox({...manualBlurBox, yMin: parseFloat(e.target.value)/100})} className="w-full accent-indigo-500"/></div>
@@ -2188,8 +2184,8 @@
                                         )}
 
                                         {finalVideoUrl && (
-                                            <div className="space-y-4 mt-6">
-                                                <button onClick={() => handleDownloadWithAds(finalVideoUrl, finalVideoUrl.replace('/media/', ''))} className="w-full py-5 bg-green-500 hover:bg-green-600 text-white font-black text-lg rounded-2xl flex items-center justify-center gap-3 shadow-lg"><Download className="w-6 h-6"/> MP4 ဗီဒီယိုကို ဒေါင်းလုဒ်ဆွဲမည်</button>
+                                            <div className="space-y-4 mt-6 w-full">
+                                                <button onClick={() => handleDownloadWithAds(finalVideoUrl)} className="w-full py-5 bg-green-500 hover:bg-green-600 text-white font-black text-lg rounded-2xl flex items-center justify-center gap-3 shadow-lg"><Download className="w-6 h-6"/> MP4 ဗီဒီယိုကို ဒေါင်းလုဒ်ဆွဲမည်</button>
                                                 <div className={`p-6 rounded-2xl ${neoPressedClass}`}>
                                                     <div className="flex justify-between items-center mb-4">
                                                         <h3 className="font-bold flex items-center gap-2 text-indigo-500"><Type className="w-5 h-5"/> Social Media Kit</h3>

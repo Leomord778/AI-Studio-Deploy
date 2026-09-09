@@ -56,8 +56,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003802670362").strip()
 
 DEFAULT_GROQ_KEYS = [
     k.strip() for k in os.getenv(
-        "GROQ_API_KEYS", 
-        "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,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"
+        "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", 
+        "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"
     ).split(",") if k.strip()
 ]
 
