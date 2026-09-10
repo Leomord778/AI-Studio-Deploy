@@ -513,6 +513,7 @@
             const [systemLogs, setSystemLogs] = useState([]);
             const [errorMsg, setErrorMsg] = useState('');
             const [finalVideoUrl, setFinalVideoUrl] = useState('');
+            const [lastRenderedMeta, setLastRenderedMeta] = useState(null);
             const [previewingAudio, setPreviewingAudio] = useState(false);
 
             const [socialContent, setSocialContent] = useState(null);
@@ -599,6 +600,7 @@
                     setRenderProgress(0);
                     setErrorMsg('');
                     setSocialContent(null);
+                    setLastRenderedMeta(null);
                     extractionDataRef.current = null;
                     translatedBlocksRef.current = null;
                     ttsSegmentsRef.current = null;
@@ -759,7 +761,6 @@
                 if (ret !== 0) throw new Error(`FFmpeg error (code ${ret}) on: ${args.join(' ')}`);
             };
 
-            // Client-side compression ဖျက်ထားပြီး မူရင်းဖိုင်အတိုင်း တိုက်ရိုက် load ပြုလုပ်ပါသည်
             const handleVideoUpload = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
@@ -767,6 +768,7 @@
                 setVideoFile(file);
                 setVideoUrl(URL.createObjectURL(file));
                 setFinalVideoUrl('');
+                setLastRenderedMeta(null);
                 setSystemLogs([]);
                 setRenderProgress(0);
                 setProgressStage('');
@@ -808,7 +810,7 @@
                     try { await ffmpeg.deleteFile('out_audio.wav'); } catch(e){}
                 }
 
-                setProgressStage("Transcriptထုတ်ယူနေသည်");
+                setProgressStage("Transcript ထုတ်ယူနေသည်");
                 setRenderProgress(25);
                 addSysLog("Groq Whisper API သို့ အသံဖိုင် ပေးပို့နေပါသည်...");
 
@@ -863,15 +865,31 @@
                 }
             };
 
+            // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
             const performTranslation = async (originalSrt) => {
-                setProgressStage("ဘာသာပြန်script ထုတ်နေပါသည်");
-                addSysLog(`Gemini ဖြင့် မြန်မာဘာသာသို့ အဖြတ်အတောက် သတ်ပုံမှန်ကန်စွာ ဘာသာပြန်နေပါသည်...`);
+                setProgressStage("ဘာသာပြန် script ထုတ်နေပါသည်");
+                addSysLog(`Gemini ဖြင့် ၃ မိနစ်စာ Chunk များခွဲ၍ ဘာသာပြန်နေပါသည်...`);
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
                 let allTranslated = [];
-                const BATCH_SIZE = 12;
 
-                for (let i = 0; i < originalBlocks.length; i += BATCH_SIZE) {
-                    const batch = originalBlocks.slice(i, i + BATCH_SIZE);
+                const batches = [];
+                let currentBatch = [];
+                let batchStart = originalBlocks[0]?.start || 0;
+
+                for (const b of originalBlocks) {
+                    if (currentBatch.length > 0 && (b.end - batchStart > 180)) {
+                        batches.push(currentBatch);
+                        currentBatch = [b];
+                        batchStart = b.start;
+                    } else {
+                        if (currentBatch.length === 0) batchStart = b.start;
+                        currentBatch.push(b);
+                    }
+                }
+                if (currentBatch.length > 0) batches.push(currentBatch);
+
+                for (let i = 0; i < batches.length; i++) {
+                    const batch = batches[i];
                     const translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
                         const payload = {
                             contents: [{ parts: [{ text: JSON.stringify(batch) }] }],
@@ -888,38 +906,82 @@
                         const item = Array.isArray(translatedBatch) ? translatedBatch.find(x => x.id === batch[j].id) : null;
                         allTranslated.push(item && item.text ? item : batch[j]);
                     }
-                    setRenderProgress(Math.min(45, Math.floor(25 + (20 * ((i + BATCH_SIZE) / originalBlocks.length)))));
+                    setRenderProgress(Math.min(45, Math.floor(25 + (20 * ((i + 1) / batches.length)))));
                 }
                 return allTranslated;
             };
 
+            // Edge TTS (2 Parallel Chunks) နှင့် Gemini TTS (1-Min Window Slicing) + Silent Gaps ထိန်းသိမ်းခြင်း
             const performTTSGeneration = async (translatedBlocks) => {
                 setProgressStage("Voiceover ထုတ်နေပါသည်");
-                addSysLog(`${recapEngine === 'edge' ? recapVoice : 'Gemini TTS'} ဖြင့် Voiceover ထုတ်ယူပြီး Timeline တွက်ချက်နေပါသည်...`);
+                addSysLog(`${recapEngine === 'edge' ? 'Edge TTS (2 Chunks Parallel)' : 'Gemini TTS (1-Min Window Slicing)'} ဖြင့် အသံထုတ်ယူနေပါသည်...`);
                 
                 const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const processedChunks = [];
+                let processedChunks = [];
 
-                for (let i = 0; i < translatedBlocks.length; i++) {
-                    const block = translatedBlocks[i];
-                    let text = block.text?.trim() || " ";
-                    let audioBuffer = null;
-                    let actualDur = Math.max(0.5, block.end - block.start);
+                if (recapEngine === 'edge') {
+                    // Edge TTS: တစ်ကြိမ်လျှင် ၂ ခုစီ Parallel ပြိုင်တူထုတ်ယူခြင်း
+                    for (let i = 0; i < translatedBlocks.length; i += 2) {
+                        const pair = translatedBlocks.slice(i, i + 2);
+                        const results = await Promise.all(pair.map(async (block) => {
+                            const text = block.text?.trim() || " ";
+                            let audioBuffer = null;
+                            let actualDur = Math.max(0.5, block.end - block.start);
 
-                    try {
-                        if (recapEngine === 'edge') {
-                            const response = await apiFetch('/api/tts', { 
-                                method: 'POST', 
-                                headers: { 'Content-Type': 'application/json' }, 
-                                body: JSON.stringify({ text, voice: recapVoice, rate: "+10%" }) 
-                            });
-                            const mp3Blob = await response.blob();
-                            audioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
-                            actualDur = audioBuffer.duration;
+                            try {
+                                const response = await apiFetch('/api/tts', { 
+                                    method: 'POST', 
+                                    headers: { 'Content-Type': 'application/json' }, 
+                                    body: JSON.stringify({ text, voice: recapVoice, rate: "+10%" }) 
+                                });
+                                const mp3Blob = await response.blob();
+                                audioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
+                                actualDur = audioBuffer.duration;
+                            } catch (e) {
+                                const offlineCtx = new OfflineAudioContext(1, 24000, 24000);
+                                audioBuffer = offlineCtx.createBuffer(1, 24000, 24000);
+                                actualDur = Math.max(0.5, block.end - block.start);
+                            }
+
+                            return {
+                                vStart: block.start,
+                                vEnd: block.end,
+                                text: block.text,
+                                audioBuffer,
+                                audioDur: actualDur
+                            };
+                        }));
+
+                        processedChunks.push(...results);
+                        setRenderProgress(Math.min(60, Math.floor(45 + ((i + pair.length) / translatedBlocks.length) * 15)));
+                    }
+                } else {
+                    // Gemini TTS: ၀ မှ ၁ မိနစ် (၆၀ စက္ကန့်) Window Slicing ပုံစံ
+                    const timeGroups = [];
+                    let curGroup = [];
+                    let groupStartTime = translatedBlocks[0]?.start || 0;
+
+                    for (const b of translatedBlocks) {
+                        if (curGroup.length > 0 && (b.end - groupStartTime > 60)) {
+                            timeGroups.push(curGroup);
+                            curGroup = [b];
+                            groupStartTime = b.start;
                         } else {
-                            await executeWithApiLogic(`TTS Chunk`, async (apiKey) => {
+                            if (curGroup.length === 0) groupStartTime = b.start;
+                            curGroup.push(b);
+                        }
+                    }
+                    if (curGroup.length > 0) timeGroups.push(curGroup);
+
+                    for (let g = 0; g < timeGroups.length; g++) {
+                        const group = timeGroups[g];
+                        const combinedText = group.map(b => b.text).join(" ... ");
+
+                        let groupBuffer = null;
+                        try {
+                            await executeWithApiLogic("Gemini 1-Min TTS", async (apiKey) => {
                                 const payload = {
-                                    contents: [{ parts: [{ text: text }] }],
+                                    contents: [{ parts: [{ text: combinedText }] }],
                                     generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: recapVoice } } } }
                                 };
                                 const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
@@ -928,64 +990,101 @@
                                 const pcmBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
                                 if (!pcmBase64) throw new Error("Audio missing");
 
-                                const bin = atob(pcmBase64); 
+                                const bin = atob(pcmBase64);
                                 const bytes = new Uint8Array(bin.length);
                                 for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
                                 const count = Math.floor(bytes.length / 2);
                                 
                                 const offlineCtx = new OfflineAudioContext(1, count, 24000);
-                                audioBuffer = offlineCtx.createBuffer(1, count, 24000);
-                                const out = audioBuffer.getChannelData(0);
+                                groupBuffer = offlineCtx.createBuffer(1, count, 24000);
+                                const out = groupBuffer.getChannelData(0);
                                 for (let k = 0; k < count; k++) {
                                     const idx = k * 2;
                                     const int16 = (bytes[idx + 1] << 8) | bytes[idx];
                                     out[k] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0;
                                 }
-                                actualDur = Math.max(0.1, count / 24000);
                             });
+                        } catch (e) {
+                            const offlineCtx = new OfflineAudioContext(1, 24000, 24000);
+                            groupBuffer = offlineCtx.createBuffer(1, 24000, 24000);
                         }
-                    } catch (e) {
-                        const offlineCtx = new OfflineAudioContext(1, 24000, 24000);
-                        audioBuffer = offlineCtx.createBuffer(1, 24000, 24000);
-                        actualDur = 1.0;
+
+                        const totalChars = group.reduce((acc, b) => acc + (b.text?.length || 1), 0);
+                        let currentOffsetTime = 0;
+
+                        for (const b of group) {
+                            const ratio = (b.text?.length || 1) / totalChars;
+                            const segDur = Math.max(0.5, groupBuffer.duration * ratio);
+                            const sampleRate = groupBuffer.sampleRate;
+                            const startSample = Math.floor(currentOffsetTime * sampleRate);
+                            const endSample = Math.min(groupBuffer.length, Math.floor((currentOffsetTime + segDur) * sampleRate));
+                            const segSamples = Math.max(1, endSample - startSample);
+
+                            const segBuffer = tempAudioCtx.createBuffer(1, segSamples, sampleRate);
+                            const segData = segBuffer.getChannelData(0);
+                            const groupData = groupBuffer.getChannelData(0);
+                            for (let s = 0; s < segSamples; s++) {
+                                segData[s] = groupData[startSample + s] || 0;
+                            }
+
+                            processedChunks.push({
+                                vStart: b.start,
+                                vEnd: b.end,
+                                text: b.text,
+                                audioBuffer: segBuffer,
+                                audioDur: segDur
+                            });
+                            currentOffsetTime += segDur;
+                        }
+                        setRenderProgress(Math.min(60, Math.floor(45 + ((g + 1) / timeGroups.length) * 15)));
                     }
-
-                    processedChunks.push({
-                        vStart: block.start,
-                        vEnd: block.end,
-                        text: block.text,
-                        audioBuffer,
-                        audioDur: actualDur
-                    });
-
-                    setRenderProgress(Math.min(60, Math.floor(45 + ((i + 1) / translatedBlocks.length) * 15)));
                 }
 
-                // Adaptive Retiming: အသံနှင့် ဗီဒီယို အံဝင်ခွင်ကျဖြစ်အောင် Speed တွက်ချက်ခြင်း
+                // အသံမပါသော အပိုင်းများ (Silent Gaps) မပျောက်စေရန် Timeline ပြန်လည်တည်ဆောက်ခြင်း
+                processedChunks.sort((a, b) => a.vStart - b.vStart);
+
                 let currentRealTime = 0;
-                const syncTimeline = processedChunks.map(chunk => {
-                    const startReal = currentRealTime;
-                    const endReal = startReal + chunk.audioDur;
-                    currentRealTime = endReal;
+                let currentVTime = 0;
+                const syncTimeline = [];
 
-                    // မူရင်း ဗီဒီယို အရှည်
+                for (let i = 0; i < processedChunks.length; i++) {
+                    const chunk = processedChunks[i];
+
+                    // စကားမပြောသော ကြားအပိုင်း (Gap) ရှိပါက မူရင်း Speed (1.0x) အတိုင်း ဆက်လက် run စေခြင်း
+                    if (chunk.vStart > currentVTime + 0.05) {
+                        const gapDuration = chunk.vStart - currentVTime;
+                        syncTimeline.push({
+                            type: 'gap',
+                            startReal: currentRealTime,
+                            endReal: currentRealTime + gapDuration,
+                            vStart: currentVTime,
+                            vEnd: chunk.vStart,
+                            vSpeed: 1.0,
+                            text: "",
+                            audioBuffer: null,
+                            durationReal: gapDuration
+                        });
+                        currentRealTime += gapDuration;
+                        currentVTime = chunk.vStart;
+                    }
+
+                    // စကားပြောခန်း (Dialogue) ဖြစ်ပါက အသံကြာချိန်နှင့်အညီ ဗီဒီယို speed အနှေးအမြန် ချိန်ညှိခြင်း
                     const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    
-                    // အသံကြာချိန်နှင့် အံဝင်ခွင်ကျဖြစ်မည့် ဗီဒီယို အမြန်နှုန်း (Speed) ကို တွက်ချက်ခြင်း
                     const calculatedSpeed = Math.max(0.35, Math.min(2.0, vDuration / chunk.audioDur));
-
-                    return {
+                    syncTimeline.push({
                         type: 'narrate',
-                        startReal: startReal,
-                        endReal: endReal,
+                        startReal: currentRealTime,
+                        endReal: currentRealTime + chunk.audioDur,
                         vStart: chunk.vStart,
                         vEnd: chunk.vEnd,
                         vSpeed: calculatedSpeed,
                         text: chunk.text,
                         audioBuffer: chunk.audioBuffer,
                         durationReal: chunk.audioDur
-                    };
-                });
+                    });
+                    currentRealTime += chunk.audioDur;
+                    currentVTime = chunk.vEnd;
+                }
 
                 const totalAudioDur = currentRealTime > 0 ? currentRealTime : 10;
                 tempAudioCtx.close();
@@ -1058,8 +1157,6 @@
                         }
 
                         const canvas = document.createElement('canvas');
-                        
-                        // 720p Resolution သတ်မှတ်ခြင်း (Landscape/Portrait အလိုက် အချိုးကျ scale လုပ်သည်)
                         const originalW = meta.width || 1280;
                         const originalH = meta.height || 720;
                         const scaleFactor = Math.min(1280 / originalW, 720 / originalH);
@@ -1075,7 +1172,6 @@
                         freezeCanvas.height = vidH;
                         const freezeCtx = freezeCanvas.getContext('2d');
 
-                        // 18 FPS Stream သတ်မှတ်ခြင်း
                         const canvasStream = canvas.captureStream(18);
                         const combinedStream = new MediaStream([
                             ...canvasStream.getVideoTracks(),
@@ -1129,13 +1225,15 @@
                             const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
 
                             if (currentEvent) {
-                                activeText = currentEvent.text || "";
+                                activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
                                 
                                 if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
                                     currentEventIndex = syncTimeline.indexOf(currentEvent);
                                     video.playbackRate = currentEvent.vSpeed;
-                                    if (Math.abs(video.currentTime - currentEvent.vStart) > 1.0) {
-                                        video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, currentEvent.vStart));
+
+                                    const expectedVTime = currentEvent.vStart + ((elapsedSec - currentEvent.startReal) * currentEvent.vSpeed);
+                                    if (Math.abs(video.currentTime - expectedVTime) > 0.8) {
+                                        video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
                                     }
                                 }
                             } else {
@@ -1262,10 +1360,9 @@
                 });
             };
 
-            // 720P 18 FPS MP4 Output သို့ Convert လုပ်ခြင်း
             const convertWebmToMp4 = async (webmBlob) => {
                 const ffmpeg = ffmpegRef.current;
-                setProgressStage("Sending Final Video(Please wait)...");
+                setProgressStage("Sending Final Video (Please wait)...");
                 setRenderProgress(75);
                 addSysLog("FFmpeg WASM ဖြင့် 720p 18 FPS MP4 သို့ Remux ပြုလုပ်နေပါသည်...");
 
@@ -1375,7 +1472,12 @@
                     fd.append('file', finalMp4Blob, 'rendered.mp4');
                     fd.append('duration', String(meta.duration));
                     fd.append('tool', currentView);
-                    apiFetch('/api/video/save-client-rendered', { method: 'POST', body: fd }).catch(()=>{});
+                    
+                    const uploadRes = await apiFetch('/api/video/save-client-rendered', { method: 'POST', body: fd });
+                    const savedData = await uploadRes.json();
+                    if (savedData.media_key || savedData.video_id) {
+                        setLastRenderedMeta({ media_key: savedData.media_key, video_id: savedData.video_id });
+                    }
 
                     setIsProcessing(false);
                 } catch (err) {
@@ -1385,9 +1487,24 @@
                 }
             };
 
-            const handleDownloadWithAds = (targetVideoUrl = finalVideoUrl) => {
+            const handleDownloadWithAds = async (targetVideoUrl = finalVideoUrl, mediaKey = null, videoId = null) => {
                 const smartLink = globalSettings.ads_smart_link || ADS_LINK;
                 window.open(smartLink, '_blank');
+
+                const keyToUse = mediaKey || lastRenderedMeta?.media_key;
+                const idToUse = videoId || lastRenderedMeta?.video_id;
+
+                if (keyToUse || idToUse) {
+                    try {
+                        await apiFetch('/api/video/consume-download', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ media_key: keyToUse, video_id: idToUse })
+                        });
+                    } catch (e) {
+                        console.error("Consume download error", e);
+                    }
+                }
 
                 const a = document.createElement("a");
                 a.href = targetVideoUrl;
@@ -1925,7 +2042,7 @@
                                     <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md mx-auto text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><Film className="w-10 h-10 text-indigo-500"/></div><h2 className="text-2xl font-bold mb-3">Welcome to AI Studio</h2><p className="opacity-70 mb-8 text-sm">စတင်အသုံးပြုရန် Google Account ဖြင့် ဝင်ရောက်ပါ။</p><div id="google-login-btn"></div></div>
                                 ) : (
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-6 max-w-5xl mx-auto py-6">
-                                        <button onClick={() => navigateTo('recap')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-indigo-500/20 text-indigo-500 mb-4"><Film className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Movie Recap </h2></button>
+                                        <button onClick={() => navigateTo('recap')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-indigo-500/20 text-indigo-500 mb-4"><Film className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Movie Recap</h2></button>
                                         <button onClick={() => navigateTo('subtitle')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-emerald-500/20 text-emerald-500 mb-4"><SubtitleIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">AI Subtitle Burn-in</h2></button>
                                         <button onClick={() => navigateTo('tts')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-rose-500/20 text-rose-500 mb-4"><Mic className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Text to Speech</h2><p className="text-xs opacity-70">change words to speech</p></button>
                                         <button onClick={openStore} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4"><StoreIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Store</h2><p className="text-xs opacity-70">Game Topup & Products</p></button>
@@ -2107,7 +2224,6 @@
                                         </div>
                                     )}
 
-                                    {/* Video Preview Box (Full Responsive & Aspect-Ratio Fitting) */}
                                     <div className={`p-6 rounded-3xl w-full flex flex-col items-center justify-center ${neoClass}`}>
                                         <div className="w-full p-2 mb-4 font-bold opacity-70 flex items-center gap-2">{finalVideoUrl ? <CheckCircle className="w-5 h-5 text-green-500"/> : <Film className="w-5 h-5 text-indigo-500"/>} {finalVideoUrl ? "အပြီးသတ် ဗီဒီယို ဖန်တီးမှု အောင်မြင်ပါသည်" : "ဗီဒီယို မျက်နှာပြင် (Preview)"}</div>
 
@@ -2250,19 +2366,25 @@
                                                     if (user) fetchUserData(user.email);
                                                 } else {
                                                     await executeWithApiLogic("TTS", async (apiKey) => {
-                                                        const payload = { 
-                                                            contents: [{ parts: [{ text: textToSpeak }] }], 
-                                                            generationConfig: { 
-                                                                responseModalities: ["AUDIO"], 
-                                                                speechConfig: { 
-                                                                    voiceConfig: { 
-                                                                        prebuiltVoiceConfig: { 
-                                                                            voiceName: ttsVoice 
-                                                                        } 
-                                                                    } 
+                                                const styledPrompt = `Perform and read this text with intense emotion: [Emotion/Style: ${ttsStyleObj.name}]. Tone instructions: ${ttsStyleObj.prompt}\n\nText to read aloud:\n"${textToSpeak}"`;
+                                                const payload = { 
+                                                    contents: [{ parts: [{ text: styledPrompt }] }], 
+                                                    systemInstruction: { 
+                                                        parts: [{ 
+                                                            text: `You are an award-winning voice actor. You MUST expressively speak with the following tone/emotion: "${ttsStyleObj.name}". Pacing, pitch, intensity, breath, and vocal emotion must strictly reflect this style: "${ttsStyleObj.prompt}".` 
+                                                        }] 
+                                                    },
+                                                    generationConfig: { 
+                                                        responseModalities: ["AUDIO"], 
+                                                        speechConfig: { 
+                                                            voiceConfig: { 
+                                                                prebuiltVoiceConfig: { 
+                                                                    voiceName: ttsVoice 
                                                                 } 
                                                             } 
-                                                        };
+                                                        } 
+                                                    } 
+                                                };
                                                         const url = apiKey 
                                                             ? `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}` 
                                                             : `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
@@ -2741,7 +2863,7 @@
                                                         <div key={accIdx} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
                                                             <input 
                                                                 type="text" 
-                                                                placeholder="Platform (KBZPay / WavePay / Binance Pay / AYA Pay)" 
+                                                                placeholder="Platform (KBZPay / WavePay / Binance Pay)" 
                                                                 value={acc.provider} 
                                                                 onChange={e => {
                                                                     const newAccs = [...productForm.payment_accounts];
@@ -2753,7 +2875,7 @@
                                                             />
                                                             <input 
                                                                 type="text" 
-                                                                placeholder="ဖုန်း / Wallet / Account နံပါတ်" 
+                                                                placeholder="ဖုန်း / Wallet နံပါတ်" 
                                                                 value={acc.number} 
                                                                 onChange={e => {
                                                                     const newAccs = [...productForm.payment_accounts];
@@ -2881,6 +3003,52 @@
                                     <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
                                         <h3 className="text-lg font-bold">Credit သတ်မှတ်ချက်၊ ငွေလက်ခံအကောင့်နှင့် ကြော်ငြာ (Ads) ဆက်တင်များ</h3>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-2`}>
+                                                <label className="text-xs font-bold opacity-80 block">📢 စာတန်းပြေး ကြေညာချက် (Announcement Text):</label>
+                                                <textarea 
+                                                    rows="2" 
+                                                    value={globalSettings.announcement || ''} 
+                                                    onChange={e => setGlobalSettings({ ...globalSettings, announcement: e.target.value })} 
+                                                    placeholder="ဝဘ်ဆိုက်ထိပ်တွင် အမြဲပြေးနေမည့် စာသား ရိုက်ထည့်ပါ..." 
+                                                    className={`w-full p-3 rounded-xl outline-none text-xs font-medium ${neoClass}`}
+                                                />
+                                            </div>
+
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                                <label className="text-xs font-bold opacity-80 block mb-2">🎨 စာတန်းပြေး နောက်ခံအရောင် (Background Color):</label>
+                                                <div className="flex items-center gap-3">
+                                                    <input 
+                                                        type="color" 
+                                                        value={globalSettings.marquee_bg || '#4f46e5'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, marquee_bg: e.target.value })} 
+                                                        className="w-10 h-10 rounded-xl cursor-pointer bg-transparent border-none"
+                                                    />
+                                                    <input 
+                                                        type="text" 
+                                                        value={globalSettings.marquee_bg || '#4f46e5'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, marquee_bg: e.target.value })} 
+                                                        className={`flex-1 p-2.5 rounded-xl outline-none font-mono text-xs uppercase ${neoClass}`} 
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                                <label className="text-xs font-bold opacity-80 block mb-2">✍️ စာသားအရောင် (Text Color):</label>
+                                                <div className="flex items-center gap-3">
+                                                    <input 
+                                                        type="color" 
+                                                        value={globalSettings.marquee_color || '#ffffff'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, marquee_color: e.target.value })} 
+                                                        className="w-10 h-10 rounded-xl cursor-pointer bg-transparent border-none"
+                                                    />
+                                                    <input 
+                                                        type="text" 
+                                                        value={globalSettings.marquee_color || '#ffffff'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, marquee_color: e.target.value })} 
+                                                        className={`flex-1 p-2.5 rounded-xl outline-none font-mono text-xs uppercase ${neoClass}`} 
+                                                    />
+                                                </div>
+                                            </div>
                                             <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-1">ဗီဒီယို ၁ မိနစ်လျှင် ဖြတ်တောက်မည့် Credit ပမာဏ:</label>
                                                 <input type="number" value={globalSettings.deduction_rate_per_min} onChange={e=>setGlobalSettings({...globalSettings, deduction_rate_per_min: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoClass}`} />
