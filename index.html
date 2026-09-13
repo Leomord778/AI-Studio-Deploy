@@ -40,6 +40,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<script src="https://unpkg.com/fix-webm-duration/fix-webm-duration.js"></script>
 
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Pyidaungsu:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -77,6 +78,14 @@
         const Moon = ({ className }) => <IconBase className={className}><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></IconBase>;
         const Sun = ({ className }) => <IconBase className={className}><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></IconBase>;
         const Volume2 = ({ className }) => <IconBase className={className}><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></IconBase>;
+        const KeyIcon = ({ className }) => (
+            <IconBase className={className}>
+                <circle cx="7.5" cy="15.5" r="4.5"/>
+                <path d="m21 3-9.5 9.5"/>
+                <path d="m15.5 7.5 3 3"/>
+                <path d="m18.5 4.5 3 3"/>
+            </IconBase>
+        );
         const SettingsIcon = ({ className }) => <IconBase className={className}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73-.73l.22.38a2 2 0 0 0 2.73-.73l.15-.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></IconBase>;
         const Trash2 = ({ className }) => <IconBase className={className}><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></IconBase>;
         const Type = ({ className }) => <IconBase className={className}><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></IconBase>;
@@ -492,6 +501,8 @@
             const [bgMusicVolume, setBgMusicVolume] = useState(30);
             const [selectedLang, setSelectedLang] = useState(LANGUAGES[0].name);
             const [recapEngine, setRecapEngine] = useState('edge');
+            const [cloneAudioFile, setCloneAudioFile] = useState(null);
+            const [isRecording, setIsRecording] = useState(false);
             const [recapVoice, setRecapVoice] = useState('my-MM-ThihaNeural');
             const [freezeInterval, setFreezeInterval] = useState(4);
             const [zoomDuration, setZoomDuration] = useState(2);
@@ -506,7 +517,10 @@
             const [subPosition, setSubPosition] = useState(88.0);
             const [subSize, setSubSize] = useState(1.0);
             const [mirrorVideo, setMirrorVideo] = useState(false);
-
+            const [recapMode, setRecapMode] = useState('original'); // 'original' သို့မဟုတ် 'own' (storytelling style)
+            const [renderPercentage, setRenderPercentage] = useState(0);
+            const [enableHook, setEnableHook] = useState(true);
+            const [hookSeconds, setHookSeconds] = useState(3);
             const [isProcessing, setIsProcessing] = useState(false);
             const [progressStage, setProgressStage] = useState('');
             const [renderProgress, setRenderProgress] = useState(0);
@@ -734,26 +748,29 @@
             const addSysLog = (msg) => setSystemLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${msg}`]);
 
             const executeWithApiLogic = async (operationName, requestFn) => {
-                const validKeys = geminiKeys.filter(k => k.trim() !== '');
-                let attempts = 0;
-                let currentIndex = activeKeyIndex;
-                const totalKeys = validKeys.length;
+                const validKeys = geminiKeys.filter(k => k && k.trim() !== '');
+                if (validKeys.length === 0) {
+                    throw new Error("Gemini API Key ထည့်သွင်းထားခြင်း မရှိပါ။ ညာဘက်ထိပ် Settings ထဲတွင် API Key ထည့်ပေးပါခင်ဗျာ။");
+                }
 
-                while (attempts < Math.max(1, totalKeys)) {
-                    const currentKey = validKeys[currentIndex] || "";
+                let attempts = 0;
+                let currentIndex = activeKeyIndex % validKeys.length;
+                let lastErr = null;
+
+                while (attempts < validKeys.length) {
+                    const currentKey = validKeys[currentIndex];
                     try {
                         return await requestFn(currentKey);
                     } catch (error) {
-                        addSysLog(`[Warning] ${operationName} error: ${error.message}. Trying next available key...`);
-                        if (totalKeys > 0) {
-                            currentIndex = (currentIndex + 1) % totalKeys;
-                            setActiveKeyIndex(currentIndex);
-                        }
+                        addSysLog(`[Warning] ${operationName} error with Key ${currentIndex + 1}: ${error.message}`);
+                        lastErr = error;
+                        currentIndex = (currentIndex + 1) % validKeys.length;
+                        setActiveKeyIndex(currentIndex);
                         attempts++;
-                        if (attempts >= Math.max(1, totalKeys)) return await requestFn("");
-                        await new Promise(r => setTimeout(r, 1000));
+                        await new Promise(r => setTimeout(r, 500));
                     }
                 }
+                throw new Error(`Gemini API မအောင်မြင်ပါ (Keys များ အားလုံး အဆင်မပြေပါ): ${lastErr?.message || ''}`);
             };
 
             const runFFmpeg = async (args) => {
@@ -780,7 +797,7 @@
             };
 
             const performTranscription = async () => {
-                setProgressStage("ဗီဒီယိုထဲမှ အသံဖိုင်အား Native Audio Engine ဖြင့် ထုတ်ယူနေသည်");
+                setProgressStage("ဗီဒီယိုထဲမှ အသံဖိုင်အား ထုတ်ယူနေသည်");
                 setRenderProgress(15);
                 addSysLog("Web Audio API ဖြင့် ဗီဒီယိုမှ 16kHz Mono WAV အသံဖိုင်ကို တိုက်ရိုက် Decode လုပ်နေပါသည်...");
 
@@ -865,10 +882,63 @@
                 }
             };
 
+            const findHookHighlight = async (blocks, durationSec = 3, targetLang = 'my') => {
+                addSysLog(`AI ဖြင့် ဗီဒီယို၏ ${durationSec} စက္ကန့်စာ Hook နှင့် အဖွင့်စာသားကို ရှာဖွေနေပါသည်...`);
+                try {
+                    const fullText = blocks.map(b => `[${b.start.toFixed(1)}-${b.end.toFixed(1)}]: ${b.text}`).join('\n').slice(0, 4000);
+                    const isEnglish = String(targetLang).toLowerCase().includes('en') || String(targetLang).toLowerCase().includes('english');
+
+                    const prompt = `Analyze this video transcript.
+1. Find the single most suspenseful, dramatic, climax scene that lasts exactly ${durationSec} seconds.
+2. Generate an irresistible, curiosity-inducing opening hook sentence (maximum 10 words).
+- Output Language for hook_text: ${isEnglish ? 'English' : 'Burmese (မြန်မာဘာသာ)'}.
+- Return ONLY valid JSON: {"start": float, "hook_text": "string"}`;
+
+                    // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် ထုတ်ယူခြင်း
+                    try {
+                        const sRes = await apiFetch('/api/engine/neural-compute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                model: globalSettings.apinex_model || "gpt-4o-mini",
+                                messages: [
+                                    { role: "system", content: "You are an expert video editor. Return ONLY valid JSON." },
+                                    { role: "user", content: `${prompt}\n\nTranscript:\n${fullText}` }
+                                ],
+                                temperature: 0.3
+                            })
+                        });
+                        if (sRes.ok) {
+                            const sData = await sRes.json();
+                            const cText = sData?.choices?.[0]?.message?.content || "";
+                            return JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                        }
+                    } catch (sErr) {
+                        addSysLog("Neural Engine မအောင်မြင်ပါ -> User Gemini API သို့ ပြောင်းပါမည်...");
+                    }
+
+                    // ၂။ အရန်အဆင့်: User Gemini API Key သို့ Fallback လုပ်ခြင်း
+                    return await executeWithApiLogic("Find Hook", async (apiKey) => {
+                        const payload = {
+                            contents: [{ parts: [{ text: `${prompt}\n\nTranscript:\n${fullText}` }] }],
+                            generationConfig: { temperature: 0.3, responseMimeType: "application/json" }
+                        };
+                        const url = apiKey 
+                            ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
+                            : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
+                        const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        const data = await res.json();
+                        return JSON.parse(parseGeminiCandidateText(data));
+                    });
+                } catch (e) {
+                    addSysLog(`Hook ရှာမရသဖြင့် ပုံမှန်အတိုင်း ဆက်လုပ်ပါမည်: ${e.message}`);
+                    return null;
+                }
+            };
             // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
             const performTranslation = async (originalSrt) => {
-                setProgressStage("ဘာသာပြန် script ထုတ်နေပါသည်");
-                addSysLog(`Gemini ဖြင့် ၃ မိနစ်စာ Chunk များခွဲ၍ ဘာသာပြန်နေပါသည်...`);
+                setProgressStage(recapMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
+                addSysLog(`AI ဖြင့် ${recapMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ တွက်ချက်နေပါသည်...`);
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
                 let allTranslated = [];
 
@@ -888,19 +958,58 @@
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
+                const ownRecapPrompt = `You are a professional Movie Recap Narrator and captivating storyteller.
+DO NOT translate dialog directly word-for-word. 
+Instead, observe the events and describe the character actions, plot twists, emotional reactions, and unfolding drama as a third-person storyteller in natural, captivating Myanmar spoken language (ဥပမာ: "ဒီလူကတော့ တောင်ထိပ်မှာ တွင်းကြီးတစ်ခုကို အချိန်ယူတူးနေတာပါ...", "အဲ့ဒီအချိန်မှာပဲ နဂါးကြီးကို တွေ့လိုက်ရလို့ အလန့်တကြား ဖြစ်သွားခဲ့ပါတယ်").
+Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exactly identical. Output ONLY a valid JSON array.`;
+
+                const originalPrompt = `You are an expert movie recap narrator. Translate the 'text' field into fluent, captivating ${selectedLang} with natural spoken phrasing and correct Myanmar spelling. Convert all numbers to spoken Myanmar words. Keep 'id', 'start', and 'end' values identical. Output ONLY a valid JSON array.`;
+
                 for (let i = 0; i < batches.length; i++) {
                     const batch = batches[i];
-                    const translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
-                        const payload = {
-                            contents: [{ parts: [{ text: JSON.stringify(batch) }] }],
-                            systemInstruction: { parts: [{ text: `You are an expert movie recap narrator. Translate the 'text' field into fluent, captivating ${selectedLang} with natural spoken phrasing and correct Myanmar spelling. Convert all numbers to spoken Myanmar words (e.g. '1000' -> 'တစ်ထောင်'). Keep 'id', 'start', and 'end' values identical. Output ONLY a valid JSON array.` }] },
-                            generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
-                        };
-                        const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
-                        const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                        const data = await res.json();
-                        return JSON.parse(parseGeminiCandidateText(data));
-                    });
+                    let translatedBatch = null;
+                    const sysPrompt = recapMode === 'own' ? ownRecapPrompt : originalPrompt;
+
+                    // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် Script ရေးသားခြင်း
+                    try {
+                        const sRes = await apiFetch('/api/engine/neural-compute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                model: globalSettings.apinex_model || "gpt-4o-mini",
+                                messages: [
+                                    { role: "system", content: sysPrompt },
+                                    { role: "user", content: JSON.stringify(batch) }
+                                ],
+                                temperature: recapMode === 'own' ? 0.6 : 0.2
+                            })
+                        });
+                        if (sRes.ok) {
+                            const sData = await sRes.json();
+                            const cText = sData?.choices?.[0]?.message?.content || "";
+                            translatedBatch = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                            addSysLog(`Neural Engine မှ Script Batch (${i + 1}) အောင်မြင်စွာ ရယူပြီးပါပြီ။`);
+                        }
+                    } catch (sErr) {
+                        addSysLog(`Neural Engine အဆင်မပြေပါ -> User Gemini API သို့ ပြောင်းလဲပါမည်...`);
+                    }
+
+                    // ၂။ အရန်အဆင့်: User Gemini API Key သို့ Fallback လုပ်ခြင်း
+                    if (!translatedBatch) {
+                        translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
+                            const payload = {
+                                contents: [{ parts: [{ text: JSON.stringify(batch) }] }],
+                                systemInstruction: { parts: [{ text: sysPrompt }] },
+                                generationConfig: { temperature: recapMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
+                            };
+                            const url = apiKey 
+                                ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
+                                : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
+                            const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            const data = await res.json();
+                            return JSON.parse(parseGeminiCandidateText(data));
+                        });
+                    }
 
                     for (let j = 0; j < batch.length; j++) {
                         const item = Array.isArray(translatedBatch) ? translatedBatch.find(x => x.id === batch[j].id) : null;
@@ -919,7 +1028,33 @@
                 const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 let processedChunks = [];
 
-                if (recapEngine === 'edge') {
+                if (recapEngine === 'voice_clone') {
+                    if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် စံနမူနာ အသံဖိုင် (Reference Audio) တင်ပေးပါ သို့မဟုတ် Mic ဖြင့် အသံသွင်းပေးပါခင်ဗျာ");
+                    
+                    for (let i = 0; i < translatedBlocks.length; i++) {
+                        const block = translatedBlocks[i];
+                        const fd = new FormData();
+                        fd.append("text", block.text);
+                        fd.append("reference_audio", cloneAudioFile);
+
+                        const res = await apiFetch('/api/voice-clone/tts', { method: 'POST', body: fd });
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || "Colab Voice Clone အသံထုတ်မရပါ");
+                        }
+                        const audioBlob = await res.blob();
+                        const audioBuffer = await tempAudioCtx.decodeAudioData(await audioBlob.arrayBuffer());
+
+                        processedChunks.push({
+                            vStart: block.start,
+                            vEnd: block.end,
+                            text: block.text,
+                            audioBuffer: audioBuffer,
+                            audioDur: audioBuffer.duration
+                        });
+                        setRenderProgress(Math.min(60, Math.floor(45 + ((i + 1) / translatedBlocks.length) * 15)));
+                    }
+                } else if (recapEngine === 'edge') {
                     // Edge TTS: တစ်ကြိမ်လျှင် ၂ ခုစီ Parallel ပြိုင်တူထုတ်ယူခြင်း
                     for (let i = 0; i < translatedBlocks.length; i += 2) {
                         const pair = translatedBlocks.slice(i, i + 2);
@@ -1178,11 +1313,22 @@
                             ...dest.stream.getAudioTracks()
                         ]);
 
-                        const mimeType = MediaRecorder.isTypeSupported('video/webm; codecs=vp8,opus')
-                            ? 'video/webm; codecs=vp8,opus'
-                            : (MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : '');
-
-                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 3500000 } : undefined);
+                        const supportedTypes = [
+    'video/webm; codecs="h264, opus"',
+    'video/webm; codecs="h264, aac"',
+    'video/webm; codecs=h264',
+    'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+    'video/webm; codecs="vp8, opus"',
+    'video/webm'
+];
+let mimeType = '';
+for (const type of supportedTypes) {
+    if (MediaRecorder.isTypeSupported(type)) {
+        mimeType = type;
+        break;
+    }
+}
+const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 3500000 } : undefined);
                         const recordedChunks = [];
                         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
 
@@ -1195,10 +1341,16 @@
                         };
 
                         mediaRecorder.onstop = () => {
-                            try { playAudioCtx.close(); } catch(e){}
-                            const webmBlob = new Blob(recordedChunks, { type: 'video/webm' });
-                            resolve(webmBlob);
-                        };
+    try { playAudioCtx.close(); } catch(e){}
+    const rawWebmBlob = new Blob(recordedChunks, { type: mimeType || 'video/webm' });
+    if (window.ysFixWebmDuration) {
+        window.ysFixWebmDuration(rawWebmBlob, finalAudioLength * 1000, (fixedBlob) => {
+            resolve(fixedBlob);
+        });
+    } else {
+        resolve(rawWebmBlob);
+    }
+};
 
                         mediaRecorder.start(100);
                         video.play();
@@ -1216,6 +1368,10 @@
                             if (isFinished) return;
 
                             const elapsedSec = (performance.now() - renderStartTime) / 1000;
+
+                            // 👉 ဒီကုဒ် ၂ ကြောင်းကို အသစ်တိုးထည့်ပါ 👈
+                            const realPct = Math.min(100, Math.max(0, Math.floor((elapsedSec / finalAudioLength) * 100)));
+                            setRenderPercentage(realPct);
 
                             if (elapsedSec >= finalAudioLength || video.ended) {
                                 finishRecording();
@@ -1378,20 +1534,25 @@
                 try {
                     await ffmpeg.writeFile('input.webm', await window.FFmpegUtil.fetchFile(webmBlob));
 
-                    await runFFmpeg([
-                        '-i', 'input.webm',
-                        '-vf', 'scale=trunc(iw*min(1280/iw\\,720/ih)/2)*2:trunc(ih*min(1280/iw\\,720/ih)/2)*2',
-                        '-r', '18',
-                        '-c:v', 'libx264',
-                        '-preset', 'ultrafast',
-                        '-tune', 'fastdecode',
-                        '-crf', '24',
-                        '-pix_fmt', 'yuv420p',
-                        '-c:a', 'aac',
-                        '-b:a', '160k',
-                        '-movflags', '+faststart',
-                        'final_output.mp4'
-                    ]);
+                    try {
+    await runFFmpeg([
+        '-i', 'input.webm',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-movflags', '+faststart',
+        'final_output.mp4'
+    ]);
+} catch (remuxErr) {
+    await runFFmpeg([
+        '-i', 'input.webm',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-movflags', '+faststart',
+        'final_output.mp4'
+    ]);
+}
 
                     setProgressStage("ဖိုင် အပြီးသတ် ထုတ်ယူနေပါသည် (95%)...");
                     setRenderProgress(95);
@@ -1427,7 +1588,7 @@
                     const deductRes = await apiFetch('/api/video/pre-deduct', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: meta.duration })
+                        body: JSON.stringify({ duration: meta.duration, is_voice_clone: (recapEngine === 'voice_clone') })
                     });
                     const deductData = await deductRes.json();
                     if (!deductRes.ok) throw new Error(deductData.detail || "Credit မလုံလောက်ပါ");
@@ -1459,6 +1620,51 @@
                             audioBuffer: null
                         }));
                         renderTimelineData = { syncTimeline, totalAudioDur: meta.duration };
+                    }
+                    
+                    if (enableHook && translatedBlocksRef.current && currentView === 'recap') {
+                        const hookMeta = await findHookHighlight(translatedBlocksRef.current, hookSeconds, selectedLang);
+                        if (hookMeta && typeof hookMeta.start === 'number') {
+                            const exactDuration = Number(hookSeconds);
+                            const isEn = String(selectedLang).toLowerCase().includes('en');
+                            const hookText = hookMeta.hook_text || (isEn ? "Watch what happens next!" : "ဒီဇာတ်လမ်းရဲ့ မယုံနိုင်စရာ အလှည့်အပြောင်းကို ကြည့်လိုက်ပါ");
+
+                            let hookAudioBuffer = null;
+                            try {
+                                const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                                if (recapEngine === 'edge') {
+                                    const voiceToUse = isEn ? 'en-US-ChristopherNeural' : recapVoice;
+                                    const response = await apiFetch('/api/tts', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ text: hookText, voice: voiceToUse, rate: "+10%" })
+                                    });
+                                    const mp3Blob = await response.blob();
+                                    hookAudioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
+                                }
+                                tempAudioCtx.close();
+                            } catch (ttsErr) {
+                                console.warn("Hook TTS warning:", ttsErr);
+                            }
+
+                            renderTimelineData.syncTimeline.forEach(ev => {
+                                ev.startReal += exactDuration;
+                                ev.endReal += exactDuration;
+                            });
+
+                            renderTimelineData.syncTimeline.unshift({
+                                type: 'narrate',
+                                startReal: 0,
+                                endReal: exactDuration,
+                                vStart: hookMeta.start,
+                                vEnd: hookMeta.start + exactDuration,
+                                vSpeed: 1.0,
+                                text: hookText,
+                                audioBuffer: hookAudioBuffer,
+                                durationReal: exactDuration
+                            });
+                            renderTimelineData.totalAudioDur += exactDuration;
+                        }
                     }
 
                     const webmBlob = await renderToWebM(renderTimelineData, videoLocalUrl, meta);
@@ -1563,20 +1769,50 @@
                 setIsGeneratingSocial(true);
                 const blocks = translatedBlocksRef.current || [];
                 const storyText = blocks.map(b => b.text).join(' ').substring(0, 3000) || "Movie Recap.";
+                const promptText = `Generate viral social media posts for YouTube, TikTok, Facebook in Myanmar based on this transcript. Return ONLY JSON: {"youtube": {"title": "...", "desc": "...", "tags": "..."}, "tiktok": {"title": "...", "desc": "...", "tags": "..."}, "facebook": {"title": "...", "desc": "...", "tags": "..."}} \n\nTranscript: ${storyText}`;
+
                 try {
-                    const content = await executeWithApiLogic("Social Media Kit", async (apiKey) => {
-                        const payload = {
-                            contents: [{ parts: [{ text: `Generate viral social media posts for YouTube, TikTok, Facebook in Myanmar based on this transcript. Return ONLY JSON: {"youtube": {"title": "...", "desc": "...", "tags": "..."}, "tiktok": {"title": "...", "desc": "...", "tags": "..."}, "facebook": {"title": "...", "desc": "...", "tags": "..."}} \n\nTranscript: ${storyText}` }] }],
-                            generationConfig: { temperature: 0.7, responseMimeType: "application/json" }
-                        };
-                        const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
-                        const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                        const data = await res.json();
-                        return JSON.parse(parseGeminiCandidateText(data));
-                    });
+                    let content = null;
+                    // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် ထုတ်ယူခြင်း
+                    try {
+                        const sRes = await apiFetch('/api/engine/neural-compute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                model: globalSettings.apinex_model || "gpt-4o-mini",
+                                messages: [
+                                    { role: "system", content: "Return ONLY valid JSON." },
+                                    { role: "user", content: promptText }
+                                ],
+                                temperature: 0.7
+                            })
+                        });
+                        if (sRes.ok) {
+                            const sData = await sRes.json();
+                            const cText = sData?.choices?.[0]?.message?.content || "";
+                            content = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                        }
+                    } catch (sErr) {}
+
+                    // ၂။ အရန်အဆင့်: User Gemini API Key သို့ Fallback လုပ်ခြင်း
+                    if (!content) {
+                        content = await executeWithApiLogic("Social Media Kit", async (apiKey) => {
+                            const payload = {
+                                contents: [{ parts: [{ text: promptText }] }],
+                                generationConfig: { temperature: 0.7, responseMimeType: "application/json" }
+                            };
+                            const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
+                            const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            const data = await res.json();
+                            return JSON.parse(parseGeminiCandidateText(data));
+                        });
+                    }
                     setSocialContent(content);
-                } catch (e) { alert("Social Kit Error: " + e.message); }
-                finally { setIsGeneratingSocial(false); }
+                } catch (e) { 
+                    alert("Social Kit Error: " + e.message); 
+                } finally { 
+                    setIsGeneratingSocial(false); 
+                }
             };
 
             const loadStore = async () => { try { const r = await fetch('/api/products'); const d = await r.json(); setStoreProducts(d.products || []); } catch (e) {} };
@@ -1681,13 +1917,22 @@
                             tts_mode: globalSettings.tts_mode,
                             tts_chars_per_credit: globalSettings.tts_chars_per_credit,
                             ads_smart_link: globalSettings.ads_smart_link,
-                            admin_payment_accounts: globalSettings.admin_payment_accounts
+                            groq_api_keys_pool: globalSettings.groq_api_keys_pool,
+                            admin_payment_accounts: globalSettings.admin_payment_accounts,
+                            voice_clone_enabled: globalSettings.voice_clone_enabled,
+                            voice_clone_colab_urls: globalSettings.voice_clone_colab_urls,
+                            voice_clone_recap_rate_per_min: globalSettings.voice_clone_recap_rate_per_min,
+                            voice_clone_tts_mode: globalSettings.voice_clone_tts_mode,
+                            voice_clone_tts_chars_per_credit: globalSettings.voice_clone_tts_chars_per_credit,
+                            apinex_enabled: globalSettings.apinex_enabled,
+                            apinex_base_url: globalSettings.apinex_base_url,
+                            apinex_model: globalSettings.apinex_model,
+                            apinex_api_keys: globalSettings.apinex_api_keys
                         })
                     });
                     alert("ဆက်တင်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
                 } catch (e) { alert("Settings save error"); }
             };
-
             const createAdminProduct = async (e) => {
                 e.preventDefault();
                 const form = new FormData();
@@ -1883,7 +2128,14 @@
                                 </div>
                             </div>
                             <div className="flex items-center gap-4">
-                                <button onClick={() => setShowSettings(!showSettings)} className={`p-3 rounded-2xl ${neoBtnClass}`} title="API Key Settings"><SettingsIcon className={`w-6 h-6 ${showSettings ? 'text-indigo-500' : ''}`} /></button>
+                               <button 
+                                    onClick={() => setShowSettings(!showSettings)} 
+                                    className={`px-3.5 py-2.5 rounded-2xl flex items-center gap-2 font-bold text-xs transition-all ${showSettings ? 'text-indigo-500 shadow-inner' : ''} ${neoBtnClass}`} 
+                                    title="API Key Settings"
+                                >
+                                    <KeyIcon className="w-5 h-5 text-amber-500" />
+                                    <span>Keys</span>
+                                </button>
                                 {user && (
                                     <>
                                         <button onClick={openNotiModalHandler} className={`p-3 rounded-2xl relative ${neoBtnClass}`} title="အသိပေးချက်များ">
@@ -2070,7 +2322,33 @@
                                 <div className="lg:col-span-5 flex flex-col gap-6">
                                     <div className={`p-6 md:p-8 rounded-3xl ${neoClass}`}>
                                         <h2 className="text-xl font-bold mb-6 flex items-center gap-3"><Sliders className="w-6 h-6 text-indigo-500" /> လုပ်ဆောင်ချက် ဆက်တင်များ</h2>
-
+                                        {currentView === 'recap' && (
+                                            <div className="space-y-4 mb-6">
+                                                {/* Original Recap vs Own Recap (Wonder Why Style) */}
+                                                <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                                    <label className="block text-xs font-bold mb-2 opacity-80">🎬 Recap ပြုလုပ်မည့် ပုံစံရွေးချယ်ပါ</label>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setRecapMode('original')} 
+                                                            className={`py-2.5 rounded-xl font-bold text-xs transition-all ${recapMode === 'original' ? 'bg-indigo-600 text-white shadow-md' : neoBtnClass}`}
+                                                        >
+                                                            Original Recap
+                                                        </button>
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => setRecapMode('own')} 
+                                                            className={`py-2.5 rounded-xl font-bold text-xs transition-all ${recapMode === 'own' ? 'bg-indigo-600 text-white shadow-md' : neoBtnClass}`}
+                                                        >
+                                                            Storytelling Recap
+                                                        </button>
+                                                    </div>
+                                                    <p className="text-[10px] opacity-60 mt-2">
+                                                        {recapMode === 'own' ? "★ AI က ဇာတ်ကောင်လှုပ်ရှားမှုများကို ဘေးကနေ ပုံပြင်ပြောပြသလို စိတ်ဝင်စားဖွယ် ဇာတ်ကြောင်းပြန်ပါမည်။" : "★ မူရင်း စကားပြော Script ကို ဘာသာပြန်ဆို၍ Recap လုပ်ပါမည်။"}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        )}
                                         <div className="mb-6">
                                             <input type="file" accept="video/*" onChange={handleVideoUpload} ref={fileInputRef} className="hidden" />
                                             <button onClick={() => fileInputRef.current.click()} className={`w-full py-4 rounded-xl flex items-center justify-center gap-3 font-bold ${neoBtnClass}`}><Upload className="w-6 h-6 text-indigo-500" />{videoFile ? <span className="truncate max-w-[200px]">{videoFile.name}</span> : "ဗီဒီယို ဖိုင်ရွေးပါ"}</button>
@@ -2109,6 +2387,9 @@
                                                 <div className="flex gap-3 mb-3">
                                                     <button type="button" onClick={() => { setRecapEngine('edge'); setRecapVoice('my-MM-ThihaNeural'); }} className={`flex-1 py-2 rounded-xl font-bold ${recapEngine === 'edge' ? 'bg-indigo-500 text-white' : neoPressedClass}`}>Edge TTS</button>
                                                     <button type="button" onClick={() => { setRecapEngine('gemini'); setRecapVoice('Kore'); }} className={`flex-1 py-2 rounded-xl font-bold ${recapEngine === 'gemini' ? 'bg-indigo-500 text-white' : neoPressedClass}`}>Gemini TTS</button>
+                                                    {globalSettings.voice_clone_enabled === 'true' && (
+                                                        <button type="button" onClick={() => setRecapEngine('voice_clone')} className={`flex-1 py-2 rounded-xl font-bold ${recapEngine === 'voice_clone' ? 'bg-rose-500 text-white' : neoPressedClass}`}>🎙️ Voice Clone</button>
+                                                    )}
                                                 </div>
                                                 <div className="flex gap-3">
                                                     <select value={recapVoice} onChange={(e) => setRecapVoice(e.target.value)} className={`flex-1 px-5 py-4 rounded-xl outline-none font-medium ${neoPressedClass}`}>
@@ -2118,6 +2399,35 @@
                                                         {previewingAudio ? <Loader2 className="w-5 h-5 animate-spin text-indigo-500"/> : <Volume2 className="w-5 h-5 text-indigo-500"/>}
                                                     </button>
                                                 </div>
+                                                {recapEngine === 'voice_clone' && (
+                                                    <div className={`p-4 rounded-2xl space-y-3 mt-3 ${neoPressedClass}`}>
+                                                        <label className="text-xs font-bold opacity-80 block">စံနမူနာ အသံဖိုင် (Reference Voice 10-15s):</label>
+                                                        <div className="flex gap-2 items-center">
+                                                            <input type="file" accept="audio/*" onChange={e => setCloneAudioFile(e.target.files[0])} className="text-xs flex-1" />
+                                                            <button type="button" onClick={async () => {
+                                                                if (isRecording) {
+                                                                    window.mediaRecorderRef?.stop();
+                                                                    setIsRecording(false);
+                                                                } else {
+                                                                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                                                                    const mr = new MediaRecorder(stream);
+                                                                    const chunks = [];
+                                                                    mr.ondataavailable = e => chunks.push(e.data);
+                                                                    mr.onstop = () => {
+                                                                        const blob = new Blob(chunks, { type: 'audio/wav' });
+                                                                        setCloneAudioFile(new File([blob], 'mic_record.wav', { type: 'audio/wav' }));
+                                                                    };
+                                                                    mr.start();
+                                                                    window.mediaRecorderRef = mr;
+                                                                    setIsRecording(true);
+                                                                }
+                                                            }} className={`px-3 py-2 rounded-xl font-bold text-xs ${isRecording ? 'bg-red-500 text-white animate-pulse' : neoBtnClass}`}>
+                                                                {isRecording ? "Stop Recording" : "🎤 Record Mic"}
+                                                            </button>
+                                                        </div>
+                                                        {cloneAudioFile && <p className="text-[11px] text-green-500 font-bold">✓ အသုံးပြုမည့် အသံဖိုင်: {cloneAudioFile.name}</p>}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
 
@@ -2166,6 +2476,33 @@
                                                 <div><div className="text-sm font-bold flex items-center gap-2"><Film className="w-4 h-4 text-indigo-500"/> Mirror Video</div><div className="text-[11px] opacity-70">Copyright ကျော်ရန် ဘယ်ညာလှန်မည်</div></div>
                                                 <input type="checkbox" checked={mirrorVideo} onChange={(e) => setMirrorVideo(e.target.checked)} className="w-5 h-5 accent-indigo-500 cursor-pointer"/>
                                             </div>
+                                            <div className={`flex items-center justify-between p-4 rounded-2xl ${neoPressedClass}`}>
+    <div>
+        <div className="text-sm font-bold flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-indigo-500"/> Dramatic Hook Preview
+        </div>
+        <div className="text-[11px] opacity-70">ဗီဒီယိုအစတွင် Highlight ပြကွက်နှင့် အဖွင့်စကား ထည့်မည်</div>
+    </div>
+    <div className="flex items-center gap-3">
+        {enableHook && (
+            <select 
+                value={hookSeconds} 
+                onChange={(e) => setHookSeconds(Number(e.target.value))}
+                className={`text-xs p-1.5 rounded-lg outline-none font-bold ${neoClass}`}
+            >
+                <option value={3}>3s</option>
+                <option value={4}>4s</option>
+                <option value={5}>5s</option>
+            </select>
+        )}
+        <input 
+            type="checkbox" 
+            checked={enableHook} 
+            onChange={(e) => setEnableHook(e.target.checked)} 
+            className="w-5 h-5 accent-indigo-500 cursor-pointer"
+        />
+    </div>
+</div>
                                         </div>
 
                                         <div className={`flex flex-col gap-3 p-4 rounded-2xl mb-6 ${neoPressedClass}`}>
@@ -2219,7 +2556,21 @@
                                     {isProcessing && !finalVideoUrl && (
                                         <div className={`p-8 rounded-3xl flex flex-col items-center justify-center ${neoClass}`}>
                                             <div className="w-24 h-24 rounded-full border-4 border-indigo-500/20 flex items-center justify-center relative mb-6"><div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div><span className="text-xl font-black text-indigo-500">{renderProgress}%</span></div>
-                                            <h3 className="text-2xl font-bold mb-4">{progressStage}...</h3>
+                                            <h3 className="text-2xl font-bold mb-2">{progressStage}...</h3>
+
+{/* အစိမ်းရောင် Realtime Rendering Bar */}
+<div className="w-full max-w-md my-3 p-3 rounded-2xl bg-black/20 border border-emerald-500/20">
+    <div className="flex justify-between items-center text-xs font-bold text-emerald-400 mb-1.5">
+        <span>Realtime Video Rendering</span>
+        <span>{renderPercentage}%</span>
+    </div>
+    <div className="w-full h-3 bg-slate-900 rounded-full overflow-hidden p-0.5 border border-emerald-500/30">
+        <div 
+            className="bg-emerald-500 h-full rounded-full transition-all duration-75 shadow-[0_0_12px_rgba(16,185,129,0.5)]" 
+            style={{ width: `${renderPercentage}%` }}
+        ></div>
+    </div>
+</div>
                                             <div className={`w-full max-w-md h-3 rounded-full overflow-hidden p-0.5 ${neoPressedClass}`}><div className="bg-indigo-500 h-full rounded-full transition-all duration-300" style={{ width: `${renderProgress}%` }}></div></div>
                                         </div>
                                     )}
@@ -2333,9 +2684,42 @@
                                         <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎙️ Voiceover Engine & Model</label>
                                             <div className="flex gap-3 mb-3">
                                                 <button type="button" onClick={() => { setTtsEngine('edge'); setTtsVoice('my-MM-ThihaNeural'); }} className={`flex-1 py-2 rounded-xl font-bold ${ttsEngine === 'edge' ? 'bg-rose-500 text-white' : neoPressedClass}`}>Edge TTS</button>
-                                                <button type="button" onClick={() => { setTtsEngine('gemini'); setTtsVoice('Kore'); }} className={`flex-1 py-2 rounded-xl font-bold ${ttsEngine === 'gemini' ? 'bg-rose-500 text-white' : neoPressedClass}`}>Gemini TTS</button>
+                                            <button type="button" onClick={() => { setTtsEngine('gemini'); setTtsVoice('Kore'); }} className={`flex-1 py-2 rounded-xl font-bold ${ttsEngine === 'gemini' ? 'bg-rose-500 text-white' : neoPressedClass}`}>Gemini TTS</button>
+                                                {globalSettings.voice_clone_enabled === 'true' && (
+                                                    <button type="button" onClick={() => setTtsEngine('voice_clone')} className={`flex-1 py-2 rounded-xl font-bold ${ttsEngine === 'voice_clone' ? 'bg-rose-500 text-white' : neoPressedClass}`}>🎙️ Voice Clone</button>
+                                                )}
                                             </div>
-                                            <select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)} className={`w-full px-5 py-4 rounded-xl outline-none font-medium ${neoPressedClass}`}>{(ttsEngine === 'edge' ? EDGE_VOICES : GEMINI_VOICES).map(v => <option key={v.id} value={v.id}>{v.name || v.id} - ({v.gender})</option>)}</select>
+                                            {ttsEngine !== 'voice_clone' ? (
+                                                <select value={ttsVoice} onChange={(e) => setTtsVoice(e.target.value)} className={`w-full px-5 py-4 rounded-xl outline-none font-medium ${neoPressedClass}`}>{(ttsEngine === 'edge' ? EDGE_VOICES : GEMINI_VOICES).map(v => <option key={v.id} value={v.id}>{v.name || v.id} - ({v.gender})</option>)}</select>
+                                            ) : (
+                                                <div className={`p-4 rounded-2xl space-y-3 ${neoPressedClass}`}>
+                                                    <label className="text-xs font-bold opacity-80 block">စံနမူနာ အသံဖိုင် (Reference Voice 10-15s):</label>
+                                                    <div className="flex gap-2 items-center">
+                                                        <input type="file" accept="audio/*" onChange={e => setCloneAudioFile(e.target.files[0])} className="text-xs flex-1" />
+                                                        <button type="button" onClick={async () => {
+                                                            if (isRecording) {
+                                                                window.mediaRecorderRef?.stop();
+                                                                setIsRecording(false);
+                                                            } else {
+                                                                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                                                                const mr = new MediaRecorder(stream);
+                                                                const chunks = [];
+                                                                mr.ondataavailable = e => chunks.push(e.data);
+                                                                mr.onstop = () => {
+                                                                    const blob = new Blob(chunks, { type: 'audio/wav' });
+                                                                    setCloneAudioFile(new File([blob], 'mic_record.wav', { type: 'audio/wav' }));
+                                                                };
+                                                                mr.start();
+                                                                window.mediaRecorderRef = mr;
+                                                                setIsRecording(true);
+                                                            }
+                                                        }} className={`px-3 py-2 rounded-xl font-bold text-xs ${isRecording ? 'bg-red-500 text-white animate-pulse' : neoBtnClass}`}>
+                                                            {isRecording ? "Stop Recording" : "🎤 Record Mic"}
+                                                        </button>
+                                                    </div>
+                                                    {cloneAudioFile && <p className="text-[11px] text-green-500 font-bold">✓ အသုံးပြုမည့် အသံဖိုင်: {cloneAudioFile.name}</p>}
+                                                </div>
+                                            )} 
                                         </div>
                                         <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎭 လေသံ အမျိုးအစား (10 Styles)</label><div className="grid grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">{VOICE_STYLES.map(style => (<button key={style.id} onClick={() => setTtsStyleObj(style)} className={`p-3 rounded-xl text-xs font-semibold text-left flex items-center gap-2 transition-all ${ttsStyleObj.id === style.id ? 'bg-rose-500 text-white shadow-md' : neoPressedClass}`}><span className="text-lg">{style.emoji}</span><span className="truncate">{style.name}</span></button>))}</div></div>
 
@@ -2351,7 +2735,21 @@
                                             try {
                                                 const textToSpeak = ttsTextInput.trim();
 
-                                                if (ttsEngine === 'edge') {
+                                                if (ttsEngine === 'voice_clone') {
+    if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် စံနမူနာ အသံဖိုင် တင်ပေးပါ သို့မဟုတ် Mic ဖြင့် အသံသွင်းပါခင်ဗျာ");
+    const fd = new FormData();
+    fd.append("text", textToSpeak);
+    fd.append("reference_audio", cloneAudioFile);
+
+    const res = await apiFetch('/api/voice-clone/tts', { method: 'POST', body: fd });
+    if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || "Colab Voice Clone အသံထုတ်မရပါ");
+    }
+    const audioBlob = await res.blob();
+    setTtsAudioUrl(URL.createObjectURL(audioBlob));
+    if (user) fetchUserData(user.email);
+} else if (ttsEngine === 'edge') {
                                                     const res = await apiFetch('/api/tts', { 
                                                         method: 'POST', 
                                                         headers: { 'Content-Type': 'application/json' }, 
@@ -3002,7 +3400,195 @@
                                 {adminTab === 'pricing_ads' && (
                                     <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
                                         <h3 className="text-lg font-bold">Credit သတ်မှတ်ချက်၊ ငွေလက်ခံအကောင့်နှင့် ကြော်ငြာ (Ads) ဆက်တင်များ</h3>
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-4 border border-indigo-500/30`}>
+
+                                            <div className="flex justify-between items-center">
+
+                                                <div>
+
+                                                    <h4 className="text-sm font-bold text-indigo-400">⚡ High-Performance Neural Engine (Server Pool)</h4>
+
+                                                    <p className="text-[11px] opacity-70">ဖွင့်ထားပါက Script, Hook နှင့် Social Kit တို့ကို ဤ API ဖြင့် အဓိကထုတ်ပေးပြီး Error တက်မှ (သို့မဟုတ် ပိတ်ထားပါက) User Key သို့ ကူးပါမည်။</p>
+
+                                                </div>
+
+                                                <input 
+
+                                                    type="checkbox" 
+
+                                                    checked={globalSettings.apinex_enabled === 'true'} 
+
+                                                    onChange={e => setGlobalSettings({ ...globalSettings, apinex_enabled: e.target.checked ? 'true' : 'false' })} 
+
+                                                    className="w-5 h-5 accent-indigo-500 cursor-pointer"
+
+                                                />
+
+                                            </div>
+
+
+
+                                            {globalSettings.apinex_enabled === 'true' && (
+
+                                                <div className="space-y-3 pt-2 border-t border-current/10">
+
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                                                        <div>
+
+                                                            <label className="text-xs font-bold block mb-1">API Base URL / Endpoint:</label>
+
+                                                            <input 
+
+                                                                type="text" 
+
+                                                                value={globalSettings.apinex_base_url || 'https://apinex.bond/v1/chat/completions'} 
+
+                                                                onChange={e => setGlobalSettings({ ...globalSettings, apinex_base_url: e.target.value })} 
+
+                                                                className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
+
+                                                            />
+
+                                                        </div>
+
+                                                        <div>
+
+                                                            <label className="text-xs font-bold block mb-1">Model Name:</label>
+
+                                                            <input 
+
+                                                                type="text" 
+
+                                                                value={globalSettings.apinex_model || 'gpt-4o-mini'} 
+
+                                                                onChange={e => setGlobalSettings({ ...globalSettings, apinex_model: e.target.value })} 
+
+                                                                className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
+
+                                                            />
+
+                                                        </div>
+
+                                                    </div>
+
+
+
+                                                    <div>
+
+                                                        <label className="text-xs font-bold block mb-1 text-emerald-400">API Key Pool (Unlimited Keys - တစ်ကြောင်းလျှင် တစ်ခုစီ ထည့်ပါ):</label>
+
+                                                        <textarea 
+
+                                                            rows="4" 
+
+                                                            placeholder="sk-xxx-1&#10;sk-xxx-2&#10;sk-xxx-3"
+
+                                                            value={(() => {
+
+                                                                try { return JSON.parse(globalSettings.apinex_api_keys || '[]').join('\n'); }
+
+                                                                catch(e) { return ''; }
+
+                                                            })()} 
+
+                                                            onChange={e => {
+
+                                                                const keys = e.target.value.split('\n').map(x => x.trim()).filter(Boolean);
+
+                                                                setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify(keys) });
+
+                                                            }} 
+
+                                                            className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`}
+
+                                                        />
+
+                                                    </div>
+
+                                                </div>
+
+                                            )}
+
+                                        </div> 
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-3 border border-indigo-500/30`}>
+    <h4 className="text-sm font-bold text-indigo-400">🛡️ Backend Groq Whisper API Key Pool (Zero-Leakage)</h4>
+    <p className="text-[11px] opacity-70">အသံမှ စာသားဖတ်ယူရန် Groq API Key များကို ဆာဗာတွင် လုံခြုံစွာ သိမ်းဆည်းထားပြီး အလှည့်ကျ သုံးပေးပါမည်။</p>
+    <div>
+        <label className="text-xs font-bold block mb-1 text-amber-400">Groq Whisper API Key Pool (တစ်ကြောင်းလျှင် တစ်ခုစီ ထည့်ပါ):</label>
+        <textarea 
+            rows="3" 
+            placeholder="gsk_1...&#10;gsk_2..."
+            value={(() => {
+                try { return JSON.parse(globalSettings.groq_api_keys_pool || '[]').join('\n'); }
+                catch(e) { return ''; }
+            })()} 
+            onChange={e => {
+                const keys = e.target.value.split('\n').map(x => x.trim()).filter(Boolean);
+                setGlobalSettings({ ...globalSettings, groq_api_keys_pool: JSON.stringify(keys) });
+            }} 
+            className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`}
+        />
+    </div>
+</div>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-4`}>
+                                                <div className="flex justify-between items-center">
+                                                    <div>
+                                                        <h4 className="text-sm font-bold text-rose-500">🎙️ Custom Voice Clone Feature Control</h4>
+                                                        <p className="text-[11px] opacity-70">Google Colab (ngrok) API များဖြင့် ချိတ်ဆက်အသုံးပြုသည့်စနစ်</p>
+                                                    </div>
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={globalSettings.voice_clone_enabled === 'true'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, voice_clone_enabled: e.target.checked ? 'true' : 'false' })} 
+                                                        className="w-5 h-5 accent-rose-500 cursor-pointer"
+                                                    />
+                                                </div>
+
+                                                {globalSettings.voice_clone_enabled === 'true' && (
+                                                    <div className="space-y-3 pt-2 border-t border-current/10">
+                                                        <div>
+                                                            <div className="flex justify-between items-center mb-1">
+                                                                <label className="text-xs font-bold opacity-80">Colab API URLs:</label>
+                                                                <button type="button" onClick={() => {
+                                                                    const cur = JSON.parse(globalSettings.voice_clone_colab_urls || '[]');
+                                                                    setGlobalSettings({ ...globalSettings, voice_clone_colab_urls: JSON.stringify([...cur, '']) });
+                                                                }} className="px-2.5 py-1 bg-rose-500 text-white rounded-lg text-[10px] font-bold">+ Add Colab URL</button>
+                                                            </div>
+                                                            {(() => {
+                                                                const urls = JSON.parse(globalSettings.voice_clone_colab_urls || '[""]');
+                                                                return urls.map((u, uIdx) => (
+                                                                    <div key={uIdx} className="flex gap-2 mb-2">
+                                                                        <input type="url" placeholder="https://xxxx.ngrok-free.app" value={u} onChange={e => {
+                                                                            const copy = [...urls];
+                                                                            copy[uIdx] = e.target.value.trim();
+                                                                            setGlobalSettings({ ...globalSettings, voice_clone_colab_urls: JSON.stringify(copy) });
+                                                                        }} className={`flex-1 p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} />
+                                                                        {urls.length > 1 && (
+                                                                            <button type="button" onClick={() => {
+                                                                                const copy = urls.filter((_, i) => i !== uIdx);
+                                                                                setGlobalSettings({ ...globalSettings, voice_clone_colab_urls: JSON.stringify(copy) });
+                                                                            }} className="p-2 text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                                                        )}
+                                                                    </div>
+                                                                ));
+                                                            })()}
+                                                        </div>
+
+                                                        <div className="grid grid-cols-2 gap-3 text-xs">
+                                                            <div>
+                                                                <label className="font-bold opacity-70 block mb-1">Recap ဗီဒီယို ၁ မိနစ်စာ Credit:</label>
+                                                                <input type="number" value={globalSettings.voice_clone_recap_rate_per_min || '80'} onChange={e => setGlobalSettings({ ...globalSettings, voice_clone_recap_rate_per_min: e.target.value })} className={`w-full p-2.5 rounded-xl outline-none ${neoClass}`} />
+                                                            </div>
+                                                            <div>
+                                                                <label className="font-bold opacity-70 block mb-1">TTS စာလုံးရေ (၁ Credit စာလုံးရေ):</label>
+                                                                <input type="number" value={globalSettings.voice_clone_tts_chars_per_credit || '50'} onChange={e => setGlobalSettings({ ...globalSettings, voice_clone_tts_chars_per_credit: e.target.value })} className={`w-full p-2.5 rounded-xl outline-none ${neoClass}`} />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>    
                                             <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-2`}>
                                                 <label className="text-xs font-bold opacity-80 block">📢 စာတန်းပြေး ကြေညာချက် (Announcement Text):</label>
                                                 <textarea 

@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Any, List
 from pathlib import Path
 from contextlib import asynccontextmanager
+from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, Form, Response, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -54,12 +55,9 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "778leomord@gmail.com").strip().lower()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003802670362").strip()
 
-DEFAULT_GROQ_KEYS = [
-    k.strip() for k in os.getenv(
-        "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", 
-        "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"
-    ).split(",") if k.strip()
-]
+# GROQ_API_KEY (S မပါ) သို့မဟုတ် GROQ_API_KEYS (S ပါ) နှစ်ခုစလုံးကို ဖတ်နိုင်အောင် ပြင်ဆင်ထားခြင်း
+raw_groq_env = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEYS") or ""
+DEFAULT_GROQ_KEYS = [k.strip() for k in raw_groq_env.split(",") if k.strip()]
 
 SERVER_GEMINI_KEYS = [
     k.strip() for k in os.getenv("GEMINI_API_KEYS", "").split(",") if k.strip()
@@ -97,7 +95,18 @@ def init_db():
         "admin_payment_accounts": json.dumps([
             {"provider": "KBZPay", "number": "09421619437", "holder": "Aung Win Thu"},
             {"provider": "WavePay", "number": "09421619437", "holder": "Aung Win Thu"}
-        ])
+        ]),
+        "voice_clone_enabled": "false",
+        "voice_clone_colab_urls": json.dumps(["https://your-ngrok-url.ngrok-free.app"]),
+        "voice_clone_recap_rate_per_min": "80",
+        "voice_clone_tts_mode": "credits",
+        "voice_clone_tts_chars_per_credit": "50",
+        "codecraft_api_keys": json.dumps([]),
+        "groq_api_keys_pool": json.dumps([]),
+        "apinex_enabled": "true",
+        "apinex_base_url": "https://apinex.bond/v1",
+        "apinex_model": "free/gemini-3.8-flash",
+        "apinex_api_keys": json.dumps([]),
     }
     for key, value in defaults.items(): 
         settings_col.update_one({"key": key}, {"$setOnInsert": {"value": value}}, upsert=True)
@@ -426,11 +435,17 @@ async def mark_notifications_read(request: Request):
 
 # --- VIDEO COST CALCULATION & BILLING ---
 
-def calculate_video_cost(email: str, dur_sec: float) -> tuple[int, bool]:
+def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = False) -> tuple[int, bool]:
     dur_mins = max(1, math.ceil(dur_sec / 60.0))
 
     free_setting = settings_col.find_one({"key": "free_minutes_per_day"})
     free_mins = int(free_setting.get("value", "0")) if free_setting else 0
+
+    if is_voice_clone:
+        rate_setting = settings_col.find_one({"key": "voice_clone_recap_rate_per_min"})
+        base_rate = int(rate_setting.get("value", "80")) if rate_setting else 80
+        cost = dur_mins * base_rate
+        return cost, False
 
     rate_setting = settings_col.find_one({"key": "deduction_rate_per_min"})
     base_rate = int(rate_setting.get("value", "50")) if rate_setting else 50
@@ -455,7 +470,8 @@ def calculate_video_cost(email: str, dur_sec: float) -> tuple[int, bool]:
 async def pre_deduct_video_cost(request: Request, data: dict):
     email = get_request_email(request)
     dur_sec = float(data.get("duration", 60))
-    cost, is_free = calculate_video_cost(email, dur_sec)
+    is_clone = bool(data.get("is_voice_clone", False))
+    cost, is_free = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone)
 
     user = users_col.find_one({"email": email})
     if email != ADMIN_EMAIL and not is_free:
@@ -1172,6 +1188,60 @@ async def send_message(
 
 # --- AI & TTS PROXY (WITH STRICT DEDUCTION & USAGE TRACKING) ---
 
+@app.post("/api/voice-clone/tts")
+async def voice_clone_proxy(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    text: str = Form(...),
+    reference_audio: UploadFile = File(...)
+):
+    email = get_request_email(request)
+    enabled_setting = settings_col.find_one({"key": "voice_clone_enabled"})
+    if not enabled_setting or enabled_setting.get("value") != "true":
+        raise HTTPException(status_code=403, detail="Voice Clone စနစ်အား Admin မှ ခေတ္တပိတ်ထားပါသည်")
+
+    urls_setting = settings_col.find_one({"key": "voice_clone_colab_urls"})
+    colab_urls = json.loads(urls_setting.get("value", "[]")) if urls_setting else []
+    if not colab_urls:
+        raise HTTPException(status_code=503, detail="ချိတ်ဆက်ထားသော Colab Server မရှိသေးပါ")
+
+    tts_mode_setting = settings_col.find_one({"key": "voice_clone_tts_mode"})
+    tts_mode = tts_mode_setting.get("value", "credits") if tts_mode_setting else "credits"
+    cost = 0
+    if tts_mode == "credits" and email != ADMIN_EMAIL:
+        rate_setting = settings_col.find_one({"key": "voice_clone_tts_chars_per_credit"})
+        chars_per_credit = int(rate_setting.get("value", "50")) if rate_setting else 50
+        cost = max(1, math.ceil(len(text) / chars_per_credit))
+        user = users_col.find_one({"email": email})
+        if not user or user.get("credits", 0) < cost:
+            raise HTTPException(status_code=402, detail=f"Credit မလုံလောက်ပါ။ Voice Clone အတွက် {cost} Credits လိုအပ်ပါသည်")
+        users_col.update_one({"email": email}, {"$inc": {"credits": -cost}})
+
+    audio_bytes = await reference_audio.read()
+    last_error = ""
+
+    async with httpx.AsyncClient(timeout=45.0) as client_http:
+        for base_url in colab_urls:
+            if not base_url.strip(): continue
+            target_url = base_url.rstrip("/") + "/clone"
+            try:
+                files = {"audio": (reference_audio.filename or "ref.wav", audio_bytes, "audio/wav")}
+                res = await client_http.post(target_url, data={"text": text}, files=files)
+                if res.status_code == 200:
+                    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                    tmp_file.write(res.content)
+                    tmp_file.close()
+                    background_tasks.add_task(os.remove, tmp_file.name)
+                    return FileResponse(tmp_file.name, media_type="audio/wav")
+                last_error = f"Colab responded status: {res.status_code}"
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+    if cost > 0 and email != ADMIN_EMAIL:
+        users_col.update_one({"email": email}, {"$inc": {"credits": cost}})
+    raise HTTPException(status_code=502, detail=f"Colab Server အားလုံး ပိတ်နေပါသည် သို့မဟုတ် လင့်ခ်ပျက်နေပါသည်: {last_error}")
+
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     try:
@@ -1218,25 +1288,108 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     except Exception as e: 
         return JSONResponse(status_code=500, content={"error": f"Edge TTS Error: {str(e)}"})
 
+# --- NEURAL COMPUTE ENGINE (MASKED PROXY) ---
+
+apinex_key_idx = 0
+groq_pool_idx = 0
+
+def get_apinex_pool_keys() -> list[str]:
+    doc = settings_col.find_one({"key": "apinex_api_keys"})
+    if doc and doc.get("value"):
+        try: return [k.strip() for k in json.loads(doc["value"]) if k.strip()]
+        except Exception: return []
+    return []
+
+def get_groq_pool_keys() -> list[str]:
+    doc = settings_col.find_one({"key": "groq_api_keys_pool"})
+    if doc and doc.get("value"):
+        try: return [k.strip() for k in json.loads(doc["value"]) if k.strip()]
+        except Exception: return []
+    return []
+
+def get_next_apinex_key() -> str:
+    global apinex_key_idx
+    keys = get_apinex_pool_keys()
+    if not keys: return ""
+    k = keys[apinex_key_idx % len(keys)]
+    apinex_key_idx += 1
+    return k
+
+# Browser Console မှ မသိစေရန် Masked Endpoint ဖြင့် လွှဲပေးခြင်း
+@app.post("/api/engine/neural-compute")
+async def proxy_neural_compute(request: Request):
+    get_request_email(request)
+    
+    enabled_doc = settings_col.find_one({"key": "apinex_enabled"})
+    is_enabled = enabled_doc.get("value", "true").lower() == "true" if enabled_doc else True
+    
+    if not is_enabled:
+        raise HTTPException(status_code=503, detail="Neural Engine is disabled by Administrator")
+
+    keys = get_apinex_pool_keys()
+    if not keys:
+        raise HTTPException(status_code=503, detail="No pool keys available")
+
+    body = await request.json()
+    url_doc = settings_col.find_one({"key": "apinex_base_url"})
+    raw_endpoint = url_doc.get("value", "").strip() if url_doc else ""
+    
+    if not raw_endpoint:
+        base_endpoint = "https://apinex.bond/v1/chat/completions"
+    elif raw_endpoint.endswith("/chat/completions"):
+        base_endpoint = raw_endpoint
+    else:
+        base_endpoint = raw_endpoint.rstrip("/") + "/chat/completions"
+
+    last_err = ""
+    async with httpx.AsyncClient(timeout=60.0) as client_http:
+        for _ in range(len(keys)):
+            current_key = get_next_apinex_key()
+            try:
+                headers = {
+                    "Authorization": f"Bearer {current_key}",
+                    "Content-Type": "application/json"
+                }
+                res = await client_http.post(base_endpoint, json=body, headers=headers)
+                if res.status_code == 200:
+                    return Response(content=res.content, status_code=200, media_type="application/json")
+                else:
+                    last_err = f"Endpoint responded {res.status_code}: {res.text}"
+            except Exception as e:
+                last_err = str(e)
+                continue
+
+    raise HTTPException(status_code=502, detail=f"Neural Engine Connection Error: {last_err}")
+    
+# --- GEMINI PROXY (URL-ENCODING DECODE FIX) ---
+
 @app.api_route("/api/gemini/{path:path}", methods=["GET", "POST"])
 async def proxy_gemini(path: str, request: Request):
     query_params = dict(request.query_params)
     client_key = query_params.get("key", "").strip()
     keys_to_try = []
-    if client_key: keys_to_try.append(client_key)
+    
+    # cc_ ဖြင့်စသော CodeCraft Key များ ရောပါလာပါက ဖယ်ထုတ်ခြင်း
+    if client_key and not client_key.startswith("cc_"): 
+        keys_to_try.append(client_key)
+        
     for _ in range(len(SERVER_GEMINI_KEYS)):
         k = get_server_gemini_key()
-        if k and k not in keys_to_try: keys_to_try.append(k)
+        if k and k not in keys_to_try and not k.startswith("cc_"): 
+            keys_to_try.append(k)
 
     body_bytes = await request.body()
     last_res = None
+
+    # URL ထဲရှိ %3A ကို : သို့ သေချာ decode ပြုလုပ်ခြင်း
+    clean_path = unquote(unquote(path)).replace("%3A", ":")
 
     async with httpx.AsyncClient(timeout=120.0) as client_http:
         for key in (keys_to_try or [""]):
             try:
                 q = dict(query_params)
                 if key: q["key"] = key
-                url = f"https://generativelanguage.googleapis.com/{path}"
+                url = f"https://generativelanguage.googleapis.com/{clean_path}"
                 res = await client_http.request(request.method, url, params=q, headers={"Content-Type": "application/json"}, content=body_bytes)
                 last_res = res
                 if res.status_code == 200:
@@ -1247,6 +1400,8 @@ async def proxy_gemini(path: str, request: Request):
     if last_res is not None:
         return Response(content=last_res.content, status_code=last_res.status_code, media_type="application/json")
     return JSONResponse(status_code=500, content={"error": "Server Gemini API Error"})
+
+# --- GROQ PROXY ---
 
 @app.post("/api/groq/transcriptions")
 async def proxy_groq(request: Request):
@@ -1266,7 +1421,11 @@ async def proxy_groq(request: Request):
         for k in DEFAULT_GROQ_KEYS:
             if k and k not in keys_to_try: 
                 keys_to_try.append(k)
-
+        # Admin Panel မှ ထည့်ထားသော Groq Pool Keys များကို အလှည့်ကျ စာရင်းသွင်းပေးခြင်း
+        admin_groq_pool = get_groq_pool_keys()
+        for k in admin_groq_pool:
+            if k and k not in keys_to_try:
+                keys_to_try.append(k)
         if not keys_to_try:
             return JSONResponse(status_code=400, content={"error": "Groq API Key ထည့်သွင်းထားခြင်း မရှိပါ"})
 
