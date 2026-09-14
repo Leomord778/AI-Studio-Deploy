@@ -612,9 +612,20 @@
                     setIsProcessing(false);
                     setProgressStage('');
                     setRenderProgress(0);
+                    setRenderPercentage(0);
                     setErrorMsg('');
                     setSocialContent(null);
                     setLastRenderedMeta(null);
+                    setActiveFilter(FILTERS[0].css);
+                    setManualAdjust({ b: 100, c: 100, s: 100 });
+                    setFreezeInterval(4);
+                    setZoomDuration(2);
+                    setZoomIntensity(1.25);
+                    setRecapMode('original');
+                    setEnableHook(true);
+                    setHookSeconds(3);
+                    setTtsTextInput('');
+                    setTtsAudioUrl('');
                     extractionDataRef.current = null;
                     translatedBlocksRef.current = null;
                     ttsSegmentsRef.current = null;
@@ -936,9 +947,10 @@
                 }
             };
             // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
-            const performTranslation = async (originalSrt) => {
-                setProgressStage(recapMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
-                addSysLog(`AI ဖြင့် ${recapMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ တွက်ချက်နေပါသည်...`);
+            const performTranslation = async (originalSrt, modeOverride = null) => {
+                const activeMode = modeOverride || recapMode;
+                setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
+                addSysLog(`AI ဖြင့် ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ တွက်ချက်နေပါသည်...`);
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
                 let allTranslated = [];
 
@@ -968,7 +980,7 @@ Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exact
                 for (let i = 0; i < batches.length; i++) {
                     const batch = batches[i];
                     let translatedBatch = null;
-                    const sysPrompt = recapMode === 'own' ? ownRecapPrompt : originalPrompt;
+                    const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
 
                     // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် Script ရေးသားခြင်း
                     try {
@@ -981,7 +993,7 @@ Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exact
                                     { role: "system", content: sysPrompt },
                                     { role: "user", content: JSON.stringify(batch) }
                                 ],
-                                temperature: recapMode === 'own' ? 0.6 : 0.2
+                                temperature: activeMode === 'own' ? 0.6 : 0.2
                             })
                         });
                         if (sRes.ok) {
@@ -1000,7 +1012,7 @@ Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exact
                             const payload = {
                                 contents: [{ parts: [{ text: JSON.stringify(batch) }] }],
                                 systemInstruction: { parts: [{ text: sysPrompt }] },
-                                generationConfig: { temperature: recapMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
+                                generationConfig: { temperature: activeMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
                             };
                             const url = apiKey 
                                 ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
@@ -1602,7 +1614,10 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                     setFinalVideoUrl('');
 
                     if (!extractionDataRef.current) extractionDataRef.current = await performTranscription();
-                    if (!translatedBlocksRef.current) translatedBlocksRef.current = await performTranslation(extractionDataRef.current);
+                    if (!translatedBlocksRef.current) {
+                        const targetMode = currentView === 'subtitle' ? 'original' : recapMode;
+                        translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode);
+                    }
 
                     let renderTimelineData = null;
                     if (currentView === 'recap') {
@@ -2862,7 +2877,7 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                                 <button onClick={() => { 
                                                     setSelectedProduct(p); 
                                                     setSelectedVariant(p.variants[0]); 
-                                                    setCheckoutForm(prev => ({ ...prev, email: user?.email || '', proof: null }));
+                                                    setCheckoutForm(prev => ({ ...prev, email: '', proof: null }));
                                                     setStoreCheckoutOpen(true); 
                                                 }} className="w-full py-3 bg-amber-500 text-black font-bold rounded-xl shadow-md">ဝယ်ယူမည်</button>
                                             </div>
@@ -2959,29 +2974,30 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                             <div className={`p-6 rounded-3xl min-h-[520px] flex flex-col justify-between ${neoClass}`}>
                                 <h2 className="text-xl font-bold mb-4 flex items-center gap-2 text-fuchsia-500"><MessageIcon className="w-6 h-6"/> Contact Admin Support</h2>
                                 <div ref={chatScrollRef} className="flex-1 overflow-y-auto space-y-3 mb-4 p-4 rounded-2xl bg-black/10 max-h-[380px]">
-                                    {Array.isArray(messages) && messages.map(m => (
-                                        <div key={m.id || Math.random()} className={`p-4 rounded-2xl max-w-md ${m?.sender_email === user?.email ? 'ml-auto bg-indigo-600 text-white' : 'mr-auto bg-slate-700 text-white'}`}>
-                                            <p className="text-[10px] opacity-70 mb-1">{m?.sender_email || "System"}</p>
-                                            {m?.body && <p className="text-sm mb-2 whitespace-pre-wrap">{m.body}</p>}
-                                            {m?.attachment && (
-                                                <div className="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/20">
-                                                    {m.attachment.type?.startsWith('video/') || m.attachment.url?.match(/\.(mp4|webm|mov|mkv)$/i) ? (
-                                                        <video src={m.attachment.url} controls playsInline className="w-full max-h-60 rounded-xl bg-black object-contain" />
-                                                    ) : 
-                                                    m.attachment.type?.startsWith('image/') || m.attachment.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
-                                                        <img src={m.attachment.url} alt={m.attachment.name || "Attachment"} className="w-full max-h-60 rounded-xl object-contain cursor-pointer hover:opacity-95" onClick={() => window.open(m.attachment.url, '_blank')} />
-                                                    ) : 
-                                                    m.attachment.type?.startsWith('audio/') || m.attachment.url?.match(/\.(mp3|wav|ogg|m4a)$/i) ? (
-                                                        <audio src={m.attachment.url} controls className="w-full mt-1" />
-                                                    ) : (
-                                                        <a href={m.attachment.url} target="_blank" rel="noopener noreferrer" className="p-2 text-indigo-200 underline text-xs block truncate">
-                                                            📁 {m.attachment.name || "ဖိုင်ဒေါင်းလုဒ်ဆွဲရန်"}
-                                                        </a>
+                                    {Array.isArray(messages) && messages.map(m => {
+                                        const isMe = m?.sender_email?.toLowerCase() === user?.email?.toLowerCase();
+                                        return (
+                                            <div key={m.id || Math.random()} className={`w-full flex ${isMe ? 'justify-end' : 'justify-start'} my-2`}>
+                                                <div className={`p-4 rounded-2xl max-w-[85%] sm:max-w-md shadow-md ${isMe ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-700 text-white rounded-bl-none'}`}>
+                                                    <p className="text-[10px] opacity-70 mb-1 font-mono">{isMe ? 'You' : (m?.sender_email || "Admin Support")}</p>
+                                                    {m?.body && <p className="text-sm mb-2 whitespace-pre-wrap leading-relaxed">{m.body}</p>}
+                                                    {m?.attachment && (
+                                                        <div className="mt-2 rounded-xl overflow-hidden border border-white/10 bg-black/20">
+                                                            {m.attachment.type?.startsWith('video/') || m.attachment.url?.match(/\.(mp4|webm|mov|mkv)$/i) ? (
+                                                                <video src={m.attachment.url} controls playsInline className="w-full max-h-60 rounded-xl bg-black object-contain" />
+                                                            ) : m.attachment.type?.startsWith('image/') || m.attachment.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? (
+                                                                <img src={m.attachment.url} alt={m.attachment.name || "Attachment"} className="w-full max-h-60 rounded-xl object-contain cursor-pointer" onClick={() => window.open(m.attachment.url, '_blank')} />
+                                                            ) : (
+                                                                <a href={m.attachment.url} target="_blank" rel="noopener noreferrer" className="p-2 text-indigo-200 underline text-xs block truncate">
+                                                                    📁 {m.attachment.name || "File Download"}
+                                                                </a>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
-                                            )}
-                                        </div>
-                                    ))}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                                 <div className="flex gap-2">
                                     <input type="file" ref={chatAttachmentRef} onChange={e=>setMessageAttachment(e.target.files[0])} className="hidden" />

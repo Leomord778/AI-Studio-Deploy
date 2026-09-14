@@ -310,7 +310,10 @@ async def serve_media(media_path: str):
     path = (MEDIA_ROOT / media_path).resolve()
     if not path.exists() or not path.is_file(): 
         raise HTTPException(status_code=404, detail="Media ဖိုင် ရှာမတွေ့ပါ။")
-    return FileResponse(path)
+    response = FileResponse(path)
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 # --- AUTH & USER PROFILE ---
 
