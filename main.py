@@ -1116,7 +1116,54 @@ async def create_product(
     
     res = products_col.insert_one(doc)
     return {"message": "Product created successfully", "id": str(res.inserted_id)}
+@app.put("/api/admin/products/{product_id}")
+async def update_product(
+    request: Request,
+    product_id: str,
+    name: str = Form(...),
+    category: str = Form(...),
+    description: str = Form(""),
+    variants_json: str = Form(...),
+    payment_accounts_json: str = Form("[]"),
+    images: List[UploadFile] = File(None)
+):
+    require_admin(request)
+    try: variants = json.loads(variants_json)
+    except Exception: variants = []
 
+    try: payment_accounts = json.loads(payment_accounts_json)
+    except Exception: payment_accounts = []
+
+    for v in variants:
+        v["cost_price_mmk"] = float(v.get("cost_price_mmk", 0))
+        v["price_mmk"] = float(v.get("price_mmk", 0))
+        v["price_credits"] = int(v.get("price_credits", 0))
+        v["requires_game_id"] = bool(v.get("requires_game_id", False))
+        v["requires_server_id"] = bool(v.get("requires_server_id", False))
+
+    update_doc = {
+        "name": name.strip(),
+        "category": category.strip(),
+        "description": description.strip(),
+        "variants": variants,
+        "payment_accounts": payment_accounts
+    }
+
+    if images and len(images) > 0 and images[0].filename:
+        image_urls = []
+        for img in images:
+            if img.filename:
+                file_ext = os.path.splitext(img.filename)[1]
+                saved_filename = f"prod_{uuid.uuid4().hex[:10]}{file_ext}"
+                dest_path = os.path.join("media", saved_filename)
+                with open(dest_path, "wb") as f:
+                    shutil.copyfileobj(img.file, f)
+                image_urls.append(f"/media/{saved_filename}")
+        update_doc["image_url"] = image_urls[0]
+        update_doc["image_urls"] = image_urls
+
+    products_col.update_one({"_id": ObjectId(product_id)}, {"$set": update_doc})
+    return {"status": "success", "message": "Product updated successfully"}
 @app.delete("/api/admin/products/{product_id}")
 async def admin_delete_product(request: Request, product_id: str):
     require_admin(request)

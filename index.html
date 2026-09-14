@@ -577,15 +577,23 @@
             const [deliveryFile, setDeliveryFile] = useState(null);
             const [manualCredit, setManualCredit] = useState({ email: '', amount: 0, valid_days: 30 });
             const [adminProducts, setAdminProducts] = useState([]);
+            const [editingProductId, setEditingProductId] = useState(null);
             const [productForm, setProductForm] = useState({ 
-                name:'', 
-                category:'Game Topup', 
-                description:'', 
-                requires_game_id: true,
-                requires_server_id: false,
+                name: '', 
+                category: 'Game Topup', 
+                description: '', 
                 images: [], 
-                payment_accounts:[{provider:'KBZPay', number:'', holder:''}], 
-                variants:[{name:'Standard', price_mmk:5000, price_credits:20, cost_price_mmk:3500}] 
+                payment_accounts: [{ provider: 'KBZPay', number: '09421619437', holder: 'Aung Win Thu' }], 
+                variants: [
+                    { 
+                        name: 'Standard Package', 
+                        price_mmk: 5000, 
+                        cost_price_mmk: 3500, 
+                        price_credits: 20, 
+                        requires_game_id: true, 
+                        requires_server_id: false 
+                    }
+                ] 
             });
             const [adminTab, setAdminTab] = useState('overview');
 
@@ -1954,11 +1962,7 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                 form.append('name', productForm.name); 
                 form.append('category', productForm.category); 
                 form.append('description', productForm.description);
-                form.append('variants_json', JSON.stringify(productForm.variants.map(v => ({
-                    ...v,
-                    requires_game_id: productForm.requires_game_id,
-                    requires_server_id: productForm.requires_server_id
-                })))); 
+                form.append('variants_json', JSON.stringify(productForm.variants)); 
                 form.append('payment_accounts_json', JSON.stringify(productForm.payment_accounts));
                 
                 if (productForm.images && productForm.images.length > 0) {
@@ -1966,18 +1970,29 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                 }
 
                 try {
-                    const r = await apiFetch('/api/admin/products', { method:'POST', body: form });
-                    if (!r.ok) throw new Error("Product မဖန်တီးနိုင်ပါ");
-                    alert("Product ဖန်တီးပြီးပါပြီ။");
+                    const method = editingProductId ? 'PUT' : 'POST';
+                    const url = editingProductId ? `/api/admin/products/${editingProductId}` : '/api/admin/products';
+                    const r = await apiFetch(url, { method, body: form });
+                    if (!r.ok) throw new Error("ဆောင်ရွက်မှု မအောင်မြင်ပါ");
+                    alert(editingProductId ? "Product အား အောင်မြင်စွာ ပြင်ဆင်ပြီးပါပြီ။" : "Product အသစ် ဖန်တီးပြီးပါပြီ။");
+                    
+                    setEditingProductId(null);
                     setProductForm({ 
-                        name:'', 
-                        category:'Game Topup', 
-                        description:'', 
-                        requires_game_id: true,
-                        requires_server_id: false,
+                        name: '', 
+                        category: 'Game Topup', 
+                        description: '', 
                         images: [], 
-                        payment_accounts:[{provider:'KBZPay', number:'', holder:''}], 
-                        variants:[{name:'Standard', price_mmk:5000, price_credits:20, cost_price_mmk:3500}] 
+                        payment_accounts: [{ provider: 'KBZPay', number: '09421619437', holder: 'Aung Win Thu' }], 
+                        variants: [
+                            { 
+                                name: 'Standard Package', 
+                                price_mmk: 5000, 
+                                cost_price_mmk: 3500, 
+                                price_credits: 20, 
+                                requires_game_id: true, 
+                                requires_server_id: false 
+                            }
+                        ] 
                     });
                     loadAdminData();
                 } catch (err) { alert(err.message); }
@@ -2899,6 +2914,23 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                     </div>
 
                                     <form onSubmit={submitStoreOrder} className="space-y-4 text-xs">
+                                        {/* 👉 Package ခွဲများ ရွေးချယ်ရန် အကွက် 👈 */}
+                                        <div>
+                                            <label className="font-bold opacity-80 block mb-1.5 text-amber-400">ဝယ်ယူမည့် Package / အမျိုးအစား ရွေးပါ:</label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                {selectedProduct.variants?.map((v, i) => (
+                                                    <button
+                                                        type="button"
+                                                        key={i}
+                                                        onClick={() => setSelectedVariant(v)}
+                                                        className={`p-2.5 rounded-xl border text-left font-bold transition-all ${selectedVariant.name === v.name ? 'border-amber-500 bg-amber-500/20 text-white shadow' : 'border-current/10 opacity-70'}`}
+                                                    >
+                                                        <div className="truncate text-xs">{v.name}</div>
+                                                        <div className="text-yellow-400 font-mono text-[11px] mt-0.5">{v.price_mmk?.toLocaleString()} MMK</div>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
                                         <div>
                                             <label className="font-bold opacity-80 block mb-1">User Email:</label>
                                             <input type="email" value={checkoutForm.email} onChange={e=>setCheckoutForm({...checkoutForm, email: e.target.value})} required className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} />
@@ -3181,171 +3213,166 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                 {adminTab === 'products' && (
                                     <div className="space-y-6">
                                         <div className={`p-6 rounded-3xl ${neoClass}`}>
-                                            <h3 className="text-lg font-bold mb-4">Product အသစ်ထည့်သွင်းရန်</h3>
+                                            <div className="flex justify-between items-center mb-4">
+                                                <h3 className="text-lg font-bold text-amber-500">
+                                                    {editingProductId ? "✏️ Product ပြန်လည်ပြင်ဆင်ရန်" : "➕ Product အသစ်ထည့်သွင်းရန်"}
+                                                </h3>
+                                                {editingProductId && (
+                                                    <button 
+                                                        type="button" 
+                                                        onClick={() => {
+                                                            setEditingProductId(null);
+                                                            setProductForm({ name:'', category:'Game Topup', description:'', images: [], payment_accounts:[{provider:'KBZPay', number:'09421619437', holder:'Aung Win Thu'}], variants:[{name:'Standard Package', price_mmk:5000, price_credits:20, cost_price_mmk:3500, requires_game_id: true, requires_server_id: false}] });
+                                                        }} 
+                                                        className="px-3 py-1 bg-gray-500 text-white rounded-lg text-xs"
+                                                    >
+                                                        Cancel Edit
+                                                    </button>
+                                                )}
+                                            </div>
+
                                             <form onSubmit={createAdminProduct} className="space-y-4">
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    <input type="text" placeholder="Product Name" value={productForm.name} onChange={e=>setProductForm({...productForm, name:e.target.value})} required className={`p-3 rounded-xl outline-none ${neoPressedClass}`} />
-                                                    <select value={productForm.category} onChange={e=>setProductForm({...productForm, category:e.target.value})} className={`p-3 rounded-xl outline-none ${neoPressedClass}`}>
-                                                        <option value="Game Topup">Game Topup</option>
-                                                        <option value="AI Service">AI Service</option>
-                                                        <option value="Software">Software</option>
-                                                        <option value="Other">Other</option>
-                                                    </select>
-                                                </div>
-
-                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                     <div>
-                                                        <label className="text-xs font-bold opacity-70 block mb-1">ရောင်းဈေး (Selling Price MMK):</label>
-                                                        <input 
-                                                            type="number" 
-                                                            placeholder="5000" 
-                                                            value={productForm.variants[0]?.price_mmk || ''} 
-                                                            onChange={e => {
-                                                                const val = parseInt(e.target.value) || 0;
-                                                                setProductForm({
-                                                                    ...productForm, 
-                                                                    variants: [{ ...productForm.variants[0], price_mmk: val }]
-                                                                });
-                                                            }} 
-                                                            required 
-                                                            className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} 
-                                                        />
+                                                        <label className="text-xs font-bold opacity-70 block mb-1">Product အမည် / Header (ဥပမာ- Gemini, Mobile Legends, ExpressVPN):</label>
+                                                        <input type="text" placeholder="Product Main Name" value={productForm.name} onChange={e=>setProductForm({...productForm, name:e.target.value})} required className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} />
                                                     </div>
-
                                                     <div>
-                                                        <label className="text-xs font-bold text-amber-500 block mb-1">🔒 မူရင်းရင်းနှီးဈေး (Cost Price MMK):</label>
-                                                        <input 
-                                                            type="number" 
-                                                            placeholder="3500" 
-                                                            value={productForm.variants[0]?.cost_price_mmk || ''} 
-                                                            onChange={e => {
-                                                                const val = parseInt(e.target.value) || 0;
-                                                                setProductForm({
-                                                                    ...productForm, 
-                                                                    variants: [{ ...productForm.variants[0], cost_price_mmk: val }]
-                                                                });
-                                                            }} 
-                                                            required 
-                                                            className={`w-full p-3 rounded-xl outline-none border border-amber-500/30 ${neoPressedClass}`} 
-                                                        />
-                                                    </div>
-
-                                                    <div>
-                                                        <label className="text-xs font-bold opacity-70 block mb-1">Credits နှုန်းထား:</label>
-                                                        <input 
-                                                            type="number" 
-                                                            placeholder="20" 
-                                                            value={productForm.variants[0]?.price_credits || ''} 
-                                                            onChange={e => {
-                                                                const val = parseInt(e.target.value) || 0;
-                                                                setProductForm({
-                                                                    ...productForm, 
-                                                                    variants: [{ ...productForm.variants[0], price_credits: val }]
-                                                                });
-                                                            }} 
-                                                            required 
-                                                            className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`} 
-                                                        />
+                                                        <label className="text-xs font-bold opacity-70 block mb-1">Category:</label>
+                                                        <select value={productForm.category} onChange={e=>setProductForm({...productForm, category:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}>
+                                                            <option value="Game Topup">Game Topup</option>
+                                                            <option value="AI Service">AI Service</option>
+                                                            <option value="VPN & Software">VPN & Software</option>
+                                                            <option value="Gift Card">Gift Card</option>
+                                                            <option value="Other">Other</option>
+                                                        </select>
                                                     </div>
                                                 </div>
 
-                                                <div className="flex gap-6 p-2 text-xs">
-                                                    <label className="flex items-center gap-2 cursor-pointer font-bold">
-                                                        <input type="checkbox" checked={productForm.requires_game_id} onChange={e=>setProductForm({...productForm, requires_game_id: e.target.checked})} className="w-4 h-4 accent-indigo-600" />
-                                                        Requires Game / User ID
-                                                    </label>
-                                                    <label className="flex items-center gap-2 cursor-pointer font-bold">
-                                                        <input type="checkbox" checked={productForm.requires_server_id} onChange={e=>setProductForm({...productForm, requires_server_id: e.target.checked})} className="w-4 h-4 accent-indigo-600" />
-                                                        Requires Server / Zone ID
-                                                    </label>
-                                                </div>
-
-                                                <div className={`p-4 rounded-2xl space-y-3 ${neoPressedClass}`}>
+                                                {/* Sub-Packages / Items (Variants) Section */}
+                                                <div className={`p-4 rounded-2xl space-y-3 ${neoPressedClass} border border-amber-500/20`}>
                                                     <div className="flex justify-between items-center">
-                                                        <label className="text-xs font-bold opacity-80">ငွေလက်ခံမည့် အကောင့်များ (Payment Options):</label>
-                                                        <button type="button" onClick={() => {
-                                                            setProductForm(prev => ({
-                                                                ...prev,
-                                                                payment_accounts: [...prev.payment_accounts, { provider: 'KBZPay', number: '', holder: '' }]
-                                                            }));
-                                                        }} className={`px-3 py-1 bg-indigo-500 text-white rounded-lg text-[11px] font-bold shadow`}>
-                                                            + Add Payment
+                                                        <div>
+                                                            <label className="text-xs font-bold text-amber-400 block">📦 အမျိုးအစား / Package ခွဲများ (ဥပမာ- 12 Months, Weekly Pass, Dia 11):</label>
+                                                            <span className="text-[10px] opacity-60">ပစ္စည်းတစ်ခုအောက်တွင် စျေးနှုန်းမတူသော Package များကို စိတ်ကြိုက်ထည့်နိုင်ပါသည်</span>
+                                                        </div>
+                                                        <button 
+                                                            type="button" 
+                                                            onClick={() => {
+                                                                setProductForm({
+                                                                    ...productForm,
+                                                                    variants: [...productForm.variants, { name: '', price_mmk: 0, cost_price_mmk: 0, price_credits: 0, requires_game_id: false, requires_server_id: false }]
+                                                                });
+                                                            }} 
+                                                            className="px-3 py-1.5 bg-amber-500 text-black rounded-lg text-xs font-bold shadow"
+                                                        >
+                                                            + Add Package
                                                         </button>
                                                     </div>
 
-                                                    {productForm.payment_accounts.map((acc, accIdx) => (
-                                                        <div key={accIdx} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
-                                                            <input 
-                                                                type="text" 
-                                                                placeholder="Platform (KBZPay / WavePay / Binance Pay)" 
-                                                                value={acc.provider} 
-                                                                onChange={e => {
-                                                                    const newAccs = [...productForm.payment_accounts];
-                                                                    newAccs[accIdx].provider = e.target.value;
-                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                                                                }} 
-                                                                required 
-                                                                className={`md:col-span-4 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
-                                                            />
-                                                            <input 
-                                                                type="text" 
-                                                                placeholder="ဖုန်း / Wallet နံပါတ်" 
-                                                                value={acc.number} 
-                                                                onChange={e => {
-                                                                    const newAccs = [...productForm.payment_accounts];
-                                                                    newAccs[accIdx].number = e.target.value;
-                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                                                                }} 
-                                                                required 
-                                                                className={`md:col-span-4 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
-                                                            />
-                                                            <input 
-                                                                type="text" 
-                                                                placeholder="အကောင့်ပိုင်ရှင် အမည်" 
-                                                                value={acc.holder} 
-                                                                onChange={e => {
-                                                                    const newAccs = [...productForm.payment_accounts];
-                                                                    newAccs[accIdx].holder = e.target.value;
-                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                                                                }} 
-                                                                required 
-                                                                className={`md:col-span-3 p-2.5 rounded-xl outline-none text-xs ${neoClass}`} 
-                                                            />
-                                                            {productForm.payment_accounts.length > 1 && (
-                                                                <button type="button" onClick={() => {
-                                                                    const newAccs = productForm.payment_accounts.filter((_, i) => i !== accIdx);
-                                                                    setProductForm({ ...productForm, payment_accounts: newAccs });
-                                                                }} className="md:col-span-1 p-2.5 text-red-500 flex justify-center items-center">
-                                                                    <Trash2 className="w-4 h-4" />
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    ))}
+                                                    <div className="space-y-3 pt-2">
+                                                        {productForm.variants.map((v, vIdx) => (
+                                                            <div key={vIdx} className={`p-3 rounded-xl space-y-2 border border-current/10 ${neoClass}`}>
+                                                                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                                                    <div className="md:col-span-2">
+                                                                        <label className="text-[10px] font-bold opacity-70">Package အမည်:</label>
+                                                                        <input type="text" placeholder="ဥပမာ: 12 Months / Weekly Pass / Dia 86" value={v.name} onChange={e=>{
+                                                                            const n = [...productForm.variants]; n[vIdx].name = e.target.value; setProductForm({...productForm, variants: n});
+                                                                        }} required className={`w-full p-2 rounded-lg text-xs outline-none ${neoPressedClass}`} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className="text-[10px] font-bold text-emerald-400">ရောင်းဈေး (MMK):</label>
+                                                                        <input type="number" placeholder="5000" value={v.price_mmk || ''} onChange={e=>{
+                                                                            const n = [...productForm.variants]; n[vIdx].price_mmk = parseInt(e.target.value)||0; setProductForm({...productForm, variants: n});
+                                                                        }} required className={`w-full p-2 rounded-lg text-xs outline-none ${neoPressedClass}`} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className="text-[10px] font-bold text-amber-500">အရင်းဈေး (Cost MMK):</label>
+                                                                        <input type="number" placeholder="3500" value={v.cost_price_mmk || ''} onChange={e=>{
+                                                                            const n = [...productForm.variants]; n[vIdx].cost_price_mmk = parseInt(e.target.value)||0; setProductForm({...productForm, variants: n});
+                                                                        }} required className={`w-full p-2 rounded-lg text-xs outline-none ${neoPressedClass}`} />
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="flex justify-between items-center pt-1 text-xs">
+                                                                    <div className="flex gap-4">
+                                                                        <label className="flex items-center gap-1.5 cursor-pointer text-[11px]">
+                                                                            <input type="checkbox" checked={v.requires_game_id} onChange={e=>{
+                                                                                const n = [...productForm.variants]; n[vIdx].requires_game_id = e.target.checked; setProductForm({...productForm, variants: n});
+                                                                            }} className="accent-amber-500" />
+                                                                            Game ID လိုအပ်သည်
+                                                                        </label>
+                                                                        <label className="flex items-center gap-1.5 cursor-pointer text-[11px]">
+                                                                            <input type="checkbox" checked={v.requires_server_id} onChange={e=>{
+                                                                                const n = [...productForm.variants]; n[vIdx].requires_server_id = e.target.checked; setProductForm({...productForm, variants: n});
+                                                                            }} className="accent-amber-500" />
+                                                                            Server ID လိုအပ်သည်
+                                                                        </label>
+                                                                    </div>
+                                                                    {productForm.variants.length > 1 && (
+                                                                        <button type="button" onClick={()=>{
+                                                                            const n = productForm.variants.filter((_, i) => i !== vIdx);
+                                                                            setProductForm({...productForm, variants: n});
+                                                                        }} className="text-red-500 text-xs font-bold hover:underline">
+                                                                            Remove Package
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
                                                 </div>
 
                                                 <textarea placeholder="Product Description..." value={productForm.description} onChange={e=>setProductForm({...productForm, description:e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoPressedClass}`}></textarea>
-                                                
+
                                                 <div>
-                                                    <label className="text-xs font-bold opacity-70 block mb-1">Product ပုံများ ရွေးချယ်ရန်:</label>
+                                                    <label className="text-xs font-bold opacity-70 block mb-1">Product ပုံများ ရွေးချယ်ရန် (Optional):</label>
                                                     <input type="file" accept="image/*" multiple onChange={e=>setProductForm({...productForm, images: e.target.files})} className="w-full p-2 border border-dashed rounded-xl" />
-                                                    {productForm.images && productForm.images.length > 0 && (
-                                                        <p className="text-[11px] text-indigo-400 font-bold mt-1">✓ ပုံပေါင်း {productForm.images.length} ပုံ ရွေးချယ်ထားပါသည်</p>
-                                                    )}
                                                 </div>
-                                                <button type="submit" className="px-6 py-3 bg-indigo-500 text-white font-bold rounded-xl shadow-md">Add Product</button>
+
+                                                <button type="submit" className="w-full py-3.5 bg-amber-500 text-black font-black rounded-xl shadow-lg">
+                                                    {editingProductId ? "Update Product" : "Publish Product"}
+                                                </button>
                                             </form>
                                         </div>
 
+                                        {/* Existing Products List with EDIT button */}
                                         <div className={`p-6 rounded-3xl ${neoClass}`}>
-                                            <h3 className="text-lg font-bold mb-4">လက်ရှိ Product များ</h3>
+                                            <h3 className="text-lg font-bold mb-4">လက်ရှိ Product များ စာရင်း</h3>
                                             <div className="space-y-3">
                                                 {adminProducts.map(p => (
                                                     <div key={p.id} className={`p-4 rounded-xl flex justify-between items-center ${neoPressedClass}`}>
                                                         <div>
-                                                            <p className="font-bold">{p.name}</p>
-                                                            <p className="text-xs opacity-60">{p.category} {p.requires_game_id && '• (Game ID)'} {p.requires_server_id && '• (Server ID)'}</p>
+                                                            <p className="font-bold text-sm text-indigo-400">{p.name}</p>
+                                                            <p className="text-xs opacity-60">{p.category} • (Packages: {p.variants?.length || 0} ခု)</p>
+                                                            <div className="flex gap-2 flex-wrap mt-1">
+                                                                {p.variants?.map((vr, i) => (
+                                                                    <span key={i} className="text-[10px] bg-black/20 px-2 py-0.5 rounded-md text-yellow-500 font-mono">
+                                                                        {vr.name}: {vr.price_mmk?.toLocaleString()} MMK
+                                                                    </span>
+                                                                ))}
+                                                            </div>
                                                         </div>
-                                                        <button onClick={()=>deleteAdminProduct(p.id)} className="px-4 py-2 bg-red-500 text-white text-xs font-bold rounded-xl">Delete</button>
+                                                        <div className="flex gap-2">
+                                                            <button 
+                                                                onClick={() => {
+                                                                    setEditingProductId(p.id);
+                                                                    setProductForm({
+                                                                        name: p.name,
+                                                                        category: p.category,
+                                                                        description: p.description || '',
+                                                                        images: [],
+                                                                        payment_accounts: p.payment_accounts || [{provider:'KBZPay', number:'09421619437', holder:'Aung Win Thu'}],
+                                                                        variants: p.variants && p.variants.length > 0 ? p.variants : [{name:'Standard Package', price_mmk:5000, cost_price_mmk:3500, requires_game_id: true, requires_server_id: false}]
+                                                                    });
+                                                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                                                }} 
+                                                                className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-xl"
+                                                            >
+                                                                Edit
+                                                            </button>
+                                                            <button onClick={()=>deleteAdminProduct(p.id)} className="px-3 py-1.5 bg-red-500 text-white text-xs font-bold rounded-xl">Delete</button>
+                                                        </div>
                                                     </div>
                                                 ))}
                                             </div>
@@ -3491,35 +3518,55 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
 
 
                                                     <div>
+                                                        <div className="flex justify-between items-center mb-2">
+                                                            <label className="text-xs font-bold text-emerald-400">API Key Pool (Multi-Key Rotation):</label>
+                                                            <button 
+                                                                type="button" 
+                                                                onClick={() => {
+                                                                    let currentKeys = [];
+                                                                    try { currentKeys = JSON.parse(globalSettings.apinex_api_keys || '[]'); } catch(e){}
+                                                                    setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify([...currentKeys, '']) });
+                                                                }}
+                                                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow transition-all"
+                                                            >
+                                                                + Add Key
+                                                            </button>
+                                                        </div>
 
-                                                        <label className="text-xs font-bold block mb-1 text-emerald-400">API Key Pool (Unlimited Keys - တစ်ကြောင်းလျှင် တစ်ခုစီ ထည့်ပါ):</label>
-
-                                                        <textarea 
-
-                                                            rows="4" 
-
-                                                            placeholder="sk-xxx-1&#10;sk-xxx-2&#10;sk-xxx-3"
-
-                                                            value={(() => {
-
-                                                                try { return JSON.parse(globalSettings.apinex_api_keys || '[]').join('\n'); }
-
-                                                                catch(e) { return ''; }
-
-                                                            })()} 
-
-                                                            onChange={e => {
-
-                                                                const keys = e.target.value.split('\n').map(x => x.trim()).filter(Boolean);
-
-                                                                setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify(keys) });
-
-                                                            }} 
-
-                                                            className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`}
-
-                                                        />
-
+                                                        <div className="space-y-2">
+                                                            {(() => {
+                                                                let keys = [];
+                                                                try { keys = JSON.parse(globalSettings.apinex_api_keys || '[]'); } catch(e){}
+                                                                if (keys.length === 0) keys = [''];
+                                                                return keys.map((k, idx) => (
+                                                                    <div key={idx} className="flex gap-2">
+                                                                        <input 
+                                                                            type="password" 
+                                                                            value={k} 
+                                                                            placeholder={`Apinex API Key ${idx + 1}`} 
+                                                                            onChange={e => {
+                                                                                const newKeys = [...keys];
+                                                                                newKeys[idx] = e.target.value.trim();
+                                                                                setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify(newKeys) });
+                                                                            }}
+                                                                            className={`flex-1 p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`}
+                                                                        />
+                                                                        {keys.length > 1 && (
+                                                                            <button 
+                                                                                type="button" 
+                                                                                onClick={() => {
+                                                                                    const newKeys = keys.filter((_, i) => i !== idx);
+                                                                                    setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify(newKeys) });
+                                                                                }} 
+                                                                                className="p-2.5 text-red-500 hover:bg-red-500/10 rounded-xl"
+                                                                            >
+                                                                                <Trash2 className="w-4 h-4"/>
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                ));
+                                                            })()}
+                                                        </div>
                                                     </div>
 
                                                 </div>
