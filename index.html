@@ -468,6 +468,22 @@
             const [unreadNotiCount, setUnreadNotiCount] = useState(0);
             const [showNotiModal, setShowNotiModal] = useState(false);
             const [currentView, setCurrentView] = useState('home');
+            // Motion Graphic Ads Animator States
+            const [adAspectRatio, setAdAspectRatio] = useState('9:16'); // '9:16' | '16:9' | '1:1'
+            const [adMinutes, setAdMinutes] = useState(0);
+            const [adSeconds, setAdSeconds] = useState(15);
+            const [adPrompt, setAdPrompt] = useState('');
+            const [adCustomScript, setAdCustomScript] = useState('');
+            const [adRefImages, setAdRefImages] = useState([]);
+            const [adCustomVoiceover, setAdCustomVoiceover] = useState(null);
+            const [adRevisionCount, setAdRevisionCount] = useState(0);
+            const [adChangeInstruction, setAdChangeInstruction] = useState('');
+            const [adBgTheme, setAdBgTheme] = useState('paper_collage');
+            const [adRendering, setAdRendering] = useState(false);
+            const [adRenderProgress, setAdRenderProgress] = useState(0);
+            const [adVideoUrl, setAdVideoUrl] = useState('');
+            const adImageInputRef = useRef(null);
+            const adVoiceInputRef = useRef(null);
             const [isDark, setIsDark] = useState(() => getSafeStorage('theme', 'dark') === 'dark');
 
             const [engineLoading, setEngineLoading] = useState(true);
@@ -504,6 +520,7 @@
             const [cloneAudioFile, setCloneAudioFile] = useState(null);
             const [isRecording, setIsRecording] = useState(false);
             const [recapVoice, setRecapVoice] = useState('my-MM-ThihaNeural');
+            const [voiceSpeed, setVoiceSpeed] = useState(1.0); // 0.9 မှ 1.4 အထိ
             const [freezeInterval, setFreezeInterval] = useState(4);
             const [zoomDuration, setZoomDuration] = useState(2);
             const [zoomIntensity, setZoomIntensity] = useState(1.25);
@@ -634,13 +651,39 @@
                     setHookSeconds(3);
                     setTtsTextInput('');
                     setTtsAudioUrl('');
+                    setAdMinutes(0);
+                    setAdSeconds(15);
+                    setAdPrompt('');
+                    setAdRefImages([]);
+                    setAdCustomVoiceover(null);
+                    setAdCustomScript('');
+                    setAdRevisionCount(0);
+                    setAdChangeInstruction('');
+                    setAdVideoUrl('');
+                    setAdRendering(false);
                     extractionDataRef.current = null;
                     translatedBlocksRef.current = null;
                     ttsSegmentsRef.current = null;
                 }
                 setCurrentView(viewName);
             };
-
+            
+            // ဘာသာစကားရွေးချယ်မှုအလိုက် TTS အသံကို အလိုအလျောက် သတ်မှတ်ပေးခြင်း
+            useEffect(() => {
+                if (recapEngine === 'edge') {
+                    if (selectedLang.includes('မြန်မာ') || selectedLang.includes('Myanmar')) {
+                        setRecapVoice('my-MM-ThihaNeural');
+                    } else if (selectedLang.includes('English (US)')) {
+                        setRecapVoice('en-US-ChristopherNeural');
+                    } else if (selectedLang.includes('English (UK)')) {
+                        setRecapVoice('en-GB-RyanNeural');
+                    } else if (selectedLang.includes('Chinese') || selectedLang.includes('中文')) {
+                        setRecapVoice('zh-CN-YunxiNeural');
+                    } else if (selectedLang.includes('Thai') || selectedLang.includes('ไทย')) {
+                        setRecapVoice('th-TH-NiwatNeural');
+                    }
+                }
+            }, [selectedLang, recapEngine]);
             useEffect(() => {
                 setSafeStorage('theme', isDark ? 'dark' : 'light');
                 document.documentElement.classList.toggle('dark', isDark);
@@ -955,10 +998,12 @@
                 }
             };
             // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
+            // ရွေးချယ်ထားသော Language အတိုင်း မဖြစ်မနေ ဘာသာပြန်မည့် Engine
             const performTranslation = async (originalSrt, modeOverride = null) => {
                 const activeMode = modeOverride || recapMode;
                 setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
-                addSysLog(`AI ဖြင့် ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ တွက်ချက်နေပါသည်...`);
+                addSysLog(`AI ဖြင့် [Target Language: ${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ ပြန်ဆိုနေပါသည်...`);
+                
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
                 let allTranslated = [];
 
@@ -978,47 +1023,63 @@
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
-                const ownRecapPrompt = `You are a professional Movie Recap Narrator and captivating storyteller.
-DO NOT translate dialog directly word-for-word. 
-Instead, observe the events and describe the character actions, plot twists, emotional reactions, and unfolding drama as a third-person storyteller in natural, captivating Myanmar spoken language (ဥပမာ: "ဒီလူကတော့ တောင်ထိပ်မှာ တွင်းကြီးတစ်ခုကို အချိန်ယူတူးနေတာပါ...", "အဲ့ဒီအချိန်မှာပဲ နဂါးကြီးကို တွေ့လိုက်ရလို့ အလန့်တကြား ဖြစ်သွားခဲ့ပါတယ်").
-Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exactly identical. Output ONLY a valid JSON array.`;
+                // STRICT TARGET LANGUAGE ENFORCEMENT PROMPT
+                // WonderWhy Signature Recap Storytelling Prompt
+                const ownRecapPrompt = `You are a viral YouTube recap creator strictly imitating the famous "WonderWhy" channel storytelling narration style in Burmese.
 
-                const originalPrompt = `You are an expert movie recap narrator. Translate the 'text' field into fluent, captivating ${selectedLang} with natural spoken phrasing and correct Myanmar spelling. Convert all numbers to spoken Myanmar words. Keep 'id', 'start', and 'end' values identical. Output ONLY a valid JSON array.`;
+CRITICAL WONDERWHY STYLE RULES:
+1. NEVER translate dialogue word-for-word. You are a third-person observer describing the scene.
+2. Treat the visuals as an unfolding event or mystery. Narrate what characters are doing, their struggles, and dramatic turning points.
+3. Use WonderWhy's signature conversational opening/transition patterns:
+   - "ဒီလူကတော့ တောင်ထိပ်မှာ တစ်ယောက်တည်း..."
+   - "အဲ့ဒီအချိန်မှာပဲ မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့ပါတယ်..."
+   - "ဒါပေမဲ့ တကယ့် အမှန်တရားကတော့..."
+   - "ဒီစက်ကြီး ဘယ်လို အလုပ်လုပ်သလဲဆိုတာ ကြည့်လိုက်ရအောင်..."
+4. Spoken Burmese Only: Strictly avoid formal or bookish written Burmese (စာဆန်ဆန် လုံးဝမရေးရ၊ အရပ်စကားပြော သဘာဝအတိုင်းသာ ရေးသားရမည်).
+5. Ensure pacing matches video clips naturally. Keep 'id', 'start', and 'end' identical.
+
+Return ONLY a valid JSON array of objects with keys: id, start, end, text.`;
+
+                const originalPrompt = `You are an expert translator. 
+CRITICAL REQUIREMENT: Translate all dialogue/text strictly into fluent, natural spoken ${selectedLang}.
+DO NOT output in English unless the selected target language is explicitly English.
+Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objects with keys: id, start, end, text.`;
 
                 for (let i = 0; i < batches.length; i++) {
                     const batch = batches[i];
                     let translatedBatch = null;
                     const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
 
-                    // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် Script ရေးသားခြင်း
-                    try {
-                        const sRes = await apiFetch('/api/engine/neural-compute', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                model: globalSettings.apinex_model || "gpt-4o-mini",
-                                messages: [
-                                    { role: "system", content: sysPrompt },
-                                    { role: "user", content: JSON.stringify(batch) }
-                                ],
-                                temperature: activeMode === 'own' ? 0.6 : 0.2
-                            })
-                        });
-                        if (sRes.ok) {
-                            const sData = await sRes.json();
-                            const cText = sData?.choices?.[0]?.message?.content || "";
-                            translatedBatch = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
-                            addSysLog(`Neural Engine မှ Script Batch (${i + 1}) အောင်မြင်စွာ ရယူပြီးပါပြီ။`);
+                    // ၁။ Server Pool (Apinex) ဖြင့် ဘာသာပြန်ခြင်း
+                    if (globalSettings.apinex_enabled === 'true') {
+                        try {
+                            const sRes = await apiFetch('/api/engine/neural-compute', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    model: globalSettings.apinex_model || "free/gemini-3.8-flash",
+                                    messages: [
+                                        { role: "system", content: sysPrompt },
+                                        { role: "user", content: `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch) }
+                                    ],
+                                    temperature: activeMode === 'own' ? 0.6 : 0.2
+                                })
+                            });
+                            if (sRes.ok) {
+                                const sData = await sRes.json();
+                                const cText = sData?.choices?.[0]?.message?.content || "";
+                                translatedBatch = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                            }
+                        } catch (sErr) {
+                            addSysLog(`Neural Engine ချိတ်ဆက်မရပါ -> Gemini API ဖြင့် ဆက်လက်ဘာသာပြန်ပါမည်...`);
                         }
-                    } catch (sErr) {
-                        addSysLog(`Neural Engine အဆင်မပြေပါ -> User Gemini API သို့ ပြောင်းလဲပါမည်...`);
                     }
 
-                    // ၂။ အရန်အဆင့်: User Gemini API Key သို့ Fallback လုပ်ခြင်း
+                    // ၂။ User Gemini Key သို့ Fallback ပြုလုပ်ခြင်း
                     if (!translatedBatch) {
                         translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
                             const payload = {
-                                contents: [{ parts: [{ text: JSON.stringify(batch) }] }],
+                                contents: [{ parts: [{ text: `Strictly translate this JSON array into ${selectedLang}:\n${JSON.stringify(batch)}` }] }],
                                 systemInstruction: { parts: [{ text: sysPrompt }] },
                                 generationConfig: { temperature: activeMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
                             };
@@ -1031,9 +1092,18 @@ Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exact
                         });
                     }
 
+                    // Item Mapping စစ်ဆေးခြင်း
                     for (let j = 0; j < batch.length; j++) {
-                        const item = Array.isArray(translatedBatch) ? translatedBatch.find(x => x.id === batch[j].id) : null;
-                        allTranslated.push(item && item.text ? item : batch[j]);
+                        let item = null;
+                        if (Array.isArray(translatedBatch)) {
+                            item = translatedBatch.find(x => x.id === batch[j].id) || translatedBatch[j];
+                        }
+                        allTranslated.push({
+                            id: batch[j].id,
+                            start: batch[j].start,
+                            end: batch[j].end,
+                            text: (item && item.text && item.text.trim()) ? item.text.trim() : batch[j].text
+                        });
                     }
                     setRenderProgress(Math.min(45, Math.floor(25 + (20 * ((i + 1) / batches.length)))));
                 }
@@ -1087,7 +1157,7 @@ Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exact
                                 const response = await apiFetch('/api/tts', { 
                                     method: 'POST', 
                                     headers: { 'Content-Type': 'application/json' }, 
-                                    body: JSON.stringify({ text, voice: recapVoice, rate: "+10%" }) 
+                                    body: JSON.stringify({ text, voice: recapVoice, rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` })
                                 });
                                 const mp3Blob = await response.blob();
                                 audioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
@@ -1589,6 +1659,402 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                     ffmpeg.off('progress', progressHandler);
                 }
             };
+            
+            // Web Audio Synth SFX Generator
+            // Professional Ads SFX Synthesizer Engine (Accurate Acoustics)
+            // Precise SFX Map & Offsets (အသံရှည်ဖိုင်များမှ လိုအပ်သော အပိုင်းကိုသာ ဖြတ်ထုတ်ခြင်း)
+            const SFX_CONFIG = {
+                whoosh: { file: 'clean-fast-swooshaiff-14784.mp3', offset: 0.0, dur: 0.35 },
+                fast_whoosh: { file: 'Fast Whoosh Sound Effect.mp3', offset: 0.0, dur: 0.3 },
+                keyboard: { file: 'keyboard-typing-5997.mp3', offset: 0.2, dur: 0.4 },
+                pop: { file: 'Pop Bubble Sound Effect.mp3', offset: 0.0, dur: 0.25 },
+                thud: { file: 'Heavy object Hit and body thud sound effect.mp3', offset: 0.0, dur: 0.4 },
+                paper_flip: { file: 'Paper Flip Sound Effect.mp3', offset: 0.0, dur: 0.45 },
+                paper_slide: { file: 'Paper Slide 03.wav', offset: 0.0, dur: 0.5 },
+                cash: { file: 'chaching.mp3', offset: 0.0, dur: 0.75 },
+                click: { file: 'mouse click.mp3', offset: 0.0, dur: 0.15 },
+                camera: { file: 'camera-shutter-6305.mp3', offset: 0.0, dur: 0.35 },
+                hit: { file: 'punch.mp3', offset: 0.0, dur: 0.3 },
+                bell: { file: 'NO COPYRIGHT BOXING BELL SOUND EFFECT.mp3', offset: 0.0, dur: 0.8 },
+                swipes: { file: 'swipes.mp3', offset: 0.0, dur: 0.35 }
+            };
+
+            const cachedSfxBuffers = {};
+
+            // Render မစမီ SFX အားလုံးကို Memory ပေါ်သို့ ကြိုတင်ဆွဲတင်ထားခြင်း (Zero Lag)
+            const preloadAllSfx = async (audioCtx) => {
+                const files = Object.values(SFX_CONFIG).map(c => c.file);
+                await Promise.all(files.map(async (file) => {
+                    if (!cachedSfxBuffers[file]) {
+                        try {
+                            const res = await apiFetch(`/api/protected-sfx/${encodeURIComponent(file)}`);
+                            if (res.ok) {
+                                const ab = await res.arrayBuffer();
+                                cachedSfxBuffers[file] = await audioCtx.decodeAudioData(ab);
+                            }
+                        } catch(e){}
+                    }
+                }));
+            };
+
+            const playEngineSfx = (audioCtx, type, destNode) => {
+                const conf = SFX_CONFIG[type] || SFX_CONFIG['whoosh'];
+                if (!audioCtx || !conf) return;
+
+                const buffer = cachedSfxBuffers[conf.file];
+                if (buffer) {
+                    try {
+                        const src = audioCtx.createBufferSource();
+                        src.buffer = buffer;
+                        src.connect(destNode);
+                        src.start(audioCtx.currentTime, conf.offset, conf.dur);
+                    } catch(e){}
+                }
+            };
+            const generateAdStoryboard = async (isRevision = false) => {
+                const totalSec = Math.max(5, (parseInt(adMinutes) || 0) * 60 + (parseInt(adSeconds) || 15));
+                const maxFreeRevs = parseInt(globalSettings.ads_animator_free_revisions || '1');
+                const needDeduct = !isRevision || (adRevisionCount >= maxFreeRevs);
+                const ratePerSec = parseInt(globalSettings.ads_animator_rate_per_sec || '2');
+                const totalCost = totalSec * ratePerSec;
+
+                if (needDeduct && user?.email !== ADMIN_EMAIL) {
+                    if ((userData?.credits || 0) < totalCost) {
+                        throw new Error(`Credit မလုံလောက်ပါ။ ဤဗီဒီယိုအတွက် ${totalCost} Credits လိုအပ်ပါသည်။`);
+                    }
+                }
+
+                // Agency Director Prompt (စကားလုံး ၂ လုံးမှ ၄ လုံးသာ ပါဝင်သော စာတန်းတိုစနစ်)
+                const systemPrompt = `You are an elite Commercial Video Director.
+Total Video Duration: ${totalSec} seconds.
+${adChangeInstruction ? `CLIENT REVISION REQUEST: "${adChangeInstruction}". Modify storyboard accordingly.` : ''}
+
+CRITICAL RULES:
+1. Divide the video into clean, punchy beats.
+2. Each beat text MUST BE ONLY 2 TO 5 BURMESE WORDS so it fits perfectly on screen without rushing.
+3. NEVER output labels like "Hook", "Body", or time markers like "၃-၁၀ စက္ကန့်". Output ONLY the clean spoken text.
+4. Set motion: "card_flip", "drop_bounce", "paper_slide", "stamp_pop", "cta_pulse".
+5. Set accurate SFX: "whoosh", "keyboard", "pop", "thud", "paper_flip", "cash", "camera", "hit", "bell", "swipes".
+
+Format strictly as JSON ONLY:
+{
+  "theme": "paper_collage" | "cyber" | "minimal",
+  "beats": [
+    {
+      "start": 0.0,
+      "end": 3.0,
+      "text": "နိုင်ငံရပ်ခြားရောက် မိတ်ဆွေတို့ရေ",
+      "motion": "card_flip",
+      "sfx": "whoosh"
+    },
+    {
+      "start": 3.0,
+      "end": 6.5,
+      "text": "လက်ဆက်တဲ့ ကွမ်းယာအရသာ စစ်စစ်",
+      "motion": "drop_bounce",
+      "sfx": "thud"
+    },
+    {
+      "start": 6.5,
+      "end": 10.5,
+      "text": "လက်လီလက်ကား ဈေးနှုန်းအချိုဆုံး",
+      "motion": "paper_slide",
+      "sfx": "cash"
+    },
+    {
+      "start": 10.5,
+      "end": ${totalSec.toFixed(1)},
+      "text": "အခုပဲ တိုက်ရိုက် ဆက်သွယ်လိုက်ပါ",
+      "motion": "cta_pulse",
+      "sfx": "bell"
+    }
+  ]
+}`;
+
+                const userPayload = {
+                    prompt: adPrompt || "Authentic quality product promotion",
+                    script: adCustomScript || null,
+                    images_count: adRefImages.length,
+                    duration: totalSec
+                };
+
+                let resultJson = null;
+
+                if (globalSettings.apinex_enabled === 'true') {
+                    try {
+                        const res = await apiFetch('/api/engine/neural-compute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                model: globalSettings.apinex_model || "free/gemini-3.8-flash",
+                                messages: [{ role: "system", content: systemPrompt }, { role: "user", content: JSON.stringify(userPayload) }],
+                                temperature: 0.4
+                            })
+                        });
+                        if (res.ok) {
+                            const d = await res.json();
+                            resultJson = JSON.parse(d?.choices?.[0]?.message?.content?.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                        }
+                    } catch(e){}
+                }
+
+                if (!resultJson) {
+                    resultJson = await executeWithApiLogic("Ad Storyboard", async (apiKey) => {
+                        const payload = {
+                            contents: [{ parts: [{ text: `${systemPrompt}\n\nUser Input: ${JSON.stringify(userPayload)}` }] }],
+                            generationConfig: { temperature: 0.4, responseMimeType: "application/json" }
+                        };
+                        const res = await apiFetch(`/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        const data = await res.json();
+                        return JSON.parse(parseGeminiCandidateText(data));
+                    });
+                }
+
+                return { resultJson, needDeduct, totalCost, totalSec };
+            };
+
+            const startMotionAdGeneration = async (isRevision = false) => {
+                try {
+                    setAdRendering(true);
+                    setAdRenderProgress(10);
+                    setAdVideoUrl('');
+
+                    const { resultJson, needDeduct, totalCost, totalSec } = await generateAdStoryboard(isRevision);
+                    setAdRenderProgress(20);
+
+                    if (isRevision) setAdRevisionCount(prev => prev + 1);
+
+                    // Aspect Ratio Canvas Resolution
+                    let cWidth = 720, cHeight = 1280; // 9:16
+                    if (adAspectRatio === '16:9') { cWidth = 1280; cHeight = 720; }
+                    else if (adAspectRatio === '1:1') { cWidth = 1080; cHeight = 1080; }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = cWidth;
+                    canvas.height = cHeight;
+                    const ctx = canvas.getContext('2d');
+
+                    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioCtx.state === 'suspended') await audioCtx.resume();
+                    const dest = audioCtx.createMediaStreamDestination();
+
+                    // Voiceover Duration Sync
+                    let finalDurationSec = totalSec;
+                    if (adCustomVoiceover) {
+                        try {
+                            const ab = await adCustomVoiceover.arrayBuffer();
+                            const decoded = await audioCtx.decodeAudioData(ab);
+                            finalDurationSec = Math.max(decoded.duration, totalSec);
+                            const src = audioCtx.createBufferSource();
+                            src.buffer = decoded;
+                            src.connect(dest);
+                            src.start(0);
+                        } catch(e){}
+                    }
+
+                    const stream = new MediaStream([
+                        ...canvas.captureStream(30).getVideoTracks(),
+                        ...dest.stream.getAudioTracks()
+                    ]);
+
+                    const supportedTypes = ['video/webm; codecs="h264, opus"', 'video/webm; codecs=vp8,opus', 'video/webm'];
+                    let mimeType = supportedTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+                    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6500000 });
+                    const recordedChunks = [];
+                    recorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+
+                    const totalFrames = Math.round(finalDurationSec * 30);
+                    let currentFrame = 0;
+                    let playedBeatAudio = {};
+
+                    const beats = resultJson.beats || [];
+                    const imgList = adRefImages.map(x => x.imgObj).filter(Boolean);
+
+                    // SFX အားလုံးကို Memory ပေါ် အရင်တင်ခြင်း
+                    await preloadAllSfx(audioCtx);
+
+                    recorder.start(100);
+                    const renderStartTime = performance.now();
+
+                    const drawAdCanvas = () => {
+                        // တကယ့် Wall-clock Time (စက္ကန့် အတိအကျ) ဖြင့် တွက်ချက်ခြင်း
+                        const elapsed = (performance.now() - renderStartTime) / 1000;
+                        const progress = Math.min(1.0, elapsed / finalDurationSec);
+                        ctx.save();
+                        // 1. Dynamic Background (Paper Collage / Cyber / Minimal)
+                        if (adBgTheme === 'paper_collage') {
+                            ctx.fillStyle = '#fbf9f4';
+                            ctx.fillRect(0, 0, cWidth, cHeight);
+                            // Paper Texture Accents
+                            ctx.fillStyle = 'rgba(74, 55, 40, 0.04)';
+                            ctx.beginPath();
+                            ctx.ellipse(cWidth * 0.9, cHeight * 0.1, 140, 90, Math.PI / 4, 0, Math.PI * 2);
+                            ctx.ellipse(cWidth * 0.1, cHeight * 0.9, 160, 100, -Math.PI / 6, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (adBgTheme === 'cyber') {
+                            ctx.fillStyle = '#070b19';
+                            ctx.fillRect(0, 0, cWidth, cHeight);
+                            ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+                            ctx.lineWidth = 1;
+                            const gridY = (currentFrame * 1.5) % 40;
+                            for (let x = 0; x <= cWidth; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cHeight); ctx.stroke(); }
+                            for (let y = gridY; y <= cHeight; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cWidth, y); ctx.stroke(); }
+                        } else {
+                            ctx.fillStyle = '#f8fafc';
+                            ctx.fillRect(0, 0, cWidth, cHeight);
+                        }
+                        ctx.restore();
+
+                        // 2. Active Beat Detection & Accurate SFX Trigger
+                        const activeBeatIdx = beats.findIndex(b => elapsed >= b.start && elapsed < b.end);
+                        const curBeat = beats[activeBeatIdx !== -1 ? activeBeatIdx : beats.length - 1];
+
+                        if (curBeat) {
+                            if (!playedBeatAudio[activeBeatIdx]) {
+                                playEngineSfx(audioCtx, curBeat.sfx || 'whoosh', dest);
+                                playedBeatAudio[activeBeatIdx] = true;
+                            }
+
+                            const beatLocal = elapsed - curBeat.start;
+                            const enterProgress = Math.min(1.0, beatLocal / 0.45);
+                            const activeImg = imgList.length > 0 ? imgList[activeBeatIdx % imgList.length] : null;
+
+                            ctx.save();
+                            const centerX = cWidth / 2;
+                            const centerY = cHeight * 0.42;
+
+                            // 3. 3D Layer Animations
+                            if (curBeat.motion === 'card_flip') {
+                                const flipAngle = (1 - enterProgress) * Math.PI * 0.5;
+                                ctx.translate(centerX, centerY);
+                                ctx.scale(Math.cos(flipAngle), 1);
+                                if (activeImg) {
+                                    ctx.shadowColor = 'rgba(0,0,0,0.18)';
+                                    ctx.shadowBlur = 25;
+                                    ctx.drawImage(activeImg, -180, -180, 360, 360);
+                                }
+                            } else if (curBeat.motion === 'drop_bounce') {
+                                const bounce = 1 + 2.6 * Math.pow(enterProgress - 1, 3) + 1.6 * Math.pow(enterProgress - 1, 2);
+                                const curY = -200 + (centerY + 200) * bounce;
+                                ctx.translate(centerX, curY);
+                                if (activeImg) {
+                                    ctx.shadowColor = 'rgba(0,0,0,0.18)';
+                                    ctx.shadowBlur = 25;
+                                    ctx.drawImage(activeImg, -180, -180, 360, 360);
+                                }
+                            } else if (curBeat.motion === 'paper_slide') {
+                                const slideX = (1 - enterProgress) * 700;
+                                ctx.translate(centerX - slideX, centerY);
+                                if (activeImg) {
+                                    ctx.shadowColor = 'rgba(0,0,0,0.15)';
+                                    ctx.shadowBlur = 20;
+                                    ctx.drawImage(activeImg, -180, -180, 360, 360);
+                                }
+                            } else {
+                                const pulse = 1 + Math.sin(elapsed * 4) * 0.04;
+                                ctx.translate(centerX, centerY);
+                                ctx.scale(pulse, pulse);
+                                if (activeImg) {
+                                    ctx.shadowColor = 'rgba(0,0,0,0.15)';
+                                    ctx.shadowBlur = 20;
+                                    ctx.drawImage(activeImg, -170, -170, 340, 340);
+                                }
+                            }
+                            ctx.restore();
+
+                            // 4. Kinetic Subtitle (စာကြောင်းတို စာလုံးလှပုံစံ)
+                            ctx.save();
+                            const subT = Math.min(1.0, beatLocal / 0.3);
+                            const textY = cHeight * 0.76 - (1 - subT) * 15;
+                            ctx.globalAlpha = subT;
+                            ctx.translate(cWidth / 2, textY);
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+
+                            if (adBgTheme === 'paper_collage') {
+                                ctx.fillStyle = '#6b1d14'; // Elegant Burgundy
+                                ctx.font = `bold ${Math.round(cWidth * 0.052)}px 'Pyidaungsu', serif`;
+                                ctx.fillText(curBeat.text || '', 0, 0);
+                            } else {
+                                ctx.fillStyle = '#ffffff';
+                                ctx.font = `bold ${Math.round(cWidth * 0.055)}px 'Pyidaungsu', sans-serif`;
+                                ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                                ctx.shadowBlur = 10;
+                                ctx.fillText(curBeat.text || '', 0, 0);
+                            }
+                            ctx.restore();
+                        }
+
+                        // 5. CTA Button (End Scene)
+                        const ctaStart = Math.max(2, finalDurationSec - 3.5);
+                        if (elapsed >= ctaStart) {
+                            const ctaT = Math.min(1.0, (elapsed - ctaStart) / 0.35);
+                            ctx.save();
+                            ctx.translate(cWidth / 2, cHeight * 0.88);
+                            ctx.scale(ctaT, ctaT);
+                            ctx.fillStyle = '#c59557';
+                            ctx.beginPath();
+                            ctx.roundRect(-200, -30, 400, 60, 30);
+                            ctx.fill();
+                            ctx.fillStyle = '#ffffff';
+                            ctx.font = `900 ${Math.round(cWidth * 0.038)}px 'Pyidaungsu', sans-serif`;
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+                            ctx.fillText("အခုပဲ မှာယူလိုက်ပါ", 0, 0);
+                            ctx.restore();
+                        }
+
+                        currentFrame++;
+                        setAdRenderProgress(Math.floor(20 + progress * 75));
+
+                        if (elapsed < finalDurationSec) {
+                            requestAnimationFrame(drawAdCanvas);
+                        } else {
+                            recorder.stop();
+                        }
+                    };
+
+                    recorder.onstop = async () => {
+                        try { audioCtx.close(); } catch(e){}
+                        setAdRenderProgress(95);
+                        const rawWebmBlob = new Blob(recordedChunks, { type: mimeType });
+
+                        // Duration Metadata Fix (အမှန်တကယ် စက္ကန့်အတိုင်း ချုပ်ဆိုခြင်း)
+                        let fixedBlob = rawWebmBlob;
+                        if (window.ysFixWebmDuration) {
+                            fixedBlob = await new Promise(res => {
+                                window.ysFixWebmDuration(rawWebmBlob, finalDurationSec * 1000, res);
+                            });
+                        }
+
+                        // FFmpeg WASM Remux
+                        try {
+                            const ffmpeg = ffmpegRef.current;
+                            await ffmpeg.writeFile('in_ad.webm', await window.FFmpegUtil.fetchFile(fixedBlob));
+                            await runFFmpeg(['-i', 'in_ad.webm', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', 'out_ad.mp4']);
+                            const data = await ffmpeg.readFile('out_ad.mp4');
+                            const mp4Blob = new Blob([data.buffer], { type: 'video/mp4' });
+                            try { await ffmpeg.deleteFile('in_ad.webm'); } catch(e){}
+                            try { await ffmpeg.deleteFile('out_ad.mp4'); } catch(e){}
+                            setAdVideoUrl(URL.createObjectURL(mp4Blob));
+                        } catch(ffErr) {
+                            setAdVideoUrl(URL.createObjectURL(fixedBlob));
+                        }
+
+                        setAdRendering(false);
+                        setAdRenderProgress(100);
+                    };
+
+                    drawAdCanvas();
+                } catch(err) {
+                    alert(err.message);
+                    setAdRendering(false);
+                }
+            };
 
             const handleOneClickRecap = async () => {
                 if (!videoFile) return;
@@ -1940,6 +2406,8 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                             tts_mode: globalSettings.tts_mode,
                             tts_chars_per_credit: globalSettings.tts_chars_per_credit,
                             ads_smart_link: globalSettings.ads_smart_link,
+                            ads_animator_rate_per_sec: globalSettings.ads_animator_rate_per_sec,
+                            ads_animator_free_revisions: globalSettings.ads_animator_free_revisions,
                             groq_api_keys_pool: globalSettings.groq_api_keys_pool,
                             admin_payment_accounts: globalSettings.admin_payment_accounts,
                             voice_clone_enabled: globalSettings.voice_clone_enabled,
@@ -2324,6 +2792,13 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                     <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md mx-auto text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><Film className="w-10 h-10 text-indigo-500"/></div><h2 className="text-2xl font-bold mb-3">Welcome to AI Studio</h2><p className="opacity-70 mb-8 text-sm">စတင်အသုံးပြုရန် Google Account ဖြင့် ဝင်ရောက်ပါ။</p><div id="google-login-btn"></div></div>
                                 ) : (
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-6 max-w-5xl mx-auto py-6">
+                                        <button onClick={() => navigateTo('animator')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
+                                            <div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4">
+                                                <Sparkles className="w-8 h-8" />
+                                            </div>
+                                            <h2 className="text-lg font-black mb-1">⚡ Ads Animator</h2>
+                                            <p className="text-xs opacity-70">AI Motion & UI Video Generator</p>
+                                        </button>
                                         <button onClick={() => navigateTo('recap')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-indigo-500/20 text-indigo-500 mb-4"><Film className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Movie Recap</h2></button>
                                         <button onClick={() => navigateTo('subtitle')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-emerald-500/20 text-emerald-500 mb-4"><SubtitleIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">AI Subtitle Burn-in</h2></button>
                                         <button onClick={() => navigateTo('tts')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-rose-500/20 text-rose-500 mb-4"><Mic className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Text to Speech</h2><p className="text-xs opacity-70">change words to speech</p></button>
@@ -2346,7 +2821,190 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                 )}
                             </div>
                         )}
+                        
+                        {currentView === 'animator' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                                <div className="lg:col-span-6 space-y-6">
+                                    <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-4`}>
+                                        <h2 className="text-xl font-bold flex items-center gap-3 text-amber-500">
+                                            <Sparkles className="w-6 h-6" /> AI Motion Ads Animator
+                                        </h2>
+                                        
+                                        {/* Aspect Ratio Selector */}
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                            <label className="text-xs font-bold opacity-80 block mb-2">📐 Video Aspect Ratio ရွေးချယ်ပါ:</label>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                {[
+                                                    { id: '9:16', label: '9:16 (Reel/TikTok)' },
+                                                    { id: '16:9', label: '16:9 (Landscape)' },
+                                                    { id: '1:1', label: '1:1 (Square Post)' }
+                                                ].map(ratio => (
+                                                    <button 
+                                                        type="button" 
+                                                        key={ratio.id} 
+                                                        onClick={() => setAdAspectRatio(ratio.id)}
+                                                        className={`py-2 rounded-xl text-xs font-bold transition-all border ${adAspectRatio === ratio.id ? 'border-amber-500 bg-amber-500/20 text-white font-black' : 'border-current/10 opacity-70'}`}
+                                                    >
+                                                        {ratio.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        {/* Duration Selector */}
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                            <label className="text-xs font-bold opacity-80 block mb-2">⏱️ Video ကြာချိန် (မိနစ် နှင့် စက္ကန့် စိတ်ကြိုက်သတ်မှတ်ပါ):</label>
+                                            <div className="flex items-center gap-3">
+                                                <div className="flex-1 flex items-center gap-2">
+                                                    <input type="number" min="0" max="10" value={adMinutes} onChange={e=>setAdMinutes(Math.max(0, parseInt(e.target.value)||0))} className={`w-full p-2.5 rounded-xl text-center font-bold text-sm outline-none ${neoClass}`} />
+                                                    <span className="text-xs font-bold">မိနစ်</span>
+                                                </div>
+                                                <div className="flex-1 flex items-center gap-2">
+                                                    <input type="number" min="5" max="59" value={adSeconds} onChange={e=>setAdSeconds(Math.max(0, parseInt(e.target.value)||0))} className={`w-full p-2.5 rounded-xl text-center font-bold text-sm outline-none ${neoClass}`} />
+                                                    <span className="text-xs font-bold">စက္ကန့်</span>
+                                                </div>
+                                            </div>
+                                            <p className="text-[10px] opacity-60 mt-2">
+                                                * ကုန်ကျစရိတ်: ၁ စက္ကန့်လျှင် {globalSettings.ads_animator_rate_per_sec || 2} Credits နှုန်းဖြင့် စုစုပေါင်း: {((adMinutes * 60) + adSeconds) * (parseInt(globalSettings.ads_animator_rate_per_sec) || 2)} Credits
+                                            </p>
+                                        </div>
 
+                                        {/* Ad Prompt & Warning Banner */}
+                                        <div className="space-y-2">
+                                            <label className="text-xs font-bold opacity-80 block">ကြော်ငြာမည့် အကြောင်းအရာ (Prompt):</label>
+                                            <textarea 
+                                                rows="3" 
+                                                value={adPrompt} 
+                                                onChange={e=>setAdPrompt(e.target.value)} 
+                                                placeholder="ဥပမာ: Mobile Legends Diamonds အထူးလျှော့ဈေး ရောင်းချပေးနေပါသည်... စသည်ဖြင့် ရေးနိုင်သည် (အလွတ်ထားပါက ပုံပေါ်မူတည်၍ AI စဉ်းစားပေးမည်)"
+                                                className={`w-full p-3 rounded-xl outline-none text-xs ${neoPressedClass}`}
+                                            />
+                                            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-500 text-[11px] leading-relaxed">
+                                                ⚠️ <b>သတိပြုရန်:</b> ကုန်ပစ္စည်းကြော်ငြာအတွက် မူရင်းဈေး၊ ရောင်းဈေး (Discount) နှင့် မှာယူရမည့် ဖုန်းနံပါတ်/လင့်ခ်များကို Prompt တွင် မဖြစ်မနေ ထည့်သွင်းပေးပါခင်ဗျာ။
+                                            </div>
+                                        </div>
+
+                                        {/* Reference Images Multi-Upload */}
+                                        <div className={`p-4 rounded-2xl ${neoPressedClass} space-y-3`}>
+                                            <div className="flex justify-between items-center">
+                                                <label className="text-xs font-bold opacity-80">🖼️ Reference Images (ပစ္စည်းပုံ/Logo များ):</label>
+                                                <input type="file" accept="image/*" ref={adImageInputRef} onChange={e => {
+                                                    const file = e.target.files[0];
+                                                    if (file) {
+                                                        const img = new Image();
+                                                        const url = URL.createObjectURL(file);
+                                                        img.src = url;
+                                                        img.onload = () => {
+                                                            setAdRefImages(prev => [...prev, { id: Date.now(), file, url, imgObj: img }]);
+                                                        };
+                                                    }
+                                                }} className="hidden" />
+                                                <button type="button" onClick={()=>adImageInputRef.current.click()} className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold shadow">
+                                                    + Add Image
+                                                </button>
+                                            </div>
+                                            <div className="flex gap-2 flex-wrap">
+                                                {adRefImages.map((item, i) => (
+                                                    <div key={item.id} className="relative w-14 h-14 rounded-xl overflow-hidden border border-current/20">
+                                                        <img src={item.url} className="w-full h-full object-cover" />
+                                                        <button type="button" onClick={()=>setAdRefImages(adRefImages.filter(x=>x.id!==item.id))} className="absolute top-0 right-0 bg-red-500 text-white p-0.5 rounded-bl">
+                                                            <XIcon className="w-3 h-3"/>
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                {adRefImages.length === 0 && <span className="text-[10px] opacity-50">ပုံမရှိသေးပါ။ Add Image နှိပ်၍ ပုံများထည့်ပါ</span>}
+                                            </div>
+                                        </div>
+
+                                        {/* Optional Voiceover & Script Override */}
+                                        <div className="space-y-3 text-xs">
+                                            <div>
+                                                <label className="font-bold opacity-70 block mb-1">ကိုယ်ပိုင် အသံဖိုင် (Voiceover Upload - Optional):</label>
+                                                <input type="file" accept="audio/*" onChange={e=>setAdCustomVoiceover(e.target.files[0])} className="w-full p-2 border border-dashed rounded-xl text-xs" />
+                                            </div>
+                                            <div>
+                                                <label className="font-bold opacity-70 block mb-1">စာတန်းထိုး စာသား သီးသန့်သတ်မှတ်ရန် (Optional):</label>
+                                                <input type="text" value={adCustomScript} onChange={e=>setAdCustomScript(e.target.value)} placeholder="စာတန်းထိုး စာသားများ ရိုက်ထည့်နိုင်ပါသည်..." className={`w-full p-2.5 rounded-xl outline-none ${neoPressedClass}`} />
+                                            </div>
+                                        </div>
+
+                                        {/* Theme Chooser */}
+                                        <div className="flex gap-2 text-xs font-bold">
+                                            {['purple', 'cyber', 'pink', 'minimal'].map(th => (
+                                                <button key={th} type="button" onClick={()=>setAdBgTheme(th)} className={`flex-1 py-2 rounded-xl capitalize border ${adBgTheme === th ? 'border-amber-500 bg-amber-500/20' : 'opacity-70'}`}>
+                                                    {th}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <button 
+                                            onClick={() => startMotionAdGeneration(false)} 
+                                            disabled={adRendering} 
+                                            className={`w-full py-4 bg-amber-500 hover:bg-amber-600 text-black font-black text-base rounded-2xl shadow-xl transition-all ${adRendering ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        >
+                                            {adRendering ? `Rendering Ad Video (${adRenderProgress}%)...` : '⚡ Motion Ad Video စတင်ဖန်တီးမည်'}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Preview & Revision Column */}
+                                <div className="lg:col-span-6 flex flex-col items-center">
+                                    <div className={`p-6 rounded-3xl w-full flex flex-col items-center ${neoClass}`}>
+                                        <h3 className="w-full text-xs font-bold opacity-70 mb-3 flex items-center gap-2">
+                                            <Film className="w-4 h-4 text-amber-500" /> 9:16 Video Preview
+                                        </h3>
+
+                                        <div className="w-full max-w-[320px] aspect-[9/16] bg-black rounded-3xl overflow-hidden shadow-2xl border-4 border-slate-700 flex items-center justify-center relative">
+                                            {adVideoUrl ? (
+                                                <video src={adVideoUrl} controls autoPlay loop playsInline className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="text-center p-6 opacity-40 text-xs">
+                                                    <Sparkles className="w-12 h-12 mx-auto mb-2 text-amber-500" />
+                                                    <p>ဗီဒီယို ဖန်တီးပြီးပါက ဤနေရာတွင် ပေါ်လာပါမည်</p>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {adVideoUrl && (
+                                            <div className="w-full max-w-[320px] mt-4 space-y-3">
+                                                {/* Download with Ads Button */}
+                                                <button 
+                                                    onClick={() => handleDownloadWithAds(adVideoUrl)} 
+                                                    className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-xl shadow-lg flex items-center justify-center gap-2 text-sm"
+                                                >
+                                                    <Download className="w-5 h-5" /> Video ဒေါင်းလုဒ်ဆွဲမည်
+                                                </button>
+
+                                                {/* Re-edit / Revision Section */}
+                                                <div className={`p-3.5 rounded-2xl ${neoPressedClass} space-y-2 text-xs`}>
+                                                    <div className="flex justify-between items-center font-bold">
+                                                        <span>🔄 ဗီဒီယို ပြန်လည်ပြင်ဆင်ရန်:</span>
+                                                        <span className={adRevisionCount < (parseInt(globalSettings.ads_animator_free_revisions) || 1) ? "text-emerald-400" : "text-amber-500"}>
+                                                            {adRevisionCount < (parseInt(globalSettings.ads_animator_free_revisions) || 1) 
+                                                                ? `(အခမဲ့ ပြန်ပြင်ခွင့် ${ (parseInt(globalSettings.ads_animator_free_revisions) || 1) - adRevisionCount } ကြိမ်ကျန်)` 
+                                                                : "(Credit ကုန်ကျပါမည်)"}
+                                                        </span>
+                                                    </div>
+                                                    <input 
+                                                        type="text" 
+                                                        value={adChangeInstruction} 
+                                                        onChange={e=>setAdChangeInstruction(e.target.value)} 
+                                                        placeholder="ဥပမာ: စာသားအရောင် အဝါပြောင်းပေးပါ / ဈေးနှုန်းကို ပိုကြီးပေးပါ..."
+                                                        className={`w-full p-2.5 rounded-xl outline-none ${neoClass}`}
+                                                    />
+                                                    <button 
+                                                        onClick={() => startMotionAdGeneration(true)} 
+                                                        disabled={adRendering || !adChangeInstruction.trim()}
+                                                        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow"
+                                                    >
+                                                        အသစ်ပြန်လည် ပြင်ဆင်ထုတ်ယူမည်
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                         {(currentView === 'recap' || currentView === 'subtitle') && (
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                                 <div className="lg:col-span-5 flex flex-col gap-6">
@@ -2502,6 +3160,31 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                                 <div><div className="text-sm font-bold flex items-center gap-2"><EyeOff className="w-4 h-4 text-indigo-500"/> Subtle Visual Blur</div><div className="text-[11px] opacity-70">မူရင်း စာတန်းပျောက်ရုံ Box အတိုင်း ဝါးမည်</div></div>
                                                 <input type="checkbox" checked={autoBlurCaption} onChange={(e) => setAutoBlurCaption(e.target.checked)} className="w-5 h-5 accent-indigo-500 cursor-pointer"/>
                                             </div>
+                                            {/* Voice Speed Slider (Pitch Preserved) */}
+                                                <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                                    <div className="flex justify-between items-center mb-2">
+                                                        <div className="text-sm font-bold flex items-center gap-2">
+                                                            <Volume2 className="w-4 h-4 text-indigo-500"/> Voice Speed (အသံ အနှေး/အမြန်)
+                                                        </div>
+                                                        <span className="text-xs font-black px-2.5 py-0.5 rounded-lg bg-indigo-500/20 text-indigo-400 font-mono">
+                                                            {voiceSpeed.toFixed(2)}x
+                                                        </span>
+                                                    </div>
+                                                    <input 
+                                                        type="range" 
+                                                        min="0.9" 
+                                                        max="1.4" 
+                                                        step="0.05" 
+                                                        value={voiceSpeed} 
+                                                        onChange={e => setVoiceSpeed(parseFloat(e.target.value))} 
+                                                        className="w-full accent-indigo-500 cursor-pointer"
+                                                    />
+                                                    <div className="flex justify-between text-[10px] opacity-60 mt-1 font-bold">
+                                                        <span>0.90x (အေးဆေး)</span>
+                                                        <span>1.00x (မူရင်း)</span>
+                                                        <span>1.40x (သွက်လက်)</span>
+                                                    </div>
+                                                </div>
                                             <div className={`flex items-center justify-between p-4 rounded-2xl ${neoPressedClass}`}>
                                                 <div><div className="text-sm font-bold flex items-center gap-2"><Film className="w-4 h-4 text-indigo-500"/> Mirror Video</div><div className="text-[11px] opacity-70">Copyright ကျော်ရန် ဘယ်ညာလှန်မည်</div></div>
                                                 <input type="checkbox" checked={mirrorVideo} onChange={(e) => setMirrorVideo(e.target.checked)} className="w-5 h-5 accent-indigo-500 cursor-pointer"/>
@@ -2612,21 +3295,26 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                             {!finalVideoUrl && videoUrl && (
                                                 <div style={{ position: 'relative', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', borderRadius: '16px', overflow: 'hidden' }}>
                                                     <video 
-                                                        key={videoUrl}
-                                                        ref={previewVideoRef} 
-                                                        src={videoUrl} 
-                                                        controls 
-                                                        playsInline 
-                                                        style={{ 
-                                                            width: '100%', 
-                                                            height: 'auto', 
-                                                            maxHeight: '75vh', 
-                                                            display: 'block', 
-                                                            objectFit: 'contain',
-                                                            filter: `${activeFilter !== 'none' ? activeFilter : ''} brightness(${manualAdjust.b}%) contrast(${manualAdjust.c}%) saturate(${manualAdjust.s}%)`, 
-                                                            transform: mirrorVideo ? 'scaleX(-1)' : 'none' 
-                                                        }} 
-                                                    />
+    key={videoUrl}
+    ref={previewVideoRef} 
+    src={videoUrl} 
+    controls 
+    playsInline 
+    muted={false}
+    onLoadedMetadata={(e) => {
+        e.target.muted = false;
+        e.target.volume = 1.0;
+    }}
+    style={{ 
+        width: '100%', 
+        height: 'auto', 
+        maxHeight: '75vh', 
+        display: 'block', 
+        objectFit: 'contain',
+        filter: `${activeFilter !== 'none' ? activeFilter : ''} brightness(${manualAdjust.b}%) contrast(${manualAdjust.c}%) saturate(${manualAdjust.s}%)`, 
+        transform: mirrorVideo ? 'scaleX(-1)' : 'none' 
+    }} 
+/>
                                                     {autoBlurCaption && (
                                                         <div 
                                                             style={{
@@ -2751,6 +3439,31 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                                 </div>
                                             )} 
                                         </div>
+                                        {/* TTS Speed Slider */}
+                                        <div className={`p-4 rounded-2xl mb-6 ${neoPressedClass}`}>
+                                            <div className="flex justify-between items-center mb-2">
+                                                <label className="text-xs font-bold opacity-80 flex items-center gap-2">
+                                                    <Volume2 className="w-4 h-4 text-rose-500"/> Speech Speed (အသံအမြန်နှုန်း):
+                                                </label>
+                                                <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-rose-500/20 text-rose-500 font-mono">
+                                                    {voiceSpeed.toFixed(2)}x
+                                                </span>
+                                            </div>
+                                            <input 
+                                                type="range" 
+                                                min="0.9" 
+                                                max="1.4" 
+                                                step="0.05" 
+                                                value={voiceSpeed} 
+                                                onChange={e => setVoiceSpeed(parseFloat(e.target.value))} 
+                                                className="w-full accent-rose-500 cursor-pointer"
+                                            />
+                                            <div className="flex justify-between text-[10px] opacity-60 mt-1 font-bold">
+                                                <span>0.90x</span>
+                                                <span>1.00x</span>
+                                                <span>1.40x</span>
+                                            </div>
+                                        </div>
                                         <div className="mb-6"><label className="block text-sm font-semibold mb-3 opacity-80">🎭 လေသံ အမျိုးအစား (10 Styles)</label><div className="grid grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">{VOICE_STYLES.map(style => (<button key={style.id} onClick={() => setTtsStyleObj(style)} className={`p-3 rounded-xl text-xs font-semibold text-left flex items-center gap-2 transition-all ${ttsStyleObj.id === style.id ? 'bg-rose-500 text-white shadow-md' : neoPressedClass}`}><span className="text-lg">{style.emoji}</span><span className="truncate">{style.name}</span></button>))}</div></div>
 
                                         <button onClick={async () => {
@@ -2783,7 +3496,7 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                                     const res = await apiFetch('/api/tts', { 
                                                         method: 'POST', 
                                                         headers: { 'Content-Type': 'application/json' }, 
-                                                        body: JSON.stringify({ text: textToSpeak, voice: ttsVoice, rate: "+10%" }) 
+                                                        body: JSON.stringify({ text: textToSpeak, voice: ttsVoice, rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` })
                                                     });
                                                     if (!res.ok) {
                                                         const errData = await res.json();
@@ -3723,6 +4436,26 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                                     <input type="number" value={globalSettings.tts_chars_per_credit} onChange={e=>setGlobalSettings({...globalSettings, tts_chars_per_credit: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoClass}`} />
                                                 </div>
                                             )}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 col-span-full">
+                                                <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                                    <label className="text-xs font-bold opacity-70 block mb-1">🎬 Ads Animator (၁ စက္ကန့်စာ ကုန်ကျမည့် Credit):</label>
+                                                    <input 
+                                                        type="number" 
+                                                        value={globalSettings.ads_animator_rate_per_sec || '2'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, ads_animator_rate_per_sec: e.target.value })} 
+                                                        className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
+                                                    />
+                                                </div>
+                                                <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
+                                                    <label className="text-xs font-bold opacity-70 block mb-1">🔄 အခမဲ့ ပြန်ပြင်ခွင့် (Free Revision အကြိမ်ရေ သတ်မှတ်ရန်):</label>
+                                                    <input 
+                                                        type="number" 
+                                                        value={globalSettings.ads_animator_free_revisions || '1'} 
+                                                        onChange={e => setGlobalSettings({ ...globalSettings, ads_animator_free_revisions: e.target.value })} 
+                                                        className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
+                                                    />
+                                                </div>
+                                            </div>
                                             <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-1">Ads Smart Link (ကြော်ငြာလင့်ခ်):</label>
                                                 <input type="url" value={globalSettings.ads_smart_link} onChange={e=>setGlobalSettings({...globalSettings, ads_smart_link: e.target.value})} className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`} />

@@ -101,6 +101,8 @@ def init_db():
         "voice_clone_recap_rate_per_min": "80",
         "voice_clone_tts_mode": "credits",
         "voice_clone_tts_chars_per_credit": "50",
+        "ads_animator_rate_per_sec": "2",
+        "ads_animator_free_revisions": "1",
         "codecraft_api_keys": json.dumps([]),
         "groq_api_keys_pool": json.dumps([]),
         "apinex_enabled": "true",
@@ -1382,31 +1384,43 @@ async def proxy_neural_compute(request: Request):
 
     body = await request.json()
     url_doc = settings_col.find_one({"key": "apinex_base_url"})
-    raw_endpoint = url_doc.get("value", "").strip() if url_doc else ""
+    raw_endpoint = (url_doc.get("value", "") if url_doc else "").strip()
     
+    # URL Path ကို သန့်စင်ပြီး /chat/completions သို့ တိကျစွာ ချိတ်ဆက်ခြင်း
     if not raw_endpoint:
         base_endpoint = "https://apinex.bond/v1/chat/completions"
-    elif raw_endpoint.endswith("/chat/completions"):
-        base_endpoint = raw_endpoint
     else:
-        base_endpoint = raw_endpoint.rstrip("/") + "/chat/completions"
+        clean_url = raw_endpoint.rstrip("/")
+        if clean_url.endswith("/chat/completions"):
+            base_endpoint = clean_url
+        elif clean_url.endswith("/v1"):
+            base_endpoint = f"{clean_url}/chat/completions"
+        else:
+            base_endpoint = f"{clean_url}/v1/chat/completions"
 
     last_err = ""
-    async with httpx.AsyncClient(timeout=60.0) as client_http:
+    # verify=False နှင့် User-Agent ထည့်သွင်းခြင်းဖြင့် Cloudflare 502 Bad Gateway ကို ကျော်လွှားခြင်း
+    async with httpx.AsyncClient(timeout=90.0, verify=False, follow_redirects=True) as client_http:
         for _ in range(len(keys)):
             current_key = get_next_apinex_key()
+            if not current_key:
+                continue
             try:
                 headers = {
                     "Authorization": f"Bearer {current_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
                 }
                 res = await client_http.post(base_endpoint, json=body, headers=headers)
+                
                 if res.status_code == 200:
                     return Response(content=res.content, status_code=200, media_type="application/json")
                 else:
-                    last_err = f"Endpoint responded {res.status_code}: {res.text}"
+                    last_err = f"Endpoint responded {res.status_code}: {res.text[:200]}"
+                    print(f"[Apinex Error {res.status_code}]: {res.text}")
             except Exception as e:
                 last_err = str(e)
+                print(f"[Apinex Exception]: {e}")
                 continue
 
     raise HTTPException(status_code=502, detail=f"Neural Engine Connection Error: {last_err}")
@@ -1501,7 +1515,26 @@ async def proxy_groq(request: Request):
         return JSONResponse(status_code=502, content={"error": f"Groq Error: {last_error_detail}"})
     except Exception as e: 
         return JSONResponse(status_code=500, content={"error": str(e)})
+# --- PROTECTED SFX STREAMING (ANTI-THEFT) ---
+SFX_DIR = (APP_DIR / "sfx_assets").resolve()
+SFX_DIR.mkdir(parents=True, exist_ok=True)
 
+@app.get("/api/protected-sfx/{filename}")
+async def get_protected_sfx(filename: str, request: Request):
+    # Session Token စစ်ဆေးခြင်း (Console သို့မဟုတ် URL ရိုက်ခေါ်ပါက 401 Error ဖြင့် ပိတ်ပင်မည်)
+    get_request_email(request)
+    
+    safe_filename = os.path.basename(filename)
+    sfx_path = (SFX_DIR / safe_filename).resolve()
+    
+    if not sfx_path.exists() or not sfx_path.is_file():
+        raise HTTPException(status_code=404, detail="SFX not found")
+        
+    # .wav နှင့် .mp3 အလိုက် MIME Type အမှန် သတ်မှတ်ပေးခြင်း
+    media_type = "audio/wav" if safe_filename.lower().endswith(".wav") else "audio/mpeg"
+    response = FileResponse(sfx_path, media_type=media_type)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return response
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
