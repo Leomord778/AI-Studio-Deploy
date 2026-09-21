@@ -1162,7 +1162,7 @@
                 let batchStart = originalBlocks[0]?.start || 0;
 
                 for (const b of originalBlocks) {
-                    if (currentBatch.length > 0 && (b.end - batchStart > 180)) {
+                    if (currentBatch.length > 0 && (b.end - batchStart > 90)) {
                         batches.push(currentBatch);
                         currentBatch = [b];
                         batchStart = b.start;
