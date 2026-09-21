@@ -12,6 +12,8 @@ import time
 import asyncio
 import mimetypes
 import shutil
+import random
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Any, List
 from pathlib import Path
@@ -55,7 +57,7 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "778leomord@gmail.com").strip().lower()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003802670362").strip()
 
-# GROQ_API_KEY (S မပါ) သို့မဟုတ် GROQ_API_KEYS (S ပါ) နှစ်ခုစလုံးကို ဖတ်နိုင်အောင် ပြင်ဆင်ထားခြင်း
+# Groq Keys
 raw_groq_env = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEYS") or ""
 DEFAULT_GROQ_KEYS = [k.strip() for k in raw_groq_env.split(",") if k.strip()]
 
@@ -103,12 +105,27 @@ def init_db():
         "voice_clone_tts_chars_per_credit": "50",
         "ads_animator_rate_per_sec": "2",
         "ads_animator_free_revisions": "1",
-        "codecraft_api_keys": json.dumps([]),
-        "groq_api_keys_pool": json.dumps([]),
-        "apinex_enabled": "true",
-        "apinex_base_url": "https://apinex.bond/v1",
-        "apinex_model": "free/gemini-3.8-flash",
-        "apinex_api_keys": json.dumps([]),
+        "tool_status_downloader": "true",
+        "tool_status_animator": "true",
+        "tool_status_recap": "true",
+        "tool_status_subtitle": "true",
+        "tool_status_tts": "true",
+        "tool_status_store": "true",
+        "server_key_rate_per_min": "50",
+        "server_key_first_two_rate": "30",
+        "server_key_discount_enabled": "true",
+        "own_key_rate_per_min": "20",
+        "own_key_first_two_rate": "15",
+        "own_key_discount_enabled": "true",
+        "primary_provider": "codecraft",
+        "primary_base_url": "https://codecraftapi.com/v1",
+        "primary_model": "gpt-4o-mini",
+        "primary_api_keys": json.dumps([]),
+        "secondary_provider": "chat_b_ai",
+        "secondary_base_url": "https://chat.b.ai/v1",
+        "secondary_model": "gpt-4o",
+        "secondary_api_keys": json.dumps([]),
+        "groq_api_keys_pool": json.dumps([])
     }
     for key, value in defaults.items(): 
         settings_col.update_one({"key": key}, {"$setOnInsert": {"value": value}}, upsert=True)
@@ -122,7 +139,11 @@ def init_db():
             "created_at": current_utc()
         })
     
-    video_history_col.create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)
+    try:
+        video_history_col.drop_index("expires_at_1")
+    except Exception:
+        pass
+    video_history_col.create_index([("email", ASCENDING)])
 
 async def send_telegram_notification(caption: str, photo_path: Optional[Path] = None):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -144,13 +165,19 @@ async def send_telegram_notification(caption: str, photo_path: Optional[Path] = 
 
 def refund_and_cleanup():
     now = current_utc()
-    expired_videos = list(video_history_col.find({"expires_at": {"$lte": now}}))
+    # ဖိုင်မဖျက်ရသေးသော သက်တမ်းကုန် ဗီဒီယိုများကိုသာ ရှာဖွေခြင်း
+    expired_videos = list(video_history_col.find({
+        "expires_at": {"$lte": now},
+        "status": {"$ne": "expired"}
+    }))
+    
     for item in expired_videos:
         u_email = item.get("email")
         cost = int(item.get("cost", 0))
         downloaded = item.get("downloaded", False)
         created_time_str = item.get("created_at").strftime("%Y-%m-%d %H:%M") if item.get("created_at") else "ယခင်"
 
+        # Download မဆွဲခဲ့ပါက Credit ပြန်အမ်းခြင်း
         if not downloaded and cost > 0 and u_email != ADMIN_EMAIL:
             users_col.update_one({"email": u_email}, {"$inc": {"credits": cost}})
             create_notification(
@@ -163,9 +190,17 @@ def refund_and_cleanup():
                 "Auto-Refund သတိပေးချက်",
                 f"User ({u_email}) မှ {created_time_str} တွင် လုပ်ခဲ့သော ဗီဒီယိုအား Download မဆွဲခဲ့သဖြင့် {cost} Credits အား စနစ်မှ အလိုအလျောက် Refund ပေးလိုက်ပါသည်။"
             )
+            
+        # Storage မပြည့်စေရန် Media ဖိုင်ကိုသာ Disk ပေါ်မှ ဖျက်ခြင်း
         delete_media(item.get("media_key"))
-        video_history_col.delete_one({"_id": item["_id"]})
+        
+        # Database Record ကို လုံးဝမဖျက်ဘဲ status ကို expired ဟုသာ မှတ်သားထားခြင်း (Stats မပျောက်စေရန်)
+        video_history_col.update_one(
+            {"_id": item["_id"]},
+            {"$set": {"status": "expired", "media_key": None}}
+        )
 
+    # သက်တမ်းကုန်သွားသော User Credits များကို စစ်ဆေးရှင်းလင်းခြင်း
     expired_users = list(users_col.find({
         "role": {"$ne": "admin"},
         "credits_expire_at": {"$ne": None, "$lte": now},
@@ -233,10 +268,18 @@ def _decode_session(token: str) -> Optional[dict]:
     except Exception: return None
 
 def get_request_email(request: Request) -> str:
+    token = ""
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
-        payload = _decode_session(auth[7:].strip())
-        if payload and payload.get("email"): return str(payload["email"]).strip().lower()
+        token = auth[7:].strip()
+    elif request.query_params.get("token"):
+        token = request.query_params.get("token").strip()
+
+    if token:
+        payload = _decode_session(token)
+        if payload and payload.get("email"):
+            return str(payload["email"]).strip().lower()
+
     raise HTTPException(status_code=401, detail="ကျေးဇူးပြု၍ အကောင့် Login အရင်ဝင်ပေးပါ။")
 
 def require_admin(request: Request) -> str:
@@ -293,8 +336,6 @@ def create_notification(email: str, title: str, body: str, notification_type: st
         "created_at": current_utc()
     })
 
-# --- CORE PAGE & MEDIA ---
-
 @app.get("/")
 async def serve_index():
     index_path = APP_DIR / "index.html"
@@ -317,8 +358,106 @@ async def serve_media(media_path: str):
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
 
-# --- AUTH & USER PROFILE ---
+def normalize_chat_url(base_url: str) -> str:
+    url = str(base_url).strip().rstrip("/")
+    if "chat.b.ai" in url:
+        url = url.replace("chat.b.ai", "api.b.ai")
+    
+    if url.endswith("/chat/completions"):
+        return url
+    if url.endswith("/v1"):
+        return f"{url}/chat/completions"
+    return f"{url}/v1/chat/completions"
 
+async def call_universal_ai(messages: list, temperature: float = 0.7) -> str:
+    settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
+    
+    p_base = str(settings.get("primary_base_url") or "").strip()
+    p_model = str(settings.get("primary_model") or "").strip()
+    p_keys = parse_settings_keys(settings.get("primary_api_keys", "[]"))
+
+    s_base = str(settings.get("secondary_base_url") or "").strip()
+    s_model = str(settings.get("secondary_model") or "").strip()
+    s_keys = parse_settings_keys(settings.get("secondary_api_keys", "[]"))
+
+    async def execute_request(provider_tag: str, base_url: str, model: str, key: str):
+        url = normalize_chat_url(base_url)
+        headers = {
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+            "Connection": "close"
+        }
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature
+        }
+        
+        print(f"[{provider_tag}] ချိတ်ဆက်နေသည်: {url} | Model: {model}")
+        
+        async with httpx.AsyncClient(timeout=120.0, http1=True, verify=False) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                print(f"[{provider_tag} Success] အောင်မြင်စွာ အဖြေရရှိပါပြီ!")
+                return data["choices"][0]["message"]["content"]
+            raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+
+    # ၁။ Primary API ကို အဓိက အရင်ဆုံး RUN မည်
+    if p_base and p_model and p_keys:
+        for idx, key in enumerate(p_keys):
+            if not key.strip(): continue
+            try:
+                return await execute_request("Primary API (Main)", p_base, p_model, key.strip())
+            except Exception as e:
+                print(f"[Primary Key {idx+1} Error]: {str(e)} -> နောက် Key သို့ ကူးမည်")
+                continue
+
+    # ၂။ Primary မရတော့မှ Secondary API သို့ ကူးမည်
+    if s_base and s_model and s_keys:
+        print("[Universal AI Warning]: Primary API မရသဖြင့် Secondary API သို့ ကူးပြောင်းနေပါသည်...")
+        for idx, key in enumerate(s_keys):
+            if not key.strip(): continue
+            try:
+                return await execute_request("Secondary API", s_base, s_model, key.strip())
+            except Exception as e:
+                print(f"[Secondary Key {idx+1} Error]: {str(e)} -> နောက် Key သို့ ကူးမည်")
+                continue
+
+    # ၃။ နှစ်ခုစလုံး Error တက်မှသာ အရန် Fallback API သုံးမည်
+    print("[Universal AI Alert]: Primary ရော Secondary ပါ မရတော့သဖြင့် အရန် Fallback API သို့ ကူးပြောင်းပါသည်...")
+    
+    # Fallback A: Groq Key များဖြင့် ကြိုးစားခြင်း
+    groq_keys = DEFAULT_GROQ_KEYS + get_groq_pool_keys()
+    if groq_keys:
+        for g_key in groq_keys:
+            try:
+                return await execute_request("Fallback (Groq Llama)", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", g_key)
+            except Exception as e:
+                print(f"[Groq Fallback Error]: {str(e)}")
+                continue
+
+    # Fallback B: Server Gemini Key ဖြင့် ကြိုးစားခြင်း
+    gemini_key = get_server_gemini_key()
+    if gemini_key:
+        try:
+            combined_text = "\n\n".join([m.get("content", "") for m in messages if m.get("content")])
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": combined_text}]}],
+                "generationConfig": {"temperature": temperature}
+            }
+            async with httpx.AsyncClient(timeout=60.0, verify=False) as client_http:
+                resp = await client_http.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
+                if resp.status_code == 200:
+                    res_data = resp.json()
+                    return res_data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception as e:
+            print(f"[Gemini Fallback Error]: {str(e)}")
+
+    raise HTTPException(status_code=500, detail="Primary၊ Secondary နှင့် Fallback API Keys များ အားလုံး အသုံးပြု၍ မရတော့ပါခင်ဗျာ။")
 @app.post("/api/login")
 async def login(data: dict):
     email = data.get("email", "").strip().lower()
@@ -348,7 +487,15 @@ async def login(data: dict):
                 user["credits"] = 0
                 user["credits_expire_at"] = None
 
-    settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
+    settings = {}
+    for doc in settings_col.find():
+        settings[doc["key"]] = doc["value"]
+
+    # Tool Switches များ Default တန်ဖိုး သေချာစေရန်
+    for t_key in ["tool_status_downloader", "tool_status_animator", "tool_status_recap", "tool_status_subtitle", "tool_status_tts", "tool_status_store"]:
+        if t_key not in settings:
+            settings[t_key] = "true"
+
     if "_id" in user: del user["_id"]
     
     remaining_days = None
@@ -438,9 +585,7 @@ async def mark_notifications_read(request: Request):
     notifications_col.update_many({"email": email, "is_read": False}, {"$set": {"is_read": True}})
     return {"status": "success"}
 
-# --- VIDEO COST CALCULATION & BILLING ---
-
-def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = False) -> tuple[int, bool]:
+def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = False, key_mode: str = "server") -> tuple[int, bool]:
     dur_mins = max(1, math.ceil(dur_sec / 60.0))
 
     free_setting = settings_col.find_one({"key": "free_minutes_per_day"})
@@ -452,22 +597,39 @@ def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = Fals
         cost = dur_mins * base_rate
         return cost, False
 
-    rate_setting = settings_col.find_one({"key": "deduction_rate_per_min"})
-    base_rate = int(rate_setting.get("value", "50")) if rate_setting else 50
-
-    first_two_setting = settings_col.find_one({"key": "first_two_min_rate"})
-    first_two_rate = int(first_two_setting.get("value", "30")) if first_two_setting else 30
-
     if free_mins > 0:
         if dur_mins <= free_mins:
             return 0, True
         else:
             dur_mins -= free_mins
 
-    if dur_mins <= 2:
-        cost = first_two_rate
+    # Server Key သို့မဟုတ် Own Key အလိုက် နှုန်းထားနှင့် လျှော့စျေး စစ်ဆေးခြင်း
+    if key_mode == "own":
+        rate_setting = settings_col.find_one({"key": "own_key_rate_per_min"})
+        base_rate = int(rate_setting.get("value", "20")) if rate_setting else 20
+
+        disc_setting = settings_col.find_one({"key": "own_key_discount_enabled"})
+        disc_enabled = (disc_setting.get("value", "true") == "true") if disc_setting else True
+
+        first_two_setting = settings_col.find_one({"key": "own_key_first_two_rate"})
+        first_two_rate = int(first_two_setting.get("value", "15")) if first_two_setting else 15
     else:
-        cost = first_two_rate + ((dur_mins - 2) * base_rate)
+        rate_setting = settings_col.find_one({"key": "server_key_rate_per_min"}) or settings_col.find_one({"key": "deduction_rate_per_min"})
+        base_rate = int(rate_setting.get("value", "50")) if rate_setting else 50
+
+        disc_setting = settings_col.find_one({"key": "server_key_discount_enabled"})
+        disc_enabled = (disc_setting.get("value", "true") == "true") if disc_setting else True
+
+        first_two_setting = settings_col.find_one({"key": "server_key_first_two_rate"}) or settings_col.find_one({"key": "first_two_min_rate"})
+        first_two_rate = int(first_two_setting.get("value", "30")) if first_two_setting else 30
+
+    if disc_enabled and first_two_rate > 0:
+        if dur_mins <= 2:
+            cost = first_two_rate
+        else:
+            cost = first_two_rate + ((dur_mins - 2) * base_rate)
+    else:
+        cost = dur_mins * base_rate
 
     return cost, False
 
@@ -476,7 +638,8 @@ async def pre_deduct_video_cost(request: Request, data: dict):
     email = get_request_email(request)
     dur_sec = float(data.get("duration", 60))
     is_clone = bool(data.get("is_voice_clone", False))
-    cost, is_free = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone)
+    key_mode = str(data.get("key_mode", "server")).strip().lower()
+    cost, is_free = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode=key_mode)
 
     user = users_col.find_one({"email": email})
     if email != ADMIN_EMAIL and not is_free:
@@ -489,11 +652,50 @@ async def pre_deduct_video_cost(request: Request, data: dict):
 
     return {"status": "success", "deducted": cost if email != ADMIN_EMAIL else 0, "is_free": is_free}
 
+@app.post("/api/video/adjust-fallback-rate")
+async def adjust_fallback_rate(request: Request, data: dict):
+    """Server Key မရ၍ User Key သို့ Fallback ကူးသုံးပါက ကွာခြားချက်အား အလိုအလျောက် Refund ပေးခြင်း"""
+    email = get_request_email(request)
+    dur_sec = float(data.get("duration", 60))
+    is_clone = bool(data.get("is_voice_clone", False))
+
+    server_cost, _ = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode="server")
+    own_cost, _ = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode="own")
+
+    refund_diff = max(0, server_cost - own_cost)
+    if email != ADMIN_EMAIL and refund_diff > 0:
+        users_col.update_one({"email": email}, {"$inc": {"credits": refund_diff}})
+        create_notification(
+            email,
+            "Credit ပြန်အမ်းငွေ (Own Key နှုန်းထားသို့ ပြောင်းလဲခြင်း)",
+            f"Server Key Error ကြောင့် သင့် ကိုယ်ပိုင် Key ဖြင့် ဆက်လက်လုပ်ဆောင်ခဲ့သဖြင့် ကွာခြားချက် {refund_diff} Credits အား ပြန်လည် အမ်းပေးလိုက်ပါပြီခင်ဗျာ။"
+        )
+    return {"status": "success", "refunded": refund_diff, "actual_cost": own_cost}
+
+@app.post("/api/video/refund-failed-pre-deduct")
+async def refund_failed_pre_deduct(request: Request, data: dict):
+    """Server Key Error ဖြစ်ပြီး User Key မရှိ၍ ရပ်တန့်သွားပါက ကြိုဖြတ်ထားသော Credit အပြည့် ပြန်အမ်းခြင်း"""
+    email = get_request_email(request)
+    dur_sec = float(data.get("duration", 60))
+    is_clone = bool(data.get("is_voice_clone", False))
+    key_mode = str(data.get("key_mode", "server")).strip().lower()
+
+    cost, is_free = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode=key_mode)
+    if email != ADMIN_EMAIL and cost > 0 and not is_free:
+        users_col.update_one({"email": email}, {"$inc": {"credits": cost}})
+    return {"status": "success", "refunded": cost}
+
 @app.post("/api/video/save-client-rendered")
-async def save_client_rendered(request: Request, file: UploadFile = File(...), duration: str = Form("60"), tool: str = Form("recap")):
+async def save_client_rendered(
+    request: Request, 
+    file: UploadFile = File(...), 
+    duration: str = Form("60"), 
+    tool: str = Form("recap"),
+    key_mode: str = Form("server")
+):
     email = get_request_email(request)
     dur_sec = float(duration)
-    cost, is_free = calculate_video_cost(email, dur_sec)
+    cost, is_free = calculate_video_cost(email, dur_sec, key_mode=key_mode)
 
     upload_res = await save_upload(file, "rendered_videos")
     final_key = upload_res["key"]
@@ -503,6 +705,7 @@ async def save_client_rendered(request: Request, file: UploadFile = File(...), d
         "title": f"{'Recap' if tool=='recap' else 'Subtitle'} Video ({datetime.now().strftime('%d/%m %H:%M')})",
         "tool": tool,
         "duration": duration,
+        "key_mode": key_mode,
         "cost": cost if email != ADMIN_EMAIL else 0,
         "status": "completed",
         "downloaded": False,
@@ -541,8 +744,6 @@ async def get_video_history(request: Request):
             "created_at": d.get("created_at").isoformat() if d.get("created_at") else ""
         } for d in video_history_col.find({"email": email}).sort("created_at", DESCENDING)]
     }
-
-# --- STORE & TELEGRAM ORDER API ---
 
 @app.get("/api/products")
 async def get_products():
@@ -634,8 +835,6 @@ async def submit_store_order(
         f"သင်ဝယ်ယူထားသော {product_name} ({variant_name}) အတွက် ငွေလွှဲပြေစာ လက်ခံရရှိပါပြီခင်ဗျာ။ Admin မှ စစ်ဆေးပြီး ပစ္စည်းအမြန်ဆုံး ဖြည့်သွင်းပေးပါမည်။"
     )
     return {"status": "success", "order_id": str(inserted.inserted_id)}
-
-# --- ADMIN CONTROL PANEL ---
 
 @app.get("/api/admin/stats")
 async def admin_get_stats(request: Request):
@@ -737,7 +936,7 @@ async def admin_get_users(request: Request):
         u_email = u.get("email", "").strip().lower()
         
         total_vids = video_history_col.count_documents({"email": u_email})
-        success_vids = video_history_col.count_documents({"email": u_email, "status": {"$ne": "failed"}})
+        success_vids = video_history_col.count_documents({"email": u_email, "status": {"$in": ["completed", "expired"]}})
         failed_vids = video_history_col.count_documents({"email": u_email, "status": "failed"})
         
         approved_txs = list(transactions_col.find({"email": u_email, "status": "approved"}))
@@ -1113,11 +1312,12 @@ async def create_product(
         "payment_accounts": payment_accounts,
         "image_url": primary_image,
         "image_urls": image_urls,
-        "created_at": datetime.utcnow()
+        "created_at": current_utc()
     }
     
     res = products_col.insert_one(doc)
     return {"message": "Product created successfully", "id": str(res.inserted_id)}
+
 @app.put("/api/admin/products/{product_id}")
 async def update_product(
     request: Request,
@@ -1166,6 +1366,7 @@ async def update_product(
 
     products_col.update_one({"_id": ObjectId(product_id)}, {"$set": update_doc})
     return {"status": "success", "message": "Product updated successfully"}
+
 @app.delete("/api/admin/products/{product_id}")
 async def admin_delete_product(request: Request, product_id: str):
     require_admin(request)
@@ -1177,8 +1378,6 @@ async def admin_delete_product(request: Request, product_id: str):
             delete_media(prod["image_key"])
     products_col.delete_one({"_id": ObjectId(product_id)})
     return {"status": "success"}
-
-# --- RICH MEDIA MESSAGING ---
 
 @app.get("/api/messages")
 async def get_messages(request: Request, peer: Optional[str] = None):
@@ -1237,8 +1436,6 @@ async def send_message(
     }
     messages_col.insert_one(doc)
     return {"status": "sent"}
-
-# --- AI & TTS PROXY (WITH STRICT DEDUCTION & USAGE TRACKING) ---
 
 @app.post("/api/voice-clone/tts")
 async def voice_clone_proxy(
@@ -1340,92 +1537,43 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     except Exception as e: 
         return JSONResponse(status_code=500, content={"error": f"Edge TTS Error: {str(e)}"})
 
-# --- NEURAL COMPUTE ENGINE (MASKED PROXY) ---
+# --- NEURAL COMPUTE ENGINE (MULTI-PROVIDER ORCHESTRATOR) ---
 
-apinex_key_idx = 0
-groq_pool_idx = 0
-
-def get_apinex_pool_keys() -> list[str]:
-    doc = settings_col.find_one({"key": "apinex_api_keys"})
-    if doc and doc.get("value"):
-        try: return [k.strip() for k in json.loads(doc["value"]) if k.strip()]
-        except Exception: return []
+def parse_settings_keys(raw_val) -> list[str]:
+    if isinstance(raw_val, list):
+        return [k.strip() for k in raw_val if isinstance(k, str) and k.strip()]
+    if isinstance(raw_val, str):
+        try:
+            parsed = json.loads(raw_val)
+            if isinstance(parsed, list):
+                return [k.strip() for k in parsed if isinstance(k, str) and k.strip()]
+        except Exception:
+            if raw_val.strip():
+                return [raw_val.strip()]
     return []
 
-def get_groq_pool_keys() -> list[str]:
-    doc = settings_col.find_one({"key": "groq_api_keys_pool"})
-    if doc and doc.get("value"):
-        try: return [k.strip() for k in json.loads(doc["value"]) if k.strip()]
-        except Exception: return []
-    return []
-
-def get_next_apinex_key() -> str:
-    global apinex_key_idx
-    keys = get_apinex_pool_keys()
-    if not keys: return ""
-    k = keys[apinex_key_idx % len(keys)]
-    apinex_key_idx += 1
-    return k
-
-# Browser Console မှ မသိစေရန် Masked Endpoint ဖြင့် လွှဲပေးခြင်း
 @app.post("/api/engine/neural-compute")
 async def proxy_neural_compute(request: Request):
     get_request_email(request)
-    
-    enabled_doc = settings_col.find_one({"key": "apinex_enabled"})
-    is_enabled = enabled_doc.get("value", "true").lower() == "true" if enabled_doc else True
-    
-    if not is_enabled:
-        raise HTTPException(status_code=503, detail="Neural Engine is disabled by Administrator")
-
-    keys = get_apinex_pool_keys()
-    if not keys:
-        raise HTTPException(status_code=503, detail="No pool keys available")
-
     body = await request.json()
-    url_doc = settings_col.find_one({"key": "apinex_base_url"})
-    raw_endpoint = (url_doc.get("value", "") if url_doc else "").strip()
+    messages = body.get("messages", [])
+    temperature = float(body.get("temperature", 0.7))
     
-    # URL Path ကို သန့်စင်ပြီး /chat/completions သို့ တိကျစွာ ချိတ်ဆက်ခြင်း
-    if not raw_endpoint:
-        base_endpoint = "https://apinex.bond/v1/chat/completions"
-    else:
-        clean_url = raw_endpoint.rstrip("/")
-        if clean_url.endswith("/chat/completions"):
-            base_endpoint = clean_url
-        elif clean_url.endswith("/v1"):
-            base_endpoint = f"{clean_url}/chat/completions"
-        else:
-            base_endpoint = f"{clean_url}/v1/chat/completions"
+    if not messages:
+        raise HTTPException(status_code=400, detail="Messages are required")
 
-    last_err = ""
-    # verify=False နှင့် User-Agent ထည့်သွင်းခြင်းဖြင့် Cloudflare 502 Bad Gateway ကို ကျော်လွှားခြင်း
-    async with httpx.AsyncClient(timeout=90.0, verify=False, follow_redirects=True) as client_http:
-        for _ in range(len(keys)):
-            current_key = get_next_apinex_key()
-            if not current_key:
-                continue
-            try:
-                headers = {
-                    "Authorization": f"Bearer {current_key}",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    reply_text = await call_universal_ai(messages, temperature)
+    
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": reply_text
                 }
-                res = await client_http.post(base_endpoint, json=body, headers=headers)
-                
-                if res.status_code == 200:
-                    return Response(content=res.content, status_code=200, media_type="application/json")
-                else:
-                    last_err = f"Endpoint responded {res.status_code}: {res.text[:200]}"
-                    print(f"[Apinex Error {res.status_code}]: {res.text}")
-            except Exception as e:
-                last_err = str(e)
-                print(f"[Apinex Exception]: {e}")
-                continue
-
-    raise HTTPException(status_code=502, detail=f"Neural Engine Connection Error: {last_err}")
-    
-# --- GEMINI PROXY (URL-ENCODING DECODE FIX) ---
+            }
+        ]
+    }
 
 @app.api_route("/api/gemini/{path:path}", methods=["GET", "POST"])
 async def proxy_gemini(path: str, request: Request):
@@ -1433,7 +1581,6 @@ async def proxy_gemini(path: str, request: Request):
     client_key = query_params.get("key", "").strip()
     keys_to_try = []
     
-    # cc_ ဖြင့်စသော CodeCraft Key များ ရောပါလာပါက ဖယ်ထုတ်ခြင်း
     if client_key and not client_key.startswith("cc_"): 
         keys_to_try.append(client_key)
         
@@ -1445,7 +1592,6 @@ async def proxy_gemini(path: str, request: Request):
     body_bytes = await request.body()
     last_res = None
 
-    # URL ထဲရှိ %3A ကို : သို့ သေချာ decode ပြုလုပ်ခြင်း
     clean_path = unquote(unquote(path)).replace("%3A", ":")
 
     async with httpx.AsyncClient(timeout=120.0) as client_http:
@@ -1465,7 +1611,12 @@ async def proxy_gemini(path: str, request: Request):
         return Response(content=last_res.content, status_code=last_res.status_code, media_type="application/json")
     return JSONResponse(status_code=500, content={"error": "Server Gemini API Error"})
 
-# --- GROQ PROXY ---
+def get_groq_pool_keys() -> list[str]:
+    doc = settings_col.find_one({"key": "groq_api_keys_pool"})
+    if doc and doc.get("value"):
+        try: return [k.strip() for k in json.loads(doc["value"]) if k.strip()]
+        except Exception: return []
+    return []
 
 @app.post("/api/groq/transcriptions")
 async def proxy_groq(request: Request):
@@ -1485,12 +1636,12 @@ async def proxy_groq(request: Request):
         for k in DEFAULT_GROQ_KEYS:
             if k and k not in keys_to_try: 
                 keys_to_try.append(k)
-        # Admin Panel မှ ထည့်ထားသော Groq Pool Keys များကို အလှည့်ကျ စာရင်းသွင်းပေးခြင်း
+        
         admin_groq_pool = get_groq_pool_keys()
         for k in admin_groq_pool:
-            if k and k not in keys_to_try:
+            if k and k not in keys_to_try: 
                 keys_to_try.append(k)
-        if not keys_to_try:
+        if not keys_to_try: 
             return JSONResponse(status_code=400, content={"error": "Groq API Key ထည့်သွင်းထားခြင်း မရှိပါ"})
 
         last_error_detail = "Keys မအောင်မြင်ပါ"
@@ -1515,26 +1666,204 @@ async def proxy_groq(request: Request):
         return JSONResponse(status_code=502, content={"error": f"Groq Error: {last_error_detail}"})
     except Exception as e: 
         return JSONResponse(status_code=500, content={"error": str(e)})
-# --- PROTECTED SFX STREAMING (ANTI-THEFT) ---
+
 SFX_DIR = (APP_DIR / "sfx_assets").resolve()
 SFX_DIR.mkdir(parents=True, exist_ok=True)
 
 @app.get("/api/protected-sfx/{filename}")
 async def get_protected_sfx(filename: str, request: Request):
-    # Session Token စစ်ဆေးခြင်း (Console သို့မဟုတ် URL ရိုက်ခေါ်ပါက 401 Error ဖြင့် ပိတ်ပင်မည်)
     get_request_email(request)
-    
     safe_filename = os.path.basename(filename)
     sfx_path = (SFX_DIR / safe_filename).resolve()
     
-    if not sfx_path.exists() or not sfx_path.is_file():
+    if not sfx_path.exists() or not sfx_path.is_file(): 
         raise HTTPException(status_code=404, detail="SFX not found")
         
-    # .wav နှင့် .mp3 အလိုက် MIME Type အမှန် သတ်မှတ်ပေးခြင်း
     media_type = "audio/wav" if safe_filename.lower().endswith(".wav") else "audio/mpeg"
     response = FileResponse(sfx_path, media_type=media_type)
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     return response
+
+# --- ROBUST STANDALONE VIDEO DOWNLOADER (TIKTOK NO-WM / YT-DLP DIRECT) ---
+import yt_dlp
+
+DOWNLOADS_DIR = (MEDIA_ROOT / "downloads").resolve()
+DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+async def fetch_tiktok_direct_api(url: str) -> Optional[dict]:
+    """TikTok Video & Photos ကို Watermark ကင်းစင်စွာ တိုက်ရိုက်ဆွဲယူခြင်း"""
+    try:
+        api_url = "https://www.tikwm.com/api/"
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.post(api_url, data={"url": url, "hd": 1})
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == 0 and "data" in data:
+                    item = data["data"]
+                    if "images" in item and item["images"]:
+                        return {
+                            "title": item.get("title", "TikTok_Image_Slide"),
+                            "stream_url": item["images"][0],
+                            "picker": [{"url": img} for img in item["images"]],
+                            "status": "picker"
+                        }
+                    v_url = item.get("play") or item.get("wmplay")
+                    if v_url:
+                        if not v_url.startswith("http"):
+                            v_url = f"https://www.tikwm.com{v_url}"
+                        return {
+                            "title": item.get("title", "TikTok_Video"),
+                            "stream_url": v_url,
+                            "status": "ready"
+                        }
+    except Exception:
+        pass
+    return None
+
+def extract_with_ytdlp(url: str) -> dict:
+    """YouTube Bot Detection Bypass နှင့် Direct Stream Link ထုတ်ယူခြင်း"""
+    file_uuid = uuid.uuid4().hex[:10]
+    out_template = str(DOWNLOADS_DIR / f"{file_uuid}_%(title).50s.%(ext)s")
+    
+    ydl_opts = {
+        'outtmpl': out_template,
+        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+        'merge_output_format': 'mp4',
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 30,
+        # YouTube Bot Detection ကို Android/iOS Client ဖြင့် ကျော်ဖြတ်ခြင်း
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web']
+            }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
+        }
+    }
+    
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        filename = ydl.prepare_filename(info)
+        
+        # mp4 သို့ merge သွားပါက extension အမှန် စစ်ဆေးခြင်း
+        if not os.path.exists(filename):
+            base, _ = os.path.splitext(filename)
+            for ext in [".mp4", ".mkv", ".webm", ".m4a"]:
+                if os.path.exists(base + ext):
+                    filename = base + ext
+                    break
+        
+        rel_path = Path(filename).relative_to(MEDIA_ROOT).as_posix()
+        return {
+            "title": info.get("title", "Downloaded_Video"),
+            "stream_url": f"/media/{rel_path}",
+            "status": "ready"
+        }
+
+@app.post("/api/downloader/inspect")
+async def inspect_video_universal(request: Request, data: dict):
+    get_request_email(request)
+    url = data.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Video URL ထည့်သွင်းပေးပါ")
+
+    # အဆင့် ၁: TikTok / Douyin ဖြစ်ပါက Direct API အရင်စမ်းမည်
+    if "tiktok.com" in url or "douyin.com" in url:
+        tiktok_res = await fetch_tiktok_direct_api(url)
+        if tiktok_res:
+            return tiktok_res
+
+    # အဆင့် ၂: YouTube, Rednote စသည်တို့အတွက် Local yt-dlp ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်ဆွဲပြီး media link ပေးမည်
+    try:
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, extract_with_ytdlp, url)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"ဒေါင်းလုဒ် မအောင်မြင်ပါ: {str(e)}")
+# --- ADS ANIMATOR ENGINE (UNIVERSAL AI FIRST -> GEMINI FALLBACK -> REFUND ON FAIL) ---
+
+@app.post("/api/animator/generate-script")
+async def generate_ad_script(request: Request, data: dict):
+    email = get_request_email(request)
+    product_name = data.get("product_name", "").strip()
+    target_duration_sec = int(data.get("duration", 15))
+    additional_notes = data.get("notes", "")
+
+    if not product_name:
+        raise HTTPException(status_code=400, detail="Product Name လိုအပ်ပါသည်")
+
+    # Settings မှ စက္ကန့်အလိုက် Credit နှုန်းထားစစ်ဆေးခြင်း
+    setting_doc = settings_col.find_one({"key": "ads_animator_rate_per_sec"})
+    rate_per_sec = int(setting_doc.get("value", "2")) if setting_doc else 2
+    total_cost = target_duration_sec * rate_per_sec
+
+    # Admin မဟုတ်ပါက Credit စစ်ဆေးပြီး ကြိုတင်ဖြတ်တောက်ခြင်း
+    user = users_col.find_one({"email": email})
+    if email != ADMIN_EMAIL:
+        if not user or user.get("credits", 0) < total_cost:
+            raise HTTPException(
+                status_code=402, 
+                detail=f"Credit မလုံလောက်ပါ။ {target_duration_sec} စက္ကန့် Ad ဖန်တီးရန် {total_cost} Credits လိုအပ်ပါသည်။"
+            )
+        users_col.update_one({"email": email}, {"$inc": {"credits": -total_cost}})
+
+    prompt_text = (
+        f"You are a professional video ads director. Create an engaging, scene-by-scene "
+        f"{target_duration_sec}-second ad storyboard with voiceover scripts for: {product_name}. "
+        f"User requirements: {additional_notes}. "
+        f"Format clearly with Scene Number, Visual description, and Myanmar/English Narration."
+    )
+
+    script_result = None
+    universal_error = None
+
+    # Step 1: Universal AI Providers (Primary & Secondary - Codecraft / Chat B.AI) ကို အရင်ဆုံး ဦးစားပေးခေါ်ယူခြင်း
+    try:
+        script_result = await call_universal_ai([{"role": "user", "content": prompt_text}])
+    except Exception as e:
+        universal_error = str(e)
+        print(f"[Animator Warning] Universal AI Error: {universal_error} -> Fallback to Gemini API")
+
+    # Step 2: Universal AI အဆင်မပြေမှသာ Gemini API သို့ Fallback အနေဖြင့် သုံးခြင်း
+    if not script_result:
+        gemini_key = get_server_gemini_key()
+        if not gemini_key:
+            # Universal AI ရော Gemini Key ပါ မရှိပါက Credit ပြန်အမ်းခြင်း
+            if email != ADMIN_EMAIL:
+                users_col.update_one({"email": email}, {"$inc": {"credits": total_cost}})
+            raise HTTPException(
+                status_code=500, 
+                detail=f"AI Provider အားလုံး ပျက်နေပြီး Gemini Key လည်းမရှိပါ: {universal_error}"
+            )
+
+        gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt_text}]
+            }]
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client_http:
+                resp = await client_http.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
+                if resp.status_code == 200:
+                    res_data = resp.json()
+                    script_result = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                else:
+                    raise Exception(f"Gemini API Error (HTTP {resp.status_code}): {resp.text}")
+        except Exception as e:
+            # Provider ရော Gemini ပါ ၂ မျိုးစလုံး ကျသွားပါက User ၏ Credit အား auto-refund ပေးခြင်း
+            if email != ADMIN_EMAIL:
+                users_col.update_one({"email": email}, {"$inc": {"credits": total_cost}})
+            raise HTTPException(status_code=502, detail=f"Script Generation လုံးဝမအောင်မြင်ပါ: {str(e)}")
+
+    return {
+        "status": "success",
+        "script": script_result,
+        "deducted_credits": total_cost if email != ADMIN_EMAIL else 0
+    }
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))

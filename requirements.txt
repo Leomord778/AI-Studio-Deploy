@@ -4,6 +4,6 @@ pymongo
 python-dotenv
 httpx
 edge-tts
-imageio-ffmpeg
 python-multipart
 pydantic
+yt-dlp

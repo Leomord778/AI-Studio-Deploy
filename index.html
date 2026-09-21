@@ -468,6 +468,12 @@
             const [unreadNotiCount, setUnreadNotiCount] = useState(0);
             const [showNotiModal, setShowNotiModal] = useState(false);
             const [currentView, setCurrentView] = useState('home');
+            const [dlUrl, setDlUrl] = useState('');
+            const [dlInfo, setDlInfo] = useState(null);
+            const [dlLoading, setDlLoading] = useState(false);
+            const [dlProgress, setDlProgress] = useState(0);
+            const [dlStatusText, setDlStatusText] = useState('');
+            const [dlSelectedFormat, setDlSelectedFormat] = useState('720');
             // Motion Graphic Ads Animator States
             const [adAspectRatio, setAdAspectRatio] = useState('9:16'); // '9:16' | '16:9' | '1:1'
             const [adMinutes, setAdMinutes] = useState(0);
@@ -496,21 +502,42 @@
             const [showProfile, setShowProfile] = useState(false);
 
             const [globalSettings, setGlobalSettings] = useState({ 
-                announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ အရည်အသွေးမြင့် ဗီဒီယိုများကို အချိန်တိုအတွင်း ဖန်တီးလိုက်ပါ။",
-                marquee_bg: "#4f46e5", 
-                marquee_color: "#ffffff",
-                deduction_rate_per_min: "50",
-                first_two_min_rate: "30",
-                free_minutes_per_day: "0",
-                tts_mode: "ads",
-                tts_chars_per_credit: "100",
-                ads_smart_link: ADS_LINK,
-                admin_payment_accounts: JSON.stringify([
-                    { provider: "KBZPay", number: "09421619437", holder: "Aung Win Thu" },
-                    { provider: "WavePay", number: "09421619437", holder: "Aung Win Thu" }
-                ])
-            });
-
+    announcement: "AI Studio မှ နွေးထွေးစွာ ကြိုဆိုပါသည်။ အရည်အသွေးမြင့် ဗီဒီယိုများကို အချိန်တိုအတွင်း ဖန်တီးလိုက်ပါ။",
+    marquee_bg: "#4f46e5", 
+    marquee_color: "#ffffff",
+    deduction_rate_per_min: "50",
+    first_two_min_rate: "30",
+    free_minutes_per_day: "0",
+    tts_mode: "ads",
+    tts_chars_per_credit: "100",
+    ads_smart_link: ADS_LINK,
+    tool_status_downloader: "true",
+    tool_status_animator: "true",
+    tool_status_recap: "true",
+    tool_status_subtitle: "true",
+    tool_status_tts: "true",
+    tool_status_store: "true",
+    primary_provider: "codecraft",
+    primary_base_url: "https://codecraftapi.com/v1",
+    primary_model: "gpt-4o-mini",
+    primary_api_keys: "[]",
+    secondary_provider: "chat_b_ai",
+    secondary_base_url: "https://chat.b.ai/v1",
+    secondary_model: "gpt-4o",
+    secondary_api_keys: "[]",
+    server_key_rate_per_min: "50",
+    server_key_first_two_rate: "30",
+    server_key_discount_enabled: "true",
+    own_key_rate_per_min: "20",
+    own_key_first_two_rate: "15",
+    own_key_discount_enabled: "true",
+    admin_payment_accounts: JSON.stringify([
+        { provider: "KBZPay", number: "09421619437", holder: "Aung Win Thu" },
+        { provider: "WavePay", number: "09421619437", holder: "Aung Win Thu" }
+    ])
+});
+            const [videoKeyMode, setVideoKeyMode] = useState('server'); // 'server' | 'own'
+            const [videoDurationSec, setVideoDurationSec] = useState(0); // Video ကြာချိန် သိမ်းဆည်းရန်
             const [videoFile, setVideoFile] = useState(null);
             const [videoUrl, setVideoUrl] = useState('');
             const [bgMusicFile, setBgMusicFile] = useState(null);
@@ -808,7 +835,120 @@
             }, [user, sessionToken, isDark, currentView]);
 
             const addSysLog = (msg) => setSystemLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${msg}`]);
+            const handleInspectVideo = async () => {
+        if (!dlUrl.trim()) return;
+        setDlLoading(true);
+        setDlStatusText('ဗီဒီယို လင့်ခ် စစ်ဆေးနေပါသည်...');
 
+        try {
+            const res = await apiFetch('/api/downloader/inspect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: dlUrl.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || data.error || 'စစ်ဆေး၍ မရပါ');
+
+            if (data.stream_url) {
+                setDlProgress(100);
+                setDlStatusText('ဒေါင်းလုဒ် စတင်နေပါပြီ...');
+                const a = document.createElement("a");
+                a.href = data.stream_url;
+                a.setAttribute('download', data.title || 'video.mp4');
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            } else if (data.status === 'picker' && data.picker && data.picker.length > 0) {
+                window.open(data.picker[0].url, '_blank');
+            }
+
+            setTimeout(() => {
+                setDlLoading(false);
+                setDlProgress(0);
+                setDlStatusText('');
+            }, 2500);
+
+        } catch (err) {
+            alert('စစ်ဆေးမှု မအောင်မြင်ပါ: ' + err.message);
+            setDlLoading(false);
+            setDlProgress(0);
+            setDlStatusText('');
+        }
+    };
+
+    const handleStartDownload = () => {
+        handleInspectVideo();
+    };
+    const handleGenerateAdScript = async (productName, duration = 15, notes = '') => {
+        if (!productName || !productName.trim()) {
+            alert('Product အမည် ထည့်သွင်းပေးပါ');
+            return null;
+        }
+
+        const durSec = parseInt(duration) || 15;
+        const ratePerSec = parseInt(globalSettings?.ads_animator_rate_per_sec || 2);
+        const requiredCredits = durSec * ratePerSec;
+
+        // Admin မဟုတ်ပါက လက်ကျန် Credit စစ်ဆေးခြင်း
+        if (userData?.role !== 'admin' && user?.email !== ADMIN_EMAIL && (userData?.credits || 0) < requiredCredits) {
+            alert(`Credit မလုံလောက်ပါ။ ဤ Ad ဖန်တီးရန် ${requiredCredits} Credits လိုအပ်ပါသည်။`);
+            return null;
+        }
+
+        try {
+            const res = await apiFetch('/api/animator/generate-script', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_name: productName.trim(),
+                    duration: durSec,
+                    notes: notes.trim()
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || data.error || 'Script ထုတ်ယူမရပါ');
+
+            // Credit Balance ကို Frontend State ထဲ ချက်ချင်း Update လုပ်ခြင်း
+            if (data.deducted_credits > 0 && userData) {
+                setUserData(prev => ({
+                    ...prev,
+                    credits: Math.max(0, (prev.credits || 0) - data.deducted_credits)
+                }));
+            }
+
+            return data.script;
+
+        } catch (err) {
+            alert('Script Generation Error: ' + err.message);
+            return null;
+        }
+    };
+            // Video အရှည်နှင့် ရွေးထားသော Key Mode အလိုက် Real-time ကုန်ကျငွေ တွက်ချက်ပေးသည့် Function
+            const getCalculatedTotalCredit = () => {
+                if (!videoDurationSec || videoDurationSec <= 0) return 0;
+                const durMins = Math.max(1, Math.ceil(videoDurationSec / 60));
+                const isOwn = (videoKeyMode === 'own');
+
+                const baseRate = parseInt(isOwn 
+                    ? (globalSettings.own_key_rate_per_min || 20) 
+                    : (globalSettings.server_key_rate_per_min || globalSettings.deduction_rate_per_min || 50));
+                
+                const discEnabled = isOwn 
+                    ? (globalSettings.own_key_discount_enabled !== 'false')
+                    : (globalSettings.server_key_discount_enabled !== 'false');
+
+                const firstTwoRate = parseInt(isOwn 
+                    ? (globalSettings.own_key_first_two_rate || 15) 
+                    : (globalSettings.server_key_first_two_rate || globalSettings.first_two_min_rate || 30));
+
+                if (discEnabled && firstTwoRate > 0) {
+                    if (durMins <= 2) return firstTwoRate;
+                    return firstTwoRate + ((durMins - 2) * baseRate);
+                }
+                return durMins * baseRate;
+            };
             const executeWithApiLogic = async (operationName, requestFn) => {
                 const validKeys = geminiKeys.filter(k => k && k.trim() !== '');
                 if (validKeys.length === 0) {
@@ -845,7 +985,17 @@
                 if (!file) return;
 
                 setVideoFile(file);
-                setVideoUrl(URL.createObjectURL(file));
+                const localUrl = URL.createObjectURL(file);
+                setVideoUrl(localUrl);
+
+                // Video ကြာချိန်ကို ချက်ချင်းဖတ်ယူပြီး State ထဲ ထည့်ခြင်း
+                const tempVideo = document.createElement('video');
+                tempVideo.preload = 'metadata';
+                tempVideo.src = localUrl;
+                tempVideo.onloadedmetadata = () => {
+                    setVideoDurationSec(tempVideo.duration || 0);
+                };
+
                 setFinalVideoUrl('');
                 setLastRenderedMeta(null);
                 setSystemLogs([]);
@@ -962,7 +1112,7 @@
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                model: globalSettings.apinex_model || "gpt-4o-mini",
+                                model: globalSettings.primary_model || "gpt-4o-mini",
                                 messages: [
                                     { role: "system", content: "You are an expert video editor. Return ONLY valid JSON." },
                                     { role: "user", content: `${prompt}\n\nTranscript:\n${fullText}` }
@@ -999,7 +1149,7 @@
             };
             // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
             // ရွေးချယ်ထားသော Language အတိုင်း မဖြစ်မနေ ဘာသာပြန်မည့် Engine
-            const performTranslation = async (originalSrt, modeOverride = null) => {
+            const performTranslation = async (originalSrt, modeOverride = null, forceOwnKey = false) => {
                 const activeMode = modeOverride || recapMode;
                 setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
                 addSysLog(`AI ဖြင့် [Target Language: ${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ ပြန်ဆိုနေပါသည်...`);
@@ -1024,21 +1174,10 @@
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
                 // STRICT TARGET LANGUAGE ENFORCEMENT PROMPT
-                // WonderWhy Signature Recap Storytelling Prompt
-                const ownRecapPrompt = `You are a viral YouTube recap creator strictly imitating the famous "WonderWhy" channel storytelling narration style in Burmese.
-
-CRITICAL WONDERWHY STYLE RULES:
-1. NEVER translate dialogue word-for-word. You are a third-person observer describing the scene.
-2. Treat the visuals as an unfolding event or mystery. Narrate what characters are doing, their struggles, and dramatic turning points.
-3. Use WonderWhy's signature conversational opening/transition patterns:
-   - "ဒီလူကတော့ တောင်ထိပ်မှာ တစ်ယောက်တည်း..."
-   - "အဲ့ဒီအချိန်မှာပဲ မထင်မှတ်ထားတဲ့ အရာတစ်ခု ဖြစ်လာခဲ့ပါတယ်..."
-   - "ဒါပေမဲ့ တကယ့် အမှန်တရားကတော့..."
-   - "ဒီစက်ကြီး ဘယ်လို အလုပ်လုပ်သလဲဆိုတာ ကြည့်လိုက်ရအောင်..."
-4. Spoken Burmese Only: Strictly avoid formal or bookish written Burmese (စာဆန်ဆန် လုံးဝမရေးရ၊ အရပ်စကားပြော သဘာဝအတိုင်းသာ ရေးသားရမည်).
-5. Ensure pacing matches video clips naturally. Keep 'id', 'start', and 'end' identical.
-
-Return ONLY a valid JSON array of objects with keys: id, start, end, text.`;
+                const ownRecapPrompt = `You are a professional Movie Recap Narrator and captivating storyteller.
+DO NOT translate dialog directly word-for-word. 
+Instead, observe the events and describe the character actions, plot twists, emotional reactions, and unfolding drama as a third-person storyteller in natural, captivating Myanmar spoken language (ဥပမာ: "ဒီလူကတော့ တောင်ထိပ်မှာ တွင်းကြီးတစ်ခုကို အချိန်ယူတူးနေတာပါ...", "အဲ့ဒီအချိန်မှာပဲ နဂါးကြီးကို တွေ့လိုက်ရလို့ အလန့်တကြား ဖြစ်သွားခဲ့ပါတယ်").
+Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exactly identical. Output ONLY a valid JSON array of objects with keys: id, start, end, text.`;
 
                 const originalPrompt = `You are an expert translator. 
 CRITICAL REQUIREMENT: Translate all dialogue/text strictly into fluent, natural spoken ${selectedLang}.
@@ -1050,14 +1189,13 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                     let translatedBatch = null;
                     const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
 
-                    // ၁။ Server Pool (Apinex) ဖြင့် ဘာသာပြန်ခြင်း
-                    if (globalSettings.apinex_enabled === 'true') {
+                    if (!forceOwnKey && (globalSettings.primary_base_url || globalSettings.secondary_base_url)) {
                         try {
                             const sRes = await apiFetch('/api/engine/neural-compute', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    model: globalSettings.apinex_model || "free/gemini-3.8-flash",
+                                    model: globalSettings.primary_model || "gpt-4o-mini",
                                     messages: [
                                         { role: "system", content: sysPrompt },
                                         { role: "user", content: `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch) }
@@ -1069,9 +1207,11 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                                 const sData = await sRes.json();
                                 const cText = sData?.choices?.[0]?.message?.content || "";
                                 translatedBatch = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
+                            } else {
+                                throw new Error("Server AI Error");
                             }
                         } catch (sErr) {
-                            addSysLog(`Neural Engine ချိတ်ဆက်မရပါ -> Gemini API ဖြင့် ဆက်လက်ဘာသာပြန်ပါမည်...`);
+                            if (!forceOwnKey) throw sErr;
                         }
                     }
 
@@ -1293,9 +1433,11 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                         currentVTime = chunk.vStart;
                     }
 
-                    // စကားပြောခန်း (Dialogue) ဖြစ်ပါက အသံကြာချိန်နှင့်အညီ ဗီဒီယို speed အနှေးအမြန် ချိန်ညှိခြင်း
+                    // Voice Speed အလိုက် Video Playback Speed ကို သဟဇာတဖြစ်အောင် ချိန်ညှိခြင်း
                     const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    const calculatedSpeed = Math.max(0.35, Math.min(2.0, vDuration / chunk.audioDur));
+                    const speedRatio = vDuration / Math.max(0.1, chunk.audioDur);
+                    const calculatedSpeed = Math.max(0.35, Math.min(2.5, speedRatio));
+
                     syncTimeline.push({
                         type: 'narrate',
                         startReal: currentRealTime,
@@ -1780,17 +1922,17 @@ Format strictly as JSON ONLY:
 
                 let resultJson = null;
 
-                if (globalSettings.apinex_enabled === 'true') {
-                    try {
-                        const res = await apiFetch('/api/engine/neural-compute', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                model: globalSettings.apinex_model || "free/gemini-3.8-flash",
-                                messages: [{ role: "system", content: systemPrompt }, { role: "user", content: JSON.stringify(userPayload) }],
-                                temperature: 0.4
-                            })
-                        });
+                if (globalSettings.primary_base_url || globalSettings.secondary_base_url) {
+    try {
+        const res = await apiFetch('/api/engine/neural-compute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: globalSettings.primary_model || "gpt-4o-mini",
+                messages: [{ role: "system", content: systemPrompt }, { role: "user", content: JSON.stringify(userPayload) }],
+                temperature: 0.4
+            })
+        });
                         if (res.ok) {
                             const d = await res.json();
                             resultJson = JSON.parse(d?.choices?.[0]?.message?.content?.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
@@ -2063,6 +2205,15 @@ Format strictly as JSON ONLY:
                     return;
                 }
 
+                const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
+                if (videoKeyMode === 'own' && validUserKeys.length === 0) {
+                    alert("ကိုယ်ပိုင် Key အသုံးပြုရန် ညာဘက်ထိပ် Settings (Keys) ထဲတွင် Gemini API Key ထည့်သွင်းပေးပါခင်ဗျာ။");
+                    setShowSettings(true);
+                    return;
+                }
+
+                let actualUsedKeyMode = videoKeyMode;
+
                 try {
                     const videoLocalUrl = URL.createObjectURL(videoFile);
                     const v = document.createElement('video');
@@ -2071,10 +2222,15 @@ Format strictly as JSON ONLY:
                     await new Promise(r => v.onloadedmetadata = r);
                     const meta = { duration: v.duration, width: v.videoWidth || 1280, height: v.videoHeight || 720 };
 
+                    // ရွေးချယ်ထားသော Key Mode အလိုက် Pre-deduct ပြုလုပ်ခြင်း
                     const deductRes = await apiFetch('/api/video/pre-deduct', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ duration: meta.duration, is_voice_clone: (recapEngine === 'voice_clone') })
+                        body: JSON.stringify({ 
+                            duration: meta.duration, 
+                            is_voice_clone: (recapEngine === 'voice_clone'),
+                            key_mode: videoKeyMode
+                        })
                     });
                     const deductData = await deductRes.json();
                     if (!deductRes.ok) throw new Error(deductData.detail || "Credit မလုံလောက်ပါ");
@@ -2088,9 +2244,46 @@ Format strictly as JSON ONLY:
                     setFinalVideoUrl('');
 
                     if (!extractionDataRef.current) extractionDataRef.current = await performTranscription();
+
+                    // --- TRANSLATION DISPATCH WITH DYNAMIC FALLBACK ---
                     if (!translatedBlocksRef.current) {
                         const targetMode = currentView === 'subtitle' ? 'original' : recapMode;
-                        translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode);
+                        
+                        if (videoKeyMode === 'server') {
+                            try {
+                                translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode, false);
+                            } catch (serverErr) {
+                                addSysLog(`Server Key Error ဖြစ်ပေါ်နေပါသည်: ${serverErr.message}`);
+                                
+                                if (validUserKeys.length > 0) {
+                                    addSysLog(`User ၏ ကိုယ်ပိုင် Gemini Key သို့ Fallback ကူးပြောင်းပြီး Own Key နှုန်းထားသို့ ပြောင်းလဲပါမည်...`);
+                                    actualUsedKeyMode = 'own';
+                                    
+                                    // User Key သို့ Fallback ကူးခြင်း
+                                    translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode, true);
+                                    
+                                    // Server Rate နှင့် Own Rate ကွာခြားချက်အား အလိုအလျောက် Refund ပြန်အမ်းခြင်း
+                                    await apiFetch('/api/video/adjust-fallback-rate', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ duration: meta.duration, is_voice_clone: (recapEngine === 'voice_clone') })
+                                    });
+                                    fetchUserData(user.email);
+                                } else {
+                                    // User Key မရှိပါက ကြိုဖြတ်ထားသော Credit အား ပြန်အမ်းပြီး စာတန်းအနီရောင်ပြကာ ရပ်တန့်မည်
+                                    await apiFetch('/api/video/refund-failed-pre-deduct', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ duration: meta.duration, is_voice_clone: (recapEngine === 'voice_clone'), key_mode: 'server' })
+                                    });
+                                    fetchUserData(user.email);
+                                    throw new Error("server key errorတက်နေပါသဖြင့် ကိုယ်ပိုင် keyထည့်ပြီးသုံးပါ");
+                                }
+                            }
+                        } else {
+                            // User က Own Key ရွေးထားပါက တိုက်ရိုက် User Gemini Key ဖြင့်သာ ဆောင်ရွက်ခြင်း
+                            translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode, true);
+                        }
                     }
 
                     let renderTimelineData = null;
@@ -2126,7 +2319,11 @@ Format strictly as JSON ONLY:
                                     const response = await apiFetch('/api/tts', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ text: hookText, voice: voiceToUse, rate: "+10%" })
+                                        body: JSON.stringify({ 
+                                            text: hookText, 
+                                            voice: voiceToUse, 
+                                            rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` 
+                                        })
                                     });
                                     const mp3Blob = await response.blob();
                                     hookAudioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
@@ -2167,6 +2364,7 @@ Format strictly as JSON ONLY:
                     fd.append('file', finalMp4Blob, 'rendered.mp4');
                     fd.append('duration', String(meta.duration));
                     fd.append('tool', currentView);
+                    fd.append('key_mode', actualUsedKeyMode);
                     
                     const uploadRes = await apiFetch('/api/video/save-client-rendered', { method: 'POST', body: fd });
                     const savedData = await uploadRes.json();
@@ -2174,6 +2372,7 @@ Format strictly as JSON ONLY:
                         setLastRenderedMeta({ media_key: savedData.media_key, video_id: savedData.video_id });
                     }
 
+                    fetchUserData(user.email);
                     setIsProcessing(false);
                 } catch (err) {
                     console.error(err);
@@ -2215,7 +2414,11 @@ Format strictly as JSON ONLY:
                         const response = await apiFetch('/api/tts', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ text: `မင်္ဂလာပါ။ ဒါကတော့ ${recapVoice} အသံနမူနာဖြစ်ပါတယ်။`, voice: recapVoice, rate: "+10%" })
+                            body: JSON.stringify({ 
+    text: `မင်္ဂလာပါ။ ဒါကတော့ ${recapVoice} အသံနမူနာဖြစ်ပါတယ်။`, 
+    voice: recapVoice, 
+    rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` 
+})
                         });
                         const mp3 = await response.blob();
                         const audio = new Audio(URL.createObjectURL(mp3));
@@ -2268,7 +2471,7 @@ Format strictly as JSON ONLY:
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                model: globalSettings.apinex_model || "gpt-4o-mini",
+                                model: globalSettings.primary_model || "gpt-4o-mini",
                                 messages: [
                                     { role: "system", content: "Return ONLY valid JSON." },
                                     { role: "user", content: promptText }
@@ -2392,38 +2595,65 @@ Format strictly as JSON ONLY:
             };
 
             const saveAnnouncementSettings = async () => {
-                try {
-                    await apiFetch('/api/admin/settings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            announcement: globalSettings.announcement,
-                            marquee_bg: globalSettings.marquee_bg,
-                            marquee_color: globalSettings.marquee_color,
-                            deduction_rate_per_min: globalSettings.deduction_rate_per_min,
-                            first_two_min_rate: globalSettings.first_two_min_rate,
-                            free_minutes_per_day: globalSettings.free_minutes_per_day,
-                            tts_mode: globalSettings.tts_mode,
-                            tts_chars_per_credit: globalSettings.tts_chars_per_credit,
-                            ads_smart_link: globalSettings.ads_smart_link,
-                            ads_animator_rate_per_sec: globalSettings.ads_animator_rate_per_sec,
-                            ads_animator_free_revisions: globalSettings.ads_animator_free_revisions,
-                            groq_api_keys_pool: globalSettings.groq_api_keys_pool,
-                            admin_payment_accounts: globalSettings.admin_payment_accounts,
-                            voice_clone_enabled: globalSettings.voice_clone_enabled,
-                            voice_clone_colab_urls: globalSettings.voice_clone_colab_urls,
-                            voice_clone_recap_rate_per_min: globalSettings.voice_clone_recap_rate_per_min,
-                            voice_clone_tts_mode: globalSettings.voice_clone_tts_mode,
-                            voice_clone_tts_chars_per_credit: globalSettings.voice_clone_tts_chars_per_credit,
-                            apinex_enabled: globalSettings.apinex_enabled,
-                            apinex_base_url: globalSettings.apinex_base_url,
-                            apinex_model: globalSettings.apinex_model,
-                            apinex_api_keys: globalSettings.apinex_api_keys
-                        })
-                    });
-                    alert("ဆက်တင်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
-                } catch (e) { alert("Settings save error"); }
-            };
+    try {
+        const payload = {
+            announcement: globalSettings.announcement,
+            marquee_bg: globalSettings.marquee_bg,
+            marquee_color: globalSettings.marquee_color,
+            deduction_rate_per_min: globalSettings.deduction_rate_per_min,
+            first_two_min_rate: globalSettings.first_two_min_rate,
+            server_key_rate_per_min: globalSettings.server_key_rate_per_min || '50',
+            server_key_first_two_rate: globalSettings.server_key_first_two_rate || '30',
+            server_key_discount_enabled: globalSettings.server_key_discount_enabled ?? 'true',
+            own_key_rate_per_min: globalSettings.own_key_rate_per_min || '20',
+            own_key_first_two_rate: globalSettings.own_key_first_two_rate || '15',
+            own_key_discount_enabled: globalSettings.own_key_discount_enabled ?? 'true',
+            free_minutes_per_day: globalSettings.free_minutes_per_day,
+            tts_mode: globalSettings.tts_mode,
+            tts_chars_per_credit: globalSettings.tts_chars_per_credit,
+            ads_smart_link: globalSettings.ads_smart_link,
+            ads_animator_rate_per_sec: globalSettings.ads_animator_rate_per_sec,
+            ads_animator_free_revisions: globalSettings.ads_animator_free_revisions,
+            groq_api_keys_pool: globalSettings.groq_api_keys_pool,
+            admin_payment_accounts: globalSettings.admin_payment_accounts,
+            voice_clone_enabled: globalSettings.voice_clone_enabled,
+            voice_clone_colab_urls: globalSettings.voice_clone_colab_urls,
+            voice_clone_recap_rate_per_min: globalSettings.voice_clone_recap_rate_per_min,
+            voice_clone_tts_mode: globalSettings.voice_clone_tts_mode,
+            voice_clone_tts_chars_per_credit: globalSettings.voice_clone_tts_chars_per_credit,
+            // Tool Switches Status များကို Server သို့ ပေးပို့ခြင်း
+            tool_status_downloader: globalSettings.tool_status_downloader ?? 'true',
+            tool_status_animator: globalSettings.tool_status_animator ?? 'true',
+            tool_status_recap: globalSettings.tool_status_recap ?? 'true',
+            tool_status_subtitle: globalSettings.tool_status_subtitle ?? 'true',
+            tool_status_tts: globalSettings.tool_status_tts ?? 'true',
+            tool_status_store: globalSettings.tool_status_store ?? 'true',
+            // AI Neural Providers Setup
+            primary_provider: globalSettings.primary_provider || 'codecraft',
+            primary_base_url: globalSettings.primary_base_url || 'https://codecraftapi.com/v1',
+            primary_model: globalSettings.primary_model || 'gpt-4o-mini',
+            primary_api_keys: globalSettings.primary_api_keys || '[]',
+            secondary_provider: globalSettings.secondary_provider || 'chat_b_ai',
+            secondary_base_url: globalSettings.secondary_base_url || 'https://chat.b.ai/v1',
+            secondary_model: globalSettings.secondary_model || 'gpt-4o',
+            secondary_api_keys: globalSettings.secondary_api_keys || '[]'
+        };
+
+        const res = await apiFetch('/api/admin/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) throw new Error("Settings သိမ်းဆည်း၍ မရပါ");
+
+        // Save ပြီးသည်နှင့် User Profile အချက်အလက်နှင့် Settings များကို ချက်ချင်း Re-fetch ပြုလုပ်ခြင်း
+        if (user?.email) fetchUserData(user.email);
+        alert("ဆက်တင်များနှင့် Tool Switches များကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
+    } catch (e) { 
+        alert("Settings save error: " + e.message); 
+    }
+};
             const createAdminProduct = async (e) => {
                 e.preventDefault();
                 const form = new FormData();
@@ -2787,41 +3017,108 @@ Format strictly as JSON ONLY:
                         )}
 
                         {currentView === 'home' && (
-                            <div>
-                                {!user ? (
-                                    <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md mx-auto text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><Film className="w-10 h-10 text-indigo-500"/></div><h2 className="text-2xl font-bold mb-3">Welcome to AI Studio</h2><p className="opacity-70 mb-8 text-sm">စတင်အသုံးပြုရန် Google Account ဖြင့် ဝင်ရောက်ပါ။</p><div id="google-login-btn"></div></div>
-                                ) : (
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-6 max-w-5xl mx-auto py-6">
-                                        <button onClick={() => navigateTo('animator')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
-                                            <div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4">
-                                                <Sparkles className="w-8 h-8" />
-                                            </div>
-                                            <h2 className="text-lg font-black mb-1">⚡ Ads Animator</h2>
-                                            <p className="text-xs opacity-70">AI Motion & UI Video Generator</p>
-                                        </button>
-                                        <button onClick={() => navigateTo('recap')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-indigo-500/20 text-indigo-500 mb-4"><Film className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Movie Recap</h2></button>
-                                        <button onClick={() => navigateTo('subtitle')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-emerald-500/20 text-emerald-500 mb-4"><SubtitleIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">AI Subtitle Burn-in</h2></button>
-                                        <button onClick={() => navigateTo('tts')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-rose-500/20 text-rose-500 mb-4"><Mic className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Text to Speech</h2><p className="text-xs opacity-70">change words to speech</p></button>
-                                        <button onClick={openStore} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4"><StoreIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Store</h2><p className="text-xs opacity-70">Game Topup & Products</p></button>
-                                        <button onClick={openHistory} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-sky-500/20 text-sky-500 mb-4"><HistoryIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Video History</h2><p className="text-xs opacity-70">Playable Video Previews</p></button>
-                                        <button onClick={openMessages} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-fuchsia-500/20 text-fuchsia-500 mb-4"><MessageIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Support Chat</h2><p className="text-xs opacity-70">Send Videos & Photos</p></button>
+    <div>
+        {!user ? (
+            <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md mx-auto text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><Film className="w-10 h-10 text-indigo-500"/></div><h2 className="text-2xl font-bold mb-3">Welcome to AI Studio</h2><p className="opacity-70 mb-8 text-sm">စတင်အသုံးပြုရန် Google Account ဖြင့် ဝင်ရောက်ပါ။</p><div id="google-login-btn"></div></div>
+        ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-6 max-w-5xl mx-auto py-6">
+                {globalSettings.tool_status_downloader !== 'false' && (
+                    <button onClick={() => navigateTo('downloader')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
+                        <div className="p-5 rounded-full bg-blue-500/20 text-blue-500 mb-4"><Download className="w-8 h-8" /></div>
+                        <h2 className="text-lg font-black mb-1">📥 Video Downloader</h2>
+                        <p className="text-xs opacity-70">TikTok, YT, FB (No Watermark)</p>
+                    </button>
+                )}
+                {globalSettings.tool_status_animator !== 'false' && (
+                    <button onClick={() => navigateTo('animator')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
+                        <div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4"><Sparkles className="w-8 h-8" /></div>
+                        <h2 className="text-lg font-black mb-1">⚡ Ads Animator</h2>
+                        <p className="text-xs opacity-70">AI Motion & UI Video Generator</p>
+                    </button>
+                )}
+                {globalSettings.tool_status_recap !== 'false' && (
+                    <button onClick={() => navigateTo('recap')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-indigo-500/20 text-indigo-500 mb-4"><Film className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Movie Recap</h2></button>
+                )}
+                {globalSettings.tool_status_subtitle !== 'false' && (
+                    <button onClick={() => navigateTo('subtitle')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-emerald-500/20 text-emerald-500 mb-4"><SubtitleIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">AI Subtitle Burn-in</h2></button>
+                )}
+                {globalSettings.tool_status_tts !== 'false' && (
+                    <button onClick={() => navigateTo('tts')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-rose-500/20 text-rose-500 mb-4"><Mic className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Text to Speech</h2><p className="text-xs opacity-70">change words to speech</p></button>
+                )}
+                {globalSettings.tool_status_store !== 'false' && (
+                    <button onClick={openStore} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4"><StoreIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Store</h2><p className="text-xs opacity-70">Game Topup & Products</p></button>
+                )}
+                <button onClick={openHistory} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-sky-500/20 text-sky-500 mb-4"><HistoryIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Video History</h2><p className="text-xs opacity-70">Playable Video Previews</p></button>
+                <button onClick={openMessages} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-fuchsia-500/20 text-fuchsia-500 mb-4"><MessageIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Support Chat</h2><p className="text-xs opacity-70">Send Videos & Photos</p></button>
 
-                                        {(userData?.role === 'admin' || user?.email?.toLowerCase() === ADMIN_EMAIL) && (
-                                            <button onClick={openAdmin} className={`col-span-full p-6 rounded-3xl flex items-center justify-center gap-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl hover:opacity-95 transition-all relative`}>
-                                                <UsersIcon className="w-8 h-8" />
-                                                <h2 className="text-xl font-black">Admin Management Dashboard</h2>
-                                                {adminBadges.total_alerts > 0 && (
-                                                    <span className="absolute top-4 right-4 bg-red-500 text-white text-xs font-black px-3 py-1 rounded-full animate-bounce shadow-lg">
-                                                        {adminBadges.total_alerts} New
-                                                    </span>
-                                                )}
-                                            </button>
-                                        )}
+                {(userData?.role === 'admin' || user?.email?.toLowerCase() === ADMIN_EMAIL) && (
+                    <button onClick={openAdmin} className={`col-span-full p-6 rounded-3xl flex items-center justify-center gap-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-xl hover:opacity-95 transition-all relative`}>
+                        <UsersIcon className="w-8 h-8" />
+                        <h2 className="text-xl font-black">Admin Management Dashboard</h2>
+                        {adminBadges.total_alerts > 0 && (
+                            <span className="absolute top-4 right-4 bg-red-500 text-white text-xs font-black px-3 py-1 rounded-full animate-bounce shadow-lg">
+                                {adminBadges.total_alerts} New
+                            </span>
+                        )}
+                    </button>
+                )}
+            </div>
+        )}
+    </div>
+)}
+                        {currentView === 'downloader' && (
+                            <div className="max-w-2xl mx-auto space-y-6">
+                                <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-4`}>
+                                    <h2 className="text-xl font-bold flex items-center gap-2 text-blue-500">
+                                        <Download className="w-6 h-6" /> Universal Video Downloader
+                                    </h2>
+                                    <p className="text-xs opacity-70">
+                                        YouTube, TikTok (No Watermark), Facebook, Instagram, Bilibili စသည့် Platform များမှ Link ကို ထည့်သွင်း၍ တိုက်ရိုက်ဒေါင်းလုဒ်ယူနိုင်ပါသည်။
+                                    </p>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            type="url" 
+                                            value={dlUrl} 
+                                            onChange={e => setDlUrl(e.target.value)} 
+                                            placeholder="Paste Video URL (YouTube, TikTok, etc.)..." 
+                                            className={`flex-1 p-3.5 rounded-xl outline-none text-xs ${neoPressedClass}`} 
+                                        />
+                                        <button 
+                                            onClick={handleInspectVideo} 
+                                            disabled={dlLoading || !dlUrl.trim()} 
+                                            className="px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
+                                        >
+                                            {dlLoading ? (
+                                                <>
+                                                    <Loader2 className="w-4 h-4 animate-spin"/>
+                                                    <span>ဆွဲယူနေသည်...</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Download className="w-4 h-4"/>
+                                                    <span>Download</span>
+                                                </>
+                                            )}
+                                        </button>
                                     </div>
-                                )}
+
+                                    {dlLoading && (
+                                        <div className="space-y-1.5 pt-2">
+                                            <div className="flex justify-between text-xs font-bold">
+                                                <span className="text-blue-400">{dlStatusText}</span>
+                                                <span className="font-mono text-emerald-400">{dlProgress}%</span>
+                                            </div>
+                                            <div className="w-full h-2.5 bg-black/20 rounded-full overflow-hidden p-0.5">
+                                                <div 
+                                                    className="bg-blue-500 h-full rounded-full transition-all duration-200" 
+                                                    style={{ width: `${dlProgress}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
-                        
                         {currentView === 'animator' && (
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                                 <div className="lg:col-span-6 space-y-6">
@@ -3010,6 +3307,39 @@ Format strictly as JSON ONLY:
                                 <div className="lg:col-span-5 flex flex-col gap-6">
                                     <div className={`p-6 md:p-8 rounded-3xl ${neoClass}`}>
                                         <h2 className="text-xl font-bold mb-6 flex items-center gap-3"><Sliders className="w-6 h-6 text-indigo-500" /> လုပ်ဆောင်ချက် ဆက်တင်များ</h2>
+                                        {/* API Key Mode Selector Switch */}
+                                        <div className={`p-4 rounded-2xl mb-6 ${neoPressedClass} border border-indigo-500/20`}>
+                                            <label className="block text-xs font-bold mb-2 opacity-80 flex items-center gap-2">
+                                                <KeyIcon className="w-4 h-4 text-amber-500"/> API Key အသုံးပြုမည့် စနစ်ရွေးချယ်ပါ
+                                            </label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVideoKeyMode('server')}
+                                                    className={`py-2.5 px-3 rounded-xl font-bold text-xs flex flex-col items-center justify-center transition-all ${videoKeyMode === 'server' ? 'bg-indigo-600 text-white shadow-md' : neoBtnClass}`}
+                                                >
+                                                    <span>Server Key</span>
+                                                    <span className={`text-[10px] mt-0.5 font-mono ${videoKeyMode === 'server' ? 'text-amber-300 font-black' : 'text-amber-500'}`}>
+                                                        (1Min - {globalSettings.server_key_rate_per_min || globalSettings.deduction_rate_per_min || 50} Cr)
+                                                    </span>
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setVideoKeyMode('own')}
+                                                    className={`py-2.5 px-3 rounded-xl font-bold text-xs flex flex-col items-center justify-center transition-all ${videoKeyMode === 'own' ? 'bg-indigo-600 text-white shadow-md' : neoBtnClass}`}
+                                                >
+                                                    <span>ကိုယ်ပိုင် Key</span>
+                                                    <span className={`text-[10px] mt-0.5 font-mono ${videoKeyMode === 'own' ? 'text-emerald-300 font-black' : 'text-emerald-500'}`}>
+                                                        (1Min - {globalSettings.own_key_rate_per_min || 20} Cr)
+                                                    </span>
+                                                </button>
+                                            </div>
+                                            <p className="text-[10px] opacity-60 mt-2 leading-relaxed">
+                                                {videoKeyMode === 'server' 
+                                                    ? "★ Server Key ဖြင့် အလိုအလျောက် သုံးပါမည်။ (Server Error တက်ပါက သင့် ကိုယ်ပိုင် Key ဖြင့် လျှော့စျေးနှုန်းအတိုင်း အလိုအလျောက် ပြောင်းလဲဆောင်ရွက်ပေးပါမည်)"
+                                                    : "★ သင့် ကိုယ်ပိုင် Gemini API Key ကို တိုက်ရိုက်အသုံးပြုပြီး သက်သာသော နှုန်းထားဖြင့် Credit ဖြတ်တောက်ပါမည်။"}
+                                            </p>
+                                        </div>
                                         {currentView === 'recap' && (
                                             <div className="space-y-4 mb-6">
                                                 {/* Original Recap vs Own Recap (Wonder Why Style) */}
@@ -3261,7 +3591,26 @@ Format strictly as JSON ONLY:
                                         </div>
 
                                         {errorMsg && <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl text-sm font-semibold flex items-center gap-3"><AlertCircle className="w-5 h-5"/> <span>{errorMsg}</span></div>}
-                                        <button onClick={handleOneClickRecap} disabled={isProcessing || !videoFile || !isFfmpegLoaded} className={`w-full py-5 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 ${isProcessing || !videoFile || !isFfmpegLoaded ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg'}`}>{!isFfmpegLoaded ? "FFmpeg WASM Load လုပ်နေသည်..." : isProcessing ? "Render နေပါသည်..." : <><Sparkles className="w-6 h-6"/> videoစတင်ဖန်တီးမည် </>}</button>
+                                        {/* 👉 Total Video Cost Real-time Card 👈 */}
+                                        {videoFile && videoDurationSec > 0 && (
+                                            <div className={`p-4 rounded-2xl mb-4 ${neoPressedClass} border-2 border-indigo-500/30 flex items-center justify-between`}>
+                                                <div>
+                                                    <p className="text-[11px] font-bold opacity-70">
+                                                        ဗီဒီယိုကြာချိန်: <span className="text-indigo-400 font-mono">{Math.ceil(videoDurationSec / 60)} မိနစ်</span> ({Math.round(videoDurationSec)}s)
+                                                    </p>
+                                                    <p className="text-[10px] opacity-60 mt-0.5">
+                                                        {videoKeyMode === 'own' ? '🔑 Own Key နှုန်းထား' : '⚡ Server Key နှုန်းထား'} ဖြင့် တွက်ချက်ထားပါသည်
+                                                    </p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <span className="text-[10px] font-bold text-amber-500 block uppercase">Total Cost</span>
+                                                    <span className="text-2xl font-black text-yellow-400 font-mono">
+                                                        {getCalculatedTotalCredit()} <span className="text-xs text-slate-300">Credits</span>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        )}
+                                        <button onClick={handleOneClickRecap} disabled={isProcessing || !videoFile || !isFfmpegLoaded} className={`w-full py-5 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 ${isProcessing || !videoFile || !isFfmpegLoaded ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg'}`}>{!isFfmpegLoaded ? "Video Engine Procressing လုပ်နေသည်..." : isProcessing ? "Render နေပါသည်..." : <><Sparkles className="w-6 h-6"/> videoစတင်ဖန်တီးမည် </>}</button>
                                     </div>
                                 </div>
 
@@ -3701,16 +4050,36 @@ Format strictly as JSON ONLY:
 
                         {currentView === 'history' && (
                             <div className="space-y-6">
-                                <h2 className="text-2xl font-black flex items-center gap-3 text-sky-500"><HistoryIcon className="w-7 h-7"/> Video History</h2>
+                                <h2 className="text-2xl font-black flex items-center gap-3 text-sky-500">
+                                    <HistoryIcon className="w-7 h-7"/> Video History
+                                </h2>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    {historyItems.map(h => (
-                                        <div key={h.id} className={`p-5 rounded-3xl space-y-3 ${neoClass}`}>
-                                            <video src={h.url} controls className="w-full h-48 rounded-xl object-cover bg-black" />
-                                            <div className="flex justify-between items-center"><p className="font-bold">{h.title}</p><button onClick={() => handleDownloadWithAds(h.url, null, h.id)} className="px-3 py-1 bg-indigo-500 text-white text-xs font-bold rounded-lg flex items-center gap-1"><Download className="w-4 h-4"/> Download</button></div>
-                                            <p className="text-[11px] opacity-60">သက်တမ်းကုန်ဆုံးချိန်: {h.expires_at}</p>
-                                        </div>
-                                    ))}
-                                    {historyItems.length === 0 && <p className="opacity-60">ဗီဒီယိုမှတ်တမ်း မရှိသေးပါ။</p>}
+                                    {historyItems.map(h => {
+                                        const isExpired = !h.url || h.url.includes('null') || h.status === 'expired';
+                                        return (
+                                            <div key={h.id} className={`p-5 rounded-3xl space-y-3 ${neoClass}`}>
+                                                {isExpired ? (
+                                                    <div className="w-full h-48 rounded-xl bg-slate-900/80 border border-slate-700 flex flex-col items-center justify-center p-4 text-center">
+                                                        <Film className="w-10 h-10 text-slate-500 mb-2 opacity-50"/>
+                                                        <p className="text-xs font-bold text-slate-400">၄၈ နာရီပြည့်သဖြင့် ဖိုင်သက်တမ်း ကုန်ဆုံးသွားပါပြီ</p>
+                                                        <span className="text-[10px] text-amber-500 mt-1 font-semibold">ဖိုင်အား Server မှ အလိုအလျောက် ဖျက်ပြီးပါပြီ</span>
+                                                    </div>
+                                                ) : (
+                                                    <video src={h.url} controls className="w-full h-48 rounded-xl object-cover bg-black" />
+                                                )}
+                                                <div className="flex justify-between items-center">
+                                                    <p className="font-bold text-xs truncate max-w-[200px]">{h.title}</p>
+                                                    {!isExpired && (
+                                                        <button onClick={() => handleDownloadWithAds(h.url, null, h.id)} className="px-3 py-1 bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold rounded-lg flex items-center gap-1 shadow">
+                                                            <Download className="w-4 h-4"/> Download
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <p className="text-[11px] opacity-60">ဖန်တီးခဲ့သည့်ရက်: {h.created_at ? new Date(h.created_at).toLocaleDateString() : h.expires_at}</p>
+                                            </div>
+                                        );
+                                    })}
+                                    {historyItems.length === 0 && <p className="opacity-60 text-xs">ဗီဒီယိုမှတ်တမ်း မရှိသေးပါ။</p>}
                                 </div>
                             </div>
                         )}
@@ -3759,6 +4128,8 @@ Format strictly as JSON ONLY:
                                     <h2 className="text-2xl font-black flex items-center gap-3 text-purple-500"><UsersIcon className="w-8 h-8"/> Admin Control Panel</h2>
                                     <div className="flex gap-2 flex-wrap">
                                         <button key="overview" onClick={()=>setAdminTab('overview')} className={`px-4 py-2 rounded-xl font-bold text-xs ${adminTab==='overview' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>Overview</button>
+                                        <button key="tool_switch" onClick={()=>setAdminTab('tool_switch')} className={`px-4 py-2 rounded-xl font-bold text-xs ${adminTab==='tool_switch' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>Tool Switcher</button>
+                                        <button key="ai_providers" onClick={()=>setAdminTab('ai_providers')} className={`px-4 py-2 rounded-xl font-bold text-xs ${adminTab==='ai_providers' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>AI Providers</button>
                                         <button key="users" onClick={()=>setAdminTab('users')} className={`px-4 py-2 rounded-xl font-bold text-xs ${adminTab==='users' ? 'bg-purple-600 text-white shadow-lg' : neoBtnClass}`}>
                                             Users Directory ({adminUsers.length})
                                         </button>
@@ -3780,7 +4151,149 @@ Format strictly as JSON ONLY:
                                 {adminTab === 'overview' && (
                                     <AdminOverviewSection neoClass={neoClass} neoPressedClass={neoPressedClass} neoBtnClass={neoBtnClass} apiFetch={apiFetch} />
                                 )}
-                                
+                                {adminTab === 'tool_switch' && (
+    <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-4`}>
+        <h3 className="text-lg font-bold text-purple-400">🛠️ Tools On/Off Switches (ဝန်ဆောင်မှုများ ဖွင့်/ပိတ်ခြင်း)</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+                { id: 'tool_status_downloader', label: '📥 Universal Video Downloader' },
+                { id: 'tool_status_animator', label: '⚡ Ads Animator' },
+                { id: 'tool_status_recap', label: '🎬 Movie Recap Tool' },
+                { id: 'tool_status_subtitle', label: '📝 Subtitle Burn-in' },
+                { id: 'tool_status_tts', label: '🎙️ Text to Speech' },
+                { id: 'tool_status_store', label: '🛍️ Store (Topup & Products)' }
+            ].map(t => (
+                <div key={t.id} className={`p-4 rounded-2xl flex justify-between items-center ${neoPressedClass}`}>
+                    <span className="text-xs font-bold">{t.label}</span>
+                    <input 
+                        type="checkbox" 
+                        checked={globalSettings[t.id] !== 'false'} 
+                        onChange={e => setGlobalSettings({ ...globalSettings, [t.id]: e.target.checked ? 'true' : 'false' })} 
+                        className="w-5 h-5 accent-purple-600 cursor-pointer" 
+                    />
+                </div>
+            ))}
+        </div>
+        <button onClick={saveAnnouncementSettings} className="px-6 py-3 bg-purple-600 text-white font-bold rounded-xl text-xs shadow-lg">
+            Save Tool Switches
+        </button>
+    </div>
+)}
+
+{adminTab === 'ai_providers' && (
+    <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-6`}>
+        <h3 className="text-lg font-bold text-cyan-400">🤖 AI Neural Engine (Zero-Leakage Multi-Provider)</h3>
+        <p className="text-xs opacity-70">
+            ဤနေရာတွင် ထည့်သွင်းထားသော Base URL၊ Model နှင့် API Key များကို ဆာဗာ backend တွင်သာ လုံခြုံစွာ သိမ်းဆည်းထားပြီး User ဘက်သို့ လုံးဝ ပေါက်ကြားမှု မရှိစေရပါ။
+        </p>
+
+        {/* Primary Provider Setup */}
+        <div className={`p-5 rounded-2xl ${neoPressedClass} space-y-4 border border-cyan-500/30`}>
+            <h4 className="text-sm font-bold text-cyan-400">⚡ Primary Provider (အဓိက ဦးစားပေးသုံးမည့် AI)</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                    <label className="text-xs font-bold block mb-1">Provider အမည်:</label>
+                    <input type="text" value={globalSettings.primary_provider || 'codecraft'} onChange={e => setGlobalSettings({...globalSettings, primary_provider: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs outline-none ${neoClass}`} />
+                </div>
+                <div>
+                    <label className="text-xs font-bold block mb-1">Base URL:</label>
+                    <input type="text" value={globalSettings.primary_base_url || 'https://codecraftapi.com/v1'} onChange={e => setGlobalSettings({...globalSettings, primary_base_url: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                </div>
+                <div>
+                    <label className="text-xs font-bold block mb-1">Model Name:</label>
+                    <input type="text" value={globalSettings.primary_model || 'gpt-4o-mini'} onChange={e => setGlobalSettings({...globalSettings, primary_model: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                </div>
+            </div>
+            <div>
+                <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-bold text-emerald-400">Primary API Key Pool (Unlimited Multi-Key Rotation):</label>
+                    <button type="button" onClick={() => {
+                        let keys = [];
+                        try { keys = JSON.parse(globalSettings.primary_api_keys || '[]'); } catch(e){}
+                        setGlobalSettings({...globalSettings, primary_api_keys: JSON.stringify([...keys, ''])});
+                    }} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow">+ Add Key</button>
+                </div>
+                <div className="space-y-2">
+                    {(() => {
+                        let keys = [];
+                        try { keys = JSON.parse(globalSettings.primary_api_keys || '[]'); } catch(e){}
+                        if (keys.length === 0) keys = [''];
+                        return keys.map((k, idx) => (
+                            <div key={idx} className="flex gap-2">
+                                <input type="password" value={k} placeholder={`Primary API Key ${idx + 1}`} onChange={e => {
+                                    const newKeys = [...keys];
+                                    newKeys[idx] = e.target.value.trim();
+                                    setGlobalSettings({...globalSettings, primary_api_keys: JSON.stringify(newKeys)});
+                                }} className={`flex-1 p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                                {keys.length > 1 && (
+                                    <button type="button" onClick={() => {
+                                        const newKeys = keys.filter((_, i) => i !== idx);
+                                        setGlobalSettings({...globalSettings, primary_api_keys: JSON.stringify(newKeys)});
+                                    }} className="p-2 text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                )}
+                            </div>
+                        ));
+                    })()}
+                </div>
+            </div>
+        </div>
+
+        {/* Secondary Provider Setup */}
+        <div className={`p-5 rounded-2xl ${neoPressedClass} space-y-4 border border-purple-500/30`}>
+            <h4 className="text-sm font-bold text-purple-400">🛡️ Secondary Provider (Primary မရပါက အရန်သုံးမည့် AI)</h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                    <label className="text-xs font-bold block mb-1">Provider အမည်:</label>
+                    <input type="text" value={globalSettings.secondary_provider || 'chat_b_ai'} onChange={e => setGlobalSettings({...globalSettings, secondary_provider: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs outline-none ${neoClass}`} />
+                </div>
+                <div>
+                    <label className="text-xs font-bold block mb-1">Base URL:</label>
+                    <input type="text" value={globalSettings.secondary_base_url || 'https://chat.b.ai/v1'} onChange={e => setGlobalSettings({...globalSettings, secondary_base_url: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                </div>
+                <div>
+                    <label className="text-xs font-bold block mb-1">Model Name:</label>
+                    <input type="text" value={globalSettings.secondary_model || 'gpt-4o'} onChange={e => setGlobalSettings({...globalSettings, secondary_model: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                </div>
+            </div>
+            <div>
+                <div className="flex justify-between items-center mb-2">
+                    <label className="text-xs font-bold text-emerald-400">Secondary API Key Pool (Unlimited Multi-Key Rotation):</label>
+                    <button type="button" onClick={() => {
+                        let keys = [];
+                        try { keys = JSON.parse(globalSettings.secondary_api_keys || '[]'); } catch(e){}
+                        setGlobalSettings({...globalSettings, secondary_api_keys: JSON.stringify([...keys, ''])});
+                    }} className="px-3 py-1 bg-purple-600 text-white rounded-lg text-xs font-bold shadow">+ Add Key</button>
+                </div>
+                <div className="space-y-2">
+                    {(() => {
+                        let keys = [];
+                        try { keys = JSON.parse(globalSettings.secondary_api_keys || '[]'); } catch(e){}
+                        if (keys.length === 0) keys = [''];
+                        return keys.map((k, idx) => (
+                            <div key={idx} className="flex gap-2">
+                                <input type="password" value={k} placeholder={`Secondary API Key ${idx + 1}`} onChange={e => {
+                                    const newKeys = [...keys];
+                                    newKeys[idx] = e.target.value.trim();
+                                    setGlobalSettings({...globalSettings, secondary_api_keys: JSON.stringify(newKeys)});
+                                }} className={`flex-1 p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                                {keys.length > 1 && (
+                                    <button type="button" onClick={() => {
+                                        const newKeys = keys.filter((_, i) => i !== idx);
+                                        setGlobalSettings({...globalSettings, secondary_api_keys: JSON.stringify(newKeys)});
+                                    }} className="p-2 text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                )}
+                            </div>
+                        ));
+                    })()}
+                </div>
+            </div>
+        </div>
+
+        <button onClick={saveAnnouncementSettings} className="px-6 py-3.5 bg-cyan-500 hover:bg-cyan-600 text-black font-black rounded-xl text-xs shadow-lg transition-all">
+            Save AI Neural Providers Config
+        </button>
+    </div>
+)}
                                 {adminTab === 'users' && (
                                     <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
                                         <div className="flex justify-between items-center">
@@ -4156,137 +4669,6 @@ Format strictly as JSON ONLY:
                                 {adminTab === 'pricing_ads' && (
                                     <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
                                         <h3 className="text-lg font-bold">Credit သတ်မှတ်ချက်၊ ငွေလက်ခံအကောင့်နှင့် ကြော်ငြာ (Ads) ဆက်တင်များ</h3>
-                                        <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-4 border border-indigo-500/30`}>
-
-                                            <div className="flex justify-between items-center">
-
-                                                <div>
-
-                                                    <h4 className="text-sm font-bold text-indigo-400">⚡ High-Performance Neural Engine (Server Pool)</h4>
-
-                                                    <p className="text-[11px] opacity-70">ဖွင့်ထားပါက Script, Hook နှင့် Social Kit တို့ကို ဤ API ဖြင့် အဓိကထုတ်ပေးပြီး Error တက်မှ (သို့မဟုတ် ပိတ်ထားပါက) User Key သို့ ကူးပါမည်။</p>
-
-                                                </div>
-
-                                                <input 
-
-                                                    type="checkbox" 
-
-                                                    checked={globalSettings.apinex_enabled === 'true'} 
-
-                                                    onChange={e => setGlobalSettings({ ...globalSettings, apinex_enabled: e.target.checked ? 'true' : 'false' })} 
-
-                                                    className="w-5 h-5 accent-indigo-500 cursor-pointer"
-
-                                                />
-
-                                            </div>
-
-
-
-                                            {globalSettings.apinex_enabled === 'true' && (
-
-                                                <div className="space-y-3 pt-2 border-t border-current/10">
-
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-
-                                                        <div>
-
-                                                            <label className="text-xs font-bold block mb-1">API Base URL / Endpoint:</label>
-
-                                                            <input 
-
-                                                                type="text" 
-
-                                                                value={globalSettings.apinex_base_url || 'https://apinex.bond/v1/chat/completions'} 
-
-                                                                onChange={e => setGlobalSettings({ ...globalSettings, apinex_base_url: e.target.value })} 
-
-                                                                className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
-
-                                                            />
-
-                                                        </div>
-
-                                                        <div>
-
-                                                            <label className="text-xs font-bold block mb-1">Model Name:</label>
-
-                                                            <input 
-
-                                                                type="text" 
-
-                                                                value={globalSettings.apinex_model || 'gpt-4o-mini'} 
-
-                                                                onChange={e => setGlobalSettings({ ...globalSettings, apinex_model: e.target.value })} 
-
-                                                                className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
-
-                                                            />
-
-                                                        </div>
-
-                                                    </div>
-
-
-
-                                                    <div>
-                                                        <div className="flex justify-between items-center mb-2">
-                                                            <label className="text-xs font-bold text-emerald-400">API Key Pool (Multi-Key Rotation):</label>
-                                                            <button 
-                                                                type="button" 
-                                                                onClick={() => {
-                                                                    let currentKeys = [];
-                                                                    try { currentKeys = JSON.parse(globalSettings.apinex_api_keys || '[]'); } catch(e){}
-                                                                    setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify([...currentKeys, '']) });
-                                                                }}
-                                                                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold shadow transition-all"
-                                                            >
-                                                                + Add Key
-                                                            </button>
-                                                        </div>
-
-                                                        <div className="space-y-2">
-                                                            {(() => {
-                                                                let keys = [];
-                                                                try { keys = JSON.parse(globalSettings.apinex_api_keys || '[]'); } catch(e){}
-                                                                if (keys.length === 0) keys = [''];
-                                                                return keys.map((k, idx) => (
-                                                                    <div key={idx} className="flex gap-2">
-                                                                        <input 
-                                                                            type="password" 
-                                                                            value={k} 
-                                                                            placeholder={`Apinex API Key ${idx + 1}`} 
-                                                                            onChange={e => {
-                                                                                const newKeys = [...keys];
-                                                                                newKeys[idx] = e.target.value.trim();
-                                                                                setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify(newKeys) });
-                                                                            }}
-                                                                            className={`flex-1 p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`}
-                                                                        />
-                                                                        {keys.length > 1 && (
-                                                                            <button 
-                                                                                type="button" 
-                                                                                onClick={() => {
-                                                                                    const newKeys = keys.filter((_, i) => i !== idx);
-                                                                                    setGlobalSettings({ ...globalSettings, apinex_api_keys: JSON.stringify(newKeys) });
-                                                                                }} 
-                                                                                className="p-2.5 text-red-500 hover:bg-red-500/10 rounded-xl"
-                                                                            >
-                                                                                <Trash2 className="w-4 h-4"/>
-                                                                            </button>
-                                                                        )}
-                                                                    </div>
-                                                                ));
-                                                            })()}
-                                                        </div>
-                                                    </div>
-
-                                                </div>
-
-                                            )}
-
-                                        </div> 
                                         <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-3 border border-indigo-500/30`}>
     <h4 className="text-sm font-bold text-indigo-400">🛡️ Backend Groq Whisper API Key Pool (Zero-Leakage)</h4>
     <p className="text-[11px] opacity-70">အသံမှ စာသားဖတ်ယူရန် Groq API Key များကို ဆာဗာတွင် လုံခြုံစွာ သိမ်းဆည်းထားပြီး အလှည့်ကျ သုံးပေးပါမည်။</p>
@@ -4411,17 +4793,48 @@ Format strictly as JSON ONLY:
                                                     />
                                                 </div>
                                             </div>
-                                            <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
-                                                <label className="text-xs font-bold opacity-70 block mb-1">ဗီဒီယို ၁ မိနစ်လျှင် ဖြတ်တောက်မည့် Credit ပမာဏ:</label>
-                                                <input type="number" value={globalSettings.deduction_rate_per_min} onChange={e=>setGlobalSettings({...globalSettings, deduction_rate_per_min: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoClass}`} />
+                                            {/* Server Key Pricing & Discount */}
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass} space-y-3 border border-indigo-500/30`}>
+                                                <h4 className="text-xs font-bold text-indigo-400">⚡ Server Key နှုန်းထားနှင့် လျှော့စျေး ဆက်တင်များ</h4>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label className="text-[11px] font-bold opacity-70 block mb-1">၁ မိနစ် နှုန်းထား (Credits):</label>
+                                                        <input type="number" value={globalSettings.server_key_rate_per_min || '50'} onChange={e=>setGlobalSettings({...globalSettings, server_key_rate_per_min: e.target.value})} className={`w-full p-2.5 rounded-xl outline-none text-xs font-bold ${neoClass}`} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold opacity-70 block mb-1">ပထမ ၂ မိနစ် နှုန်းထား (Credits):</label>
+                                                        <input type="number" value={globalSettings.server_key_first_two_rate || '30'} onChange={e=>setGlobalSettings({...globalSettings, server_key_first_two_rate: e.target.value})} className={`w-full p-2.5 rounded-xl outline-none text-xs font-bold ${neoClass}`} />
+                                                    </div>
+                                                </div>
+                                                <label className="flex items-center gap-2 cursor-pointer pt-1 text-xs">
+                                                    <input type="checkbox" checked={globalSettings.server_key_discount_enabled !== 'false'} onChange={e=>setGlobalSettings({...globalSettings, server_key_discount_enabled: e.target.checked ? 'true' : 'false'})} className="w-4 h-4 accent-indigo-500" />
+                                                    <span>ပထမ ၂ မိနစ် လျှော့စျေး စနစ်ကို ဖွင့်ထားမည်</span>
+                                                </label>
                                             </div>
+
+                                            {/* Own Key Pricing & Discount */}
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass} space-y-3 border border-emerald-500/30`}>
+                                                <h4 className="text-xs font-bold text-emerald-400">🔑 Own Key (ကိုယ်ပိုင် Key) နှုန်းထားနှင့် လျှော့စျေး ဆက်တင်များ</h4>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label className="text-[11px] font-bold opacity-70 block mb-1">၁ မိနစ် နှုန်းထား (Credits):</label>
+                                                        <input type="number" value={globalSettings.own_key_rate_per_min || '20'} onChange={e=>setGlobalSettings({...globalSettings, own_key_rate_per_min: e.target.value})} className={`w-full p-2.5 rounded-xl outline-none text-xs font-bold ${neoClass}`} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[11px] font-bold opacity-70 block mb-1">ပထမ ၂ မိနစ် နှုန်းထား (Credits):</label>
+                                                        <input type="number" value={globalSettings.own_key_first_two_rate || '15'} onChange={e=>setGlobalSettings({...globalSettings, own_key_first_two_rate: e.target.value})} className={`w-full p-2.5 rounded-xl outline-none text-xs font-bold ${neoClass}`} />
+                                                    </div>
+                                                </div>
+                                                <label className="flex items-center gap-2 cursor-pointer pt-1 text-xs">
+                                                    <input type="checkbox" checked={globalSettings.own_key_discount_enabled !== 'false'} onChange={e=>setGlobalSettings({...globalSettings, own_key_discount_enabled: e.target.checked ? 'true' : 'false'})} className="w-4 h-4 accent-emerald-500" />
+                                                    <span>ပထမ ၂ မိနစ် လျှော့စျေး စနစ်ကို ဖွင့်ထားမည်</span>
+                                                </label>
+                                            </div>
+
+                                            {/* Free Minutes Setting */}
                                             <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-1">တစ်နေ့တာ Free ပေးမည့် မိနစ် (0 ထားပါက အခမဲ့မပေးပါ):</label>
                                                 <input type="number" value={globalSettings.free_minutes_per_day || '0'} onChange={e=>setGlobalSettings({...globalSettings, free_minutes_per_day: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoClass}`} />
-                                            </div>
-                                            <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
-                                                <label className="text-xs font-bold opacity-70 block mb-1">ပထမ ၂ မိနစ်အတွက် အထူးနှုန်းထား (၁ မိနစ်လျှင် Credit):</label>
-                                                <input type="number" value={globalSettings.first_two_min_rate || '30'} onChange={e=>setGlobalSettings({...globalSettings, first_two_min_rate: e.target.value})} className={`w-full p-3 rounded-xl outline-none ${neoClass}`} />
                                             </div>
                                             <div className={`p-4 rounded-2xl ${neoPressedClass}`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-1">TTS အသံထုတ်ယူမှု ပုံစံ ရွေးချယ်ရန်:</label>
