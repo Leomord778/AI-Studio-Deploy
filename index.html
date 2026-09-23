@@ -1322,8 +1322,13 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                                 const response = await apiFetch('/api/tts', { 
                                     method: 'POST', 
                                     headers: { 'Content-Type': 'application/json' }, 
-                                    rate: `${Math.round((voiceSpeed * 1.15 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.15 - 1.0) * 100)}%`
+                                    body: JSON.stringify({
+                                        text: text,
+                                        voice: recapVoice,
+                                        rate: `${Math.round((voiceSpeed * 1.15 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.15 - 1.0) * 100)}%`
+                                    })
                                 });
+                                if (!response.ok) throw new Error("TTS generation failed");
                                 const mp3Blob = await response.blob();
                                 audioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
                                 actualDur = audioBuffer.duration;

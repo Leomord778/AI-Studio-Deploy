@@ -1562,11 +1562,18 @@ async def voice_clone_proxy(
 @app.post("/api/tts")
 async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
     try:
-        data = await request.json()
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
         text = data.get("text", "").strip()
         voice = data.get("voice", "my-MM-ThihaNeural")
         rate = data.get("rate", "+10%")
-        
+
+        if not text:
+            raise HTTPException(status_code=400, detail="Text is required")
+
         auth = request.headers.get("authorization", "")
         if not auth.lower().startswith("bearer "):
             raise HTTPException(status_code=401, detail="Login ဝင်ရောက်ပေးပါ")
@@ -1578,12 +1585,12 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
         u_email = str(payload["email"]).strip().lower()
         tts_mode_setting = settings_col.find_one({"key": "tts_mode"})
         tts_mode = tts_mode_setting.get("value", "ads") if tts_mode_setting else "ads"
-        
+
         if tts_mode == "credits" and u_email != ADMIN_EMAIL:
             char_rate_setting = settings_col.find_one({"key": "tts_chars_per_credit"})
             chars_per_credit = int(char_rate_setting.get("value", "100")) if char_rate_setting else 100
             cost = max(1, math.ceil(len(text) / chars_per_credit))
-            
+
             user = users_col.find_one({"email": u_email})
             if not user or user.get("credits", 0) < cost:
                 raise HTTPException(
@@ -1602,7 +1609,8 @@ async def edge_tts_api(request: Request, background_tasks: BackgroundTasks):
         return FileResponse(tmp_file.name, media_type="audio/mpeg")
     except HTTPException:
         raise
-    except Exception as e: 
+    except Exception as e:
+        print(f"[Edge TTS Error]: {e}")
         return JSONResponse(status_code=500, content={"error": f"Edge TTS Error: {str(e)}"})
 
 # --- NEURAL COMPUTE ENGINE (MULTI-PROVIDER ORCHESTRATOR) ---
