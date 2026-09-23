@@ -1970,7 +1970,7 @@ async def generate_social_kit(request: Request, data: dict):
 
     kit_result = None
 
-    # Step 1: Universal AI Providers (Codecraft / B.AI) ဖြင့် အရင်ဆုံး ကြိုးစားခြင်း
+    # Step 1: Universal AI Providers ဖြင့် အရင်ဆုံး ကြိုးစားခြင်း
     try:
         ai_resp = await call_universal_ai([
             {"role": "system", "content": "Return ONLY valid JSON."},
