@@ -27,6 +27,10 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
 from bson.objectid import ObjectId
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+
+GOOGLE_CLIENT_ID = "135328538466-76vbcm81m07i03cqc105d5rrrt3967t4.apps.googleusercontent.com"
 
 mimetypes.add_type('application/wasm', '.wasm')
 mimetypes.add_type('text/javascript', '.js')
@@ -53,9 +57,9 @@ messages_col = db["messages"]
 SESSION_SECRET = os.getenv("SESSION_SECRET", "ai-studio-super-secret-key-2026")
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "778leomord@gmail.com").strip().lower()
 
-# Telegram Integration
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8643779687:AAFrtV8XnepuiLWly9N1YwXEXZEBvu7pg-8").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "-1003802670362").strip()
+# Telegram Integration (.env ထဲမှသာ ဆွဲယူမည်)
+TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
 
 # Groq Keys
 raw_groq_env = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEYS") or ""
@@ -104,6 +108,7 @@ def init_db():
         "voice_clone_tts_mode": "credits",
         "voice_clone_tts_chars_per_credit": "50",
         "ads_animator_rate_per_sec": "2",
+        "social_kit_rate_per_use": "10",
         "ads_animator_free_revisions": "1",
         "tool_status_downloader": "true",
         "tool_status_animator": "true",
@@ -397,7 +402,7 @@ async def call_universal_ai(messages: list, temperature: float = 0.7) -> str:
         
         print(f"[{provider_tag}] ချိတ်ဆက်နေသည်: {url} | Model: {model}")
         
-        async with httpx.AsyncClient(timeout=120.0, http1=True, verify=False) as client:
+        async with httpx.AsyncClient(timeout=120.0, http1=True) as client:
             resp = await client.post(url, json=payload, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
@@ -449,7 +454,7 @@ async def call_universal_ai(messages: list, temperature: float = 0.7) -> str:
                 "contents": [{"parts": [{"text": combined_text}]}],
                 "generationConfig": {"temperature": temperature}
             }
-            async with httpx.AsyncClient(timeout=60.0, verify=False) as client_http:
+            async with httpx.AsyncClient(timeout=60.0) as client_http:
                 resp = await client_http.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
                 if resp.status_code == 200:
                     res_data = resp.json()
@@ -458,17 +463,83 @@ async def call_universal_ai(messages: list, temperature: float = 0.7) -> str:
             print(f"[Gemini Fallback Error]: {str(e)}")
 
     raise HTTPException(status_code=500, detail="Primary၊ Secondary နှင့် Fallback API Keys များ အားလုံး အသုံးပြု၍ မရတော့ပါခင်ဗျာ။")
+# User ထံ မပေါက်ကြားသင့်သော လျှို့ဝှက်ချက်များနှင့် Provider အချက်အလက်များ အားလုံး
+SECRET_SETTINGS_KEYS = {
+    "primary_api_keys",
+    "secondary_api_keys",
+    "groq_api_keys_pool",
+    "voice_clone_colab_urls",
+    "primary_base_url",
+    "secondary_base_url",
+    "primary_provider",
+    "secondary_provider",
+    "primary_model",
+    "secondary_model"
+}
+
+
 @app.post("/api/login")
-async def login(data: dict):
-    email = data.get("email", "").strip().lower()
-    if not email: return JSONResponse(status_code=400, content={"error": "Email is required"})
+async def login(request: Request, data: dict = {}):
+    credential = data.get("credential")
+    email = None
+    name = None
+    picture = None
+
+    if credential:
+        id_info = None
+
+        # နည်းလမ်း ၁: google-auth library ဖြင့် စစ်ဆေးခြင်း (Clock Skew 60s ခွင့်ပြုထားသည်)
+        try:
+            id_info = id_token.verify_oauth2_token(
+                credential, 
+                google_requests.Request(), 
+                GOOGLE_CLIENT_ID,
+                clock_skew_in_seconds=60
+            )
+        except Exception as e1:
+            print(f"[google-auth warning]: {e1} -> Google tokeninfo API ဖြင့် အရန်စစ်ဆေးပါမည်")
+
+        # နည်းလမ်း ၂: Library အဆင်မပြေပါက Google ၏ တရားဝင် tokeninfo API ဖြင့် တိုက်ရိုက် စစ်ဆေးခြင်း
+        if not id_info:
+            try:
+                async with httpx.AsyncClient(timeout=15.0, verify=False) as http_client:
+                    t_resp = await http_client.get(
+                        f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}"
+                    )
+                    if t_resp.status_code == 200:
+                        t_data = t_resp.json()
+                        # Audience (Client ID) အမှန်တကယ် ကိုက်ညီမှု ရှိ/မရှိ စစ်ဆေးခြင်း
+                        if t_data.get("aud") == GOOGLE_CLIENT_ID:
+                            id_info = t_data
+                        else:
+                            print(f"[Google Auth Mismatch]: aud ({t_data.get('aud')}) != CLIENT_ID")
+                    else:
+                        print(f"[Google tokeninfo HTTP Error]: {t_resp.status_code} - {t_resp.text}")
+            except Exception as e2:
+                print(f"[tokeninfo network error]: {e2}")
+
+        # စစ်ဆေးမှု နှစ်ခုစလုံး မအောင်မြင်မှသာ ပယ်ချမည်
+        if not id_info:
+            raise HTTPException(status_code=401, detail="တရားမဝင်သော Google Token ဖြစ်ပါသည်")
+
+        email = id_info.get("email", "").strip().lower()
+        name = id_info.get("name") or email.split("@")[0]
+        picture = id_info.get("picture") or ""
+    else:
+        # User Profile Refresh ပြုလုပ်ချိန်တွင် Session Token စစ်ဆေးခြင်း
+        try:
+            email = get_request_email(request)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Google Credential သို့မဟုတ် Valid Session Token လိုအပ်ပါသည်")
+
     user = users_col.find_one({"email": email})
     role = "admin" if email == ADMIN_EMAIL else "user"
+    
     if not user:
         user = { 
             "email": email, 
-            "name": data.get("name") or email.split("@")[0], 
-            "picture": data.get("picture") or "", 
+            "name": name or email.split("@")[0], 
+            "picture": picture or "", 
             "role": role, 
             "credits": 1000, 
             "credits_expire_at": None,
@@ -487,14 +558,17 @@ async def login(data: dict):
                 user["credits"] = 0
                 user["credits_expire_at"] = None
 
-    settings = {}
-    for doc in settings_col.find():
-        settings[doc["key"]] = doc["value"]
+    all_settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
 
-    # Tool Switches များ Default တန်ဖိုး သေချာစေရန်
     for t_key in ["tool_status_downloader", "tool_status_animator", "tool_status_recap", "tool_status_subtitle", "tool_status_tts", "tool_status_store"]:
-        if t_key not in settings:
-            settings[t_key] = "true"
+        if t_key not in all_settings:
+            all_settings[t_key] = "true"
+
+    is_admin = (email == ADMIN_EMAIL or user.get("role") == "admin")
+    if is_admin:
+        client_settings = all_settings
+    else:
+        client_settings = {k: v for k, v in all_settings.items() if k not in SECRET_SETTINGS_KEYS}
 
     if "_id" in user: del user["_id"]
     
@@ -509,7 +583,7 @@ async def login(data: dict):
     return { 
         **user, 
         "remaining_days": remaining_days,
-        "settings": settings, 
+        "settings": client_settings, 
         "token": _encode_session(email, user.get("role", "user")) 
     }
 
@@ -586,24 +660,19 @@ async def mark_notifications_read(request: Request):
     return {"status": "success"}
 
 def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = False, key_mode: str = "server") -> tuple[int, bool]:
-    dur_mins = max(1, math.ceil(dur_sec / 60.0))
+    full_mins = int(dur_sec // 60)
+    rem_sec = dur_sec % 60
+    # စက္ကန့် ၃၀ အထိ မူရင်းမိနစ်ယူပြီး ၃၁ စက္ကန့်မှ နောက်တစ်မိနစ်သို့ တိုးယူခြင်း
+    dur_mins = max(1, full_mins + 1 if rem_sec > 30 else full_mins)
 
-    free_setting = settings_col.find_one({"key": "free_minutes_per_day"})
-    free_mins = int(free_setting.get("value", "0")) if free_setting else 0
-
+    # Voice Clone စနစ်ဖြစ်ပါက သီးသန့်နှုန်းထားအတိုင်း တွက်ချက်ခြင်း
     if is_voice_clone:
         rate_setting = settings_col.find_one({"key": "voice_clone_recap_rate_per_min"})
         base_rate = int(rate_setting.get("value", "80")) if rate_setting else 80
         cost = dur_mins * base_rate
         return cost, False
 
-    if free_mins > 0:
-        if dur_mins <= free_mins:
-            return 0, True
-        else:
-            dur_mins -= free_mins
-
-    # Server Key သို့မဟုတ် Own Key အလိုက် နှုန်းထားနှင့် လျှော့စျေး စစ်ဆေးခြင်း
+    # Server Key သို့မဟုတ် Own Key အလိုက် နှုန်းထားများ ရယူခြင်း
     if key_mode == "own":
         rate_setting = settings_col.find_one({"key": "own_key_rate_per_min"})
         base_rate = int(rate_setting.get("value", "20")) if rate_setting else 20
@@ -623,15 +692,29 @@ def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = Fals
         first_two_setting = settings_col.find_one({"key": "server_key_first_two_rate"}) or settings_col.find_one({"key": "first_two_min_rate"})
         first_two_rate = int(first_two_setting.get("value", "30")) if first_two_setting else 30
 
-    if disc_enabled and first_two_rate > 0:
-        if dur_mins <= 2:
-            cost = first_two_rate
-        else:
-            cost = first_two_rate + ((dur_mins - 2) * base_rate)
-    else:
-        cost = dur_mins * base_rate
+    # Admin သတ်မှတ်ထားသော နေ့စဉ် Free Minutes ရယူခြင်း
+    free_setting = settings_col.find_one({"key": "free_minutes_per_day"})
+    free_mins = int(free_setting.get("value", "0")) if free_setting else 0
 
-    return cost, False
+    if free_mins > 0:
+        if dur_mins <= free_mins:
+            # ၁။ သတ်မှတ် Free မိနစ်အတွင်း ဖြစ်ပါက လုံးဝ အခမဲ့ (0 Credit)
+            return 0, True
+        else:
+            # ၂။ Free မိနစ်ထက် ပိုပါက ပိုသော မိနစ်အတွက်သာ လျှော့ဈေးမပါဘဲ ပုံမှန် base_rate ဖြင့် ဖြတ်တောက်ခြင်း
+            extra_mins = dur_mins - free_mins
+            cost = extra_mins * base_rate
+            return cost, False
+    else:
+        # ၃။ Free မပေးထားပါက ပထမ ၂ မိနစ် လျှော့ဈေးစနစ်ဖြင့် တွက်ချက်ခြင်း
+        if disc_enabled and first_two_rate > 0:
+            if dur_mins <= 2:
+                cost = first_two_rate
+            else:
+                cost = first_two_rate + ((dur_mins - 2) * base_rate)
+        else:
+            cost = dur_mins * base_rate
+        return cost, False
 
 @app.post("/api/video/pre-deduct")
 async def pre_deduct_video_cost(request: Request, data: dict):
@@ -1273,16 +1356,11 @@ async def create_product(
     images: List[UploadFile] = File(None)
 ):
     require_admin(request)
-    
-    try:
-        variants = json.loads(variants_json)
-    except Exception:
-        variants = []
+    try: variants = json.loads(variants_json)
+    except Exception: variants = []
 
-    try:
-        payment_accounts = json.loads(payment_accounts_json)
-    except Exception:
-        payment_accounts = []
+    try: payment_accounts = json.loads(payment_accounts_json)
+    except Exception: payment_accounts = []
 
     for v in variants:
         v["cost_price_mmk"] = float(v.get("cost_price_mmk", 0))
@@ -1295,12 +1373,11 @@ async def create_product(
     if images:
         for img in images:
             if img.filename:
-                file_ext = os.path.splitext(img.filename)[1]
-                saved_filename = f"prod_{uuid.uuid4().hex[:10]}{file_ext}"
-                dest_path = os.path.join("media", saved_filename)
-                with open(dest_path, "wb") as f:
-                    shutil.copyfileobj(img.file, f)
-                image_urls.append(f"/media/{saved_filename}")
+                content = await img.read()
+                mime = img.content_type or "image/jpeg"
+                b64_str = base64.b64encode(content).decode("utf-8")
+                # MongoDB တွင် တိုက်ရိုက်သိမ်းဆည်းရန် Data URL အဖြစ် ပြောင်းလဲခြင်း
+                image_urls.append(f"data:{mime};base64,{b64_str}")
 
     primary_image = image_urls[0] if image_urls else ""
 
@@ -1314,7 +1391,6 @@ async def create_product(
         "image_urls": image_urls,
         "created_at": current_utc()
     }
-    
     res = products_col.insert_one(doc)
     return {"message": "Product created successfully", "id": str(res.inserted_id)}
 
@@ -1355,12 +1431,10 @@ async def update_product(
         image_urls = []
         for img in images:
             if img.filename:
-                file_ext = os.path.splitext(img.filename)[1]
-                saved_filename = f"prod_{uuid.uuid4().hex[:10]}{file_ext}"
-                dest_path = os.path.join("media", saved_filename)
-                with open(dest_path, "wb") as f:
-                    shutil.copyfileobj(img.file, f)
-                image_urls.append(f"/media/{saved_filename}")
+                content = await img.read()
+                mime = img.content_type or "image/jpeg"
+                b64_str = base64.b64encode(content).decode("utf-8")
+                image_urls.append(f"data:{mime};base64,{b64_str}")
         update_doc["image_url"] = image_urls[0]
         update_doc["image_urls"] = image_urls
 
@@ -1370,12 +1444,6 @@ async def update_product(
 @app.delete("/api/admin/products/{product_id}")
 async def admin_delete_product(request: Request, product_id: str):
     require_admin(request)
-    prod = products_col.find_one({"_id": ObjectId(product_id)})
-    if prod:
-        for k in prod.get("image_keys", []):
-            delete_media(k)
-        if prod.get("image_key"):
-            delete_media(prod["image_key"])
     products_col.delete_one({"_id": ObjectId(product_id)})
     return {"status": "success"}
 
@@ -1577,6 +1645,7 @@ async def proxy_neural_compute(request: Request):
 
 @app.api_route("/api/gemini/{path:path}", methods=["GET", "POST"])
 async def proxy_gemini(path: str, request: Request):
+    get_request_email(request)  # 🔒 Login စစ်ဆေးမှု
     query_params = dict(request.query_params)
     client_key = query_params.get("key", "").strip()
     keys_to_try = []
@@ -1620,6 +1689,7 @@ def get_groq_pool_keys() -> list[str]:
 
 @app.post("/api/groq/transcriptions")
 async def proxy_groq(request: Request):
+    get_request_email(request)  # 🔒 Login စစ်ဆေးမှု
     try:
         form = await request.form()
         file = form.get("file")
@@ -1863,6 +1933,83 @@ async def generate_ad_script(request: Request, data: dict):
         "status": "success",
         "script": script_result,
         "deducted_credits": total_cost if email != ADMIN_EMAIL else 0
+    }
+# --- SOCIAL MEDIA KIT ENGINE WITH CREDIT DEDUCTION & AUTO-REFUND ---
+
+@app.post("/api/social/generate-kit")
+async def generate_social_kit(request: Request, data: dict):
+    email = get_request_email(request)
+    transcript = data.get("text", "").strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="ဗီဒီယို စာသား (Transcript) မပါရှိပါ")
+
+    # Admin Panel မှ သတ်မှတ်ထားသော Social Kit Credit နှုန်းထား ရယူခြင်း
+    setting_doc = settings_col.find_one({"key": "social_kit_rate_per_use"})
+    cost = int(setting_doc.get("value", "10")) if setting_doc else 10
+
+    # User Credit စစ်ဆေးခြင်းနှင့် ကြိုတင်ဖြတ်တောက်ခြင်း
+    user = users_col.find_one({"email": email})
+    if email != ADMIN_EMAIL:
+        if not user or user.get("credits", 0) < cost:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Credit မလုံလောက်ပါ။ Social Media Kit ဖန်တီးရန် {cost} Credits လိုအပ်ပါသည်။"
+            )
+        users_col.update_one({"email": email}, {"$inc": {"credits": -cost}})
+
+    prompt_text = (
+        f"Generate viral, engaging social media posts for YouTube, TikTok, and Facebook in Myanmar based on this transcript.\n"
+        f"Output format MUST be strictly a valid JSON object without markdown formatting:\n"
+        f"{{\n"
+        f'  "youtube": {{"title": "...", "desc": "...", "tags": "..."}},\n'
+        f'  "tiktok": {{"title": "...", "desc": "...", "tags": "..."}},\n'
+        f'  "facebook": {{"title": "...", "desc": "...", "tags": "..."}}\n'
+        f"}}\n\n"
+        f"Transcript:\n{transcript[:3000]}"
+    )
+
+    kit_result = None
+
+    # Step 1: Universal AI Providers (Codecraft / B.AI) ဖြင့် အရင်ဆုံး ကြိုးစားခြင်း
+    try:
+        ai_resp = await call_universal_ai([
+            {"role": "system", "content": "Return ONLY valid JSON."},
+            {"role": "user", "content": prompt_text}
+        ])
+        clean_json = ai_resp.replace("```json", "").replace("```", "").strip()
+        kit_result = json.loads(clean_json)
+    except Exception as e:
+        print(f"[Social Kit Universal Error]: {e} -> Fallback to Gemini")
+
+    # Step 2: အဆင်မပြေပါက Server Gemini Key သို့ Fallback ပြုလုပ်ခြင်း
+    if not kit_result:
+        gemini_key = get_server_gemini_key()
+        if gemini_key:
+            try:
+                gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt_text}]}],
+                    "generationConfig": {"responseMimeType": "application/json"}
+                }
+                async with httpx.AsyncClient(timeout=60.0) as client_http:
+                    resp = await client_http.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
+                    if resp.status_code == 200:
+                        res_data = resp.json()
+                        c_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                        kit_result = json.loads(c_text.replace("```json", "").replace("```", "").strip())
+            except Exception as gemini_err:
+                print(f"[Social Kit Gemini Fallback Error]: {gemini_err}")
+
+    # မအောင်မြင်ပါက ဖြတ်တောက်ထားသော Credit အား အလိုအလျောက် ပြန်အမ်းခြင်း (Auto-Refund)
+    if not kit_result:
+        if email != ADMIN_EMAIL:
+            users_col.update_one({"email": email}, {"$inc": {"credits": cost}})
+        raise HTTPException(status_code=502, detail="Social Media Kit ထုတ်ယူ၍ မရနိုင်ပါ။ Credit အား ပြန်လည် အမ်းပေးလိုက်ပါပြီ။")
+
+    return {
+        "status": "success",
+        "content": kit_result,
+        "deducted_credits": cost if email != ADMIN_EMAIL else 0
     }
 if __name__ == "__main__":
     import uvicorn

@@ -7,3 +7,5 @@ edge-tts
 python-multipart
 pydantic
 yt-dlp
+google-auth
+requests

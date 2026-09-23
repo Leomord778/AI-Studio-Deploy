@@ -511,19 +511,20 @@
     tts_mode: "ads",
     tts_chars_per_credit: "100",
     ads_smart_link: ADS_LINK,
+    social_kit_rate_per_use: "10",
     tool_status_downloader: "true",
     tool_status_animator: "true",
     tool_status_recap: "true",
     tool_status_subtitle: "true",
     tool_status_tts: "true",
     tool_status_store: "true",
-    primary_provider: "codecraft",
-    primary_base_url: "https://codecraftapi.com/v1",
-    primary_model: "gpt-4o-mini",
+    primary_provider: "neural_core_alpha",
+    primary_base_url: "",
+    primary_model: "core-v1",
     primary_api_keys: "[]",
-    secondary_provider: "chat_b_ai",
-    secondary_base_url: "https://chat.b.ai/v1",
-    secondary_model: "gpt-4o",
+    secondary_provider: "neural_core_beta",
+    secondary_base_url: "",
+    secondary_model: "core-v2",
     secondary_api_keys: "[]",
     server_key_rate_per_min: "50",
     server_key_first_two_rate: "30",
@@ -606,6 +607,7 @@
             const [adminBadges, setAdminBadges] = useState({ pending_approvals: 0, unread_messages: 0, pending_orders: 0, total_alerts: 0 });
             const [adminStats, setAdminStats] = useState({ total_users: 0, monthly_profit: 0, yearly_profit: 0 });
             const [adminUsers, setAdminUsers] = useState([]);
+            const [userSearchQuery, setUserSearchQuery] = useState('');
             const [adminChatThreads, setAdminChatThreads] = useState([]);
             const [adminSelectedChatUser, setAdminSelectedChatUser] = useState(null);
             const [adminSelectedChatMessages, setAdminSelectedChatMessages] = useState([]);
@@ -788,7 +790,7 @@
             });
 
             const fetchUserData = (email) => {
-                fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
+                apiFetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
                 .then(r => r.json()).then(data => { 
                     setUserData(data); 
                     if (data.settings) setGlobalSettings(prev => ({ ...prev, ...data.settings })); 
@@ -810,18 +812,21 @@
             };
 
             const handleCredentialResponse = (response) => {
-                try {
-                    const base64Url = response.credential.split('.')[1];
-                    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-                    const payload = JSON.parse(decodeURIComponent(atob(base64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
-                    const uData = { name: payload.name, email: payload.email, picture: payload.picture };
-                    fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(uData) })
-                    .then(r => r.json()).then(data => {
-                        if (data.error) throw new Error(data.error);
-                        setSessionToken(data.token); setSafeStorage('sessionToken', data.token);
-                        setUser(uData); setSafeStorage('userProfile', uData); setUserData(data);
-                    }).catch(e => alert("Login Error: " + e.message));
-                } catch (e) { alert("Google Token Decode Error"); }
+                fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credential: response.credential })
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.detail || data.error) throw new Error(data.detail || data.error);
+                    setSessionToken(data.token); 
+                    setSafeStorage('sessionToken', data.token);
+                    setUser({ name: data.name, email: data.email, picture: data.picture }); 
+                    setSafeStorage('userProfile', { name: data.name, email: data.email, picture: data.picture }); 
+                    setUserData(data);
+                })
+                .catch(e => alert("Login Error: " + e.message));
             };
 
             useEffect(() => {
@@ -928,7 +933,9 @@
             // Video အရှည်နှင့် ရွေးထားသော Key Mode အလိုက် Real-time ကုန်ကျငွေ တွက်ချက်ပေးသည့် Function
             const getCalculatedTotalCredit = () => {
                 if (!videoDurationSec || videoDurationSec <= 0) return 0;
-                const durMins = Math.max(1, Math.ceil(videoDurationSec / 60));
+                const fullMins = Math.floor(videoDurationSec / 60);
+                const remSec = videoDurationSec % 60;
+                const durMins = Math.max(1, remSec > 30 ? fullMins + 1 : fullMins);
                 const isOwn = (videoKeyMode === 'own');
 
                 const baseRate = parseInt(isOwn 
@@ -943,11 +950,24 @@
                     ? (globalSettings.own_key_first_two_rate || 15) 
                     : (globalSettings.server_key_first_two_rate || globalSettings.first_two_min_rate || 30));
 
-                if (discEnabled && firstTwoRate > 0) {
-                    if (durMins <= 2) return firstTwoRate;
-                    return firstTwoRate + ((durMins - 2) * baseRate);
+                const freeMins = parseInt(globalSettings.free_minutes_per_day || '0');
+
+                // Free Minutes ဖွင့်ထားပါက
+                if (freeMins > 0) {
+                    if (durMins <= freeMins) {
+                        return 0; // လုံးဝ အခမဲ့
+                    } else {
+                        const extraMins = durMins - freeMins;
+                        return extraMins * baseRate; // ပိုသော မိနစ်အတွက်သာ လျှော့ဈေးမပါဘဲ တွက်မည်
+                    }
+                } else {
+                    // Free ပိတ်ထားပါက ပထမ ၂ မိနစ် လျှော့ဈေးဖြင့် တွက်မည်
+                    if (discEnabled && firstTwoRate > 0) {
+                        if (durMins <= 2) return firstTwoRate;
+                        return firstTwoRate + ((durMins - 2) * baseRate);
+                    }
+                    return durMins * baseRate;
                 }
-                return durMins * baseRate;
             };
             const executeWithApiLogic = async (operationName, requestFn) => {
                 const validKeys = geminiKeys.filter(k => k && k.trim() !== '');
@@ -1174,10 +1194,15 @@
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
                 // STRICT TARGET LANGUAGE ENFORCEMENT PROMPT
-                const ownRecapPrompt = `You are a professional Movie Recap Narrator and captivating storyteller.
-DO NOT translate dialog directly word-for-word. 
-Instead, observe the events and describe the character actions, plot twists, emotional reactions, and unfolding drama as a third-person storyteller in natural, captivating Myanmar spoken language (ဥပမာ: "ဒီလူကတော့ တောင်ထိပ်မှာ တွင်းကြီးတစ်ခုကို အချိန်ယူတူးနေတာပါ...", "အဲ့ဒီအချိန်မှာပဲ နဂါးကြီးကို တွေ့လိုက်ရလို့ အလန့်တကြား ဖြစ်သွားခဲ့ပါတယ်").
-Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exactly identical. Output ONLY a valid JSON array of objects with keys: id, start, end, text.`;
+                const ownRecapPrompt = `You are a professional movie recap narrator and cinematic storyteller.
+Analyze the provided scene segments and generate a compelling, cinematic recap script strictly synchronized with the timestamps.
+
+[RULES & STORYTELLING GUIDELINES]
+1. Do NOT translate dialog word-by-word. Rewrite contextually as an engaging third-person movie recap narrator with high emotional and dramatic impact.
+2. Pace and Duration: Keep the narration length concise enough to fit naturally within each segment's duration (approx. 2.5 to 3 Burmese words per second).
+3. Tone of Voice: Cinematic, captivating, suspenseful, and natural spoken Myanmar storytelling style (Standard Unicode).
+4. Timestamp Precision: Keep 'id', 'start', and 'end' exactly identical to input segments.
+5. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
 
                 const originalPrompt = `You are an expert translator. 
 CRITICAL REQUIREMENT: Translate all dialogue/text strictly into fluent, natural spoken ${selectedLang}.
@@ -1189,13 +1214,13 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                     let translatedBatch = null;
                     const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
 
-                    if (!forceOwnKey && (globalSettings.primary_base_url || globalSettings.secondary_base_url)) {
+                    if (!forceOwnKey) {
                         try {
                             const sRes = await apiFetch('/api/engine/neural-compute', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    model: globalSettings.primary_model || "gpt-4o-mini",
+                                    model: "neural-compute-stream",
                                     messages: [
                                         { role: "system", content: sysPrompt },
                                         { role: "user", content: `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch) }
@@ -1297,7 +1322,7 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                                 const response = await apiFetch('/api/tts', { 
                                     method: 'POST', 
                                     headers: { 'Content-Type': 'application/json' }, 
-                                    body: JSON.stringify({ text, voice: recapVoice, rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` })
+                                    rate: `${Math.round((voiceSpeed * 1.15 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.15 - 1.0) * 100)}%`
                                 });
                                 const mp3Blob = await response.blob();
                                 audioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
@@ -2322,7 +2347,7 @@ Format strictly as JSON ONLY:
                                         body: JSON.stringify({ 
                                             text: hookText, 
                                             voice: voiceToUse, 
-                                            rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` 
+                                            rate: `${Math.round((voiceSpeed * 1.15 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.15 - 1.0) * 100)}%`
                                         })
                                     });
                                     const mp3Blob = await response.blob();
@@ -2458,48 +2483,37 @@ Format strictly as JSON ONLY:
             };
 
             const generateSocialContent = async () => {
+                const cost = parseInt(globalSettings.social_kit_rate_per_use || '10');
+                
+                // Admin မဟုတ်ပါက Credit စစ်ဆေးခြင်း
+                if (userData?.role !== 'admin' && user?.email !== ADMIN_EMAIL && (userData?.credits || 0) < cost) {
+                    alert(`Credit မလုံလောက်ပါ။ Social Media Kit ထုတ်ယူရန် ${cost} Credits လိုအပ်ပါသည်။`);
+                    return;
+                }
+
                 setIsGeneratingSocial(true);
                 const blocks = translatedBlocksRef.current || [];
                 const storyText = blocks.map(b => b.text).join(' ').substring(0, 3000) || "Movie Recap.";
-                const promptText = `Generate viral social media posts for YouTube, TikTok, Facebook in Myanmar based on this transcript. Return ONLY JSON: {"youtube": {"title": "...", "desc": "...", "tags": "..."}, "tiktok": {"title": "...", "desc": "...", "tags": "..."}, "facebook": {"title": "...", "desc": "...", "tags": "..."}} \n\nTranscript: ${storyText}`;
 
                 try {
-                    let content = null;
-                    // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် ထုတ်ယူခြင်း
-                    try {
-                        const sRes = await apiFetch('/api/engine/neural-compute', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                model: globalSettings.primary_model || "gpt-4o-mini",
-                                messages: [
-                                    { role: "system", content: "Return ONLY valid JSON." },
-                                    { role: "user", content: promptText }
-                                ],
-                                temperature: 0.7
-                            })
-                        });
-                        if (sRes.ok) {
-                            const sData = await sRes.json();
-                            const cText = sData?.choices?.[0]?.message?.content || "";
-                            content = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
-                        }
-                    } catch (sErr) {}
+                    const res = await apiFetch('/api/social/generate-kit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: storyText })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || data.error || "Social Kit ထုတ်ယူမရပါ");
 
-                    // ၂။ အရန်အဆင့်: User Gemini API Key သို့ Fallback လုပ်ခြင်း
-                    if (!content) {
-                        content = await executeWithApiLogic("Social Media Kit", async (apiKey) => {
-                            const payload = {
-                                contents: [{ parts: [{ text: promptText }] }],
-                                generationConfig: { temperature: 0.7, responseMimeType: "application/json" }
-                            };
-                            const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
-                            const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                            const data = await res.json();
-                            return JSON.parse(parseGeminiCandidateText(data));
-                        });
+                    setSocialContent(data.content);
+
+                    // Credit ဖြတ်တောက်ပြီးပါက လက်ကျန် Credit ချက်ချင်း Update လုပ်ခြင်း
+                    if (data.deducted_credits > 0 && userData) {
+                        setUserData(prev => ({
+                            ...prev,
+                            credits: Math.max(0, (prev.credits || 0) - data.deducted_credits)
+                        }));
                     }
-                    setSocialContent(content);
+                    if (user?.email) fetchUserData(user.email);
                 } catch (e) { 
                     alert("Social Kit Error: " + e.message); 
                 } finally { 
@@ -2612,6 +2626,7 @@ Format strictly as JSON ONLY:
             tts_mode: globalSettings.tts_mode,
             tts_chars_per_credit: globalSettings.tts_chars_per_credit,
             ads_smart_link: globalSettings.ads_smart_link,
+            social_kit_rate_per_use: globalSettings.social_kit_rate_per_use || '10',
             ads_animator_rate_per_sec: globalSettings.ads_animator_rate_per_sec,
             ads_animator_free_revisions: globalSettings.ads_animator_free_revisions,
             groq_api_keys_pool: globalSettings.groq_api_keys_pool,
@@ -2629,13 +2644,13 @@ Format strictly as JSON ONLY:
             tool_status_tts: globalSettings.tool_status_tts ?? 'true',
             tool_status_store: globalSettings.tool_status_store ?? 'true',
             // AI Neural Providers Setup
-            primary_provider: globalSettings.primary_provider || 'codecraft',
-            primary_base_url: globalSettings.primary_base_url || 'https://codecraftapi.com/v1',
-            primary_model: globalSettings.primary_model || 'gpt-4o-mini',
+            primary_provider: globalSettings.primary_provider || 'core_alpha',
+            primary_base_url: globalSettings.primary_base_url || '',
+            primary_model: globalSettings.primary_model || '',
             primary_api_keys: globalSettings.primary_api_keys || '[]',
-            secondary_provider: globalSettings.secondary_provider || 'chat_b_ai',
-            secondary_base_url: globalSettings.secondary_base_url || 'https://chat.b.ai/v1',
-            secondary_model: globalSettings.secondary_model || 'gpt-4o',
+            secondary_provider: globalSettings.secondary_provider || 'core_beta',
+            secondary_base_url: globalSettings.secondary_base_url || '',
+            secondary_model: globalSettings.secondary_model || '',
             secondary_api_keys: globalSettings.secondary_api_keys || '[]'
         };
 
@@ -3593,20 +3608,32 @@ Format strictly as JSON ONLY:
                                         {errorMsg && <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl text-sm font-semibold flex items-center gap-3"><AlertCircle className="w-5 h-5"/> <span>{errorMsg}</span></div>}
                                         {/* 👉 Total Video Cost Real-time Card 👈 */}
                                         {videoFile && videoDurationSec > 0 && (
-                                            <div className={`p-4 rounded-2xl mb-4 ${neoPressedClass} border-2 border-indigo-500/30 flex items-center justify-between`}>
+                                            <div className={`p-4 rounded-2xl mb-4 ${neoPressedClass} border-2 ${getCalculatedTotalCredit() === 0 ? 'border-emerald-500/50' : 'border-indigo-500/30'} flex items-center justify-between`}>
                                                 <div>
                                                     <p className="text-[11px] font-bold opacity-70">
-                                                        ဗီဒီယိုကြာချိန်: <span className="text-indigo-400 font-mono">{Math.ceil(videoDurationSec / 60)} မိနစ်</span> ({Math.round(videoDurationSec)}s)
+                                                        ဗီဒီယိုကြာချိန်: <span className="text-indigo-400 font-mono">{Math.max(1, (videoDurationSec % 60 > 30) ? Math.floor(videoDurationSec / 60) + 1 : Math.floor(videoDurationSec / 60))} မိနစ်</span> ({Math.round(videoDurationSec)}s)
                                                     </p>
                                                     <p className="text-[10px] opacity-60 mt-0.5">
-                                                        {videoKeyMode === 'own' ? '🔑 Own Key နှုန်းထား' : '⚡ Server Key နှုန်းထား'} ဖြင့် တွက်ချက်ထားပါသည်
+                                                        {parseInt(globalSettings.free_minutes_per_day || '0') > 0 ? (
+                                                            getCalculatedTotalCredit() === 0 
+                                                                ? <span className="text-emerald-400 font-bold">🎁 Free {globalSettings.free_minutes_per_day} မိနစ် ခွင့်ပြုချက်အတွင်း ဖြစ်ပါသည်</span>
+                                                                : <span className="text-amber-400 font-bold">🎁 Free {globalSettings.free_minutes_per_day} မိနစ် နုတ်ပြီး ပိုသော {Math.max(1, (videoDurationSec % 60 > 30) ? Math.floor(videoDurationSec / 60) + 1 : Math.floor(videoDurationSec / 60)) - parseInt(globalSettings.free_minutes_per_day)} မိနစ်စာသာ ဖြတ်ပါမည်</span>
+                                                        ) : (
+                                                            <span>{videoKeyMode === 'own' ? '🔑 Own Key နှုန်းထား' : '⚡ Server Key နှုန်းထား'} (၂ မိနစ် လျှော့ဈေးပါဝင်သည်)</span>
+                                                        )}
                                                     </p>
                                                 </div>
                                                 <div className="text-right">
                                                     <span className="text-[10px] font-bold text-amber-500 block uppercase">Total Cost</span>
-                                                    <span className="text-2xl font-black text-yellow-400 font-mono">
-                                                        {getCalculatedTotalCredit()} <span className="text-xs text-slate-300">Credits</span>
-                                                    </span>
+                                                    {getCalculatedTotalCredit() === 0 ? (
+                                                        <span className="text-2xl font-black text-emerald-400 font-mono animate-pulse">
+                                                            FREE <span className="text-xs text-emerald-300">(အခမဲ့)</span>
+                                                        </span>
+                                                    ) : (
+                                                        <span className="text-2xl font-black text-yellow-400 font-mono">
+                                                            {getCalculatedTotalCredit()} <span className="text-xs text-slate-300">Credits</span>
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         )}
@@ -3620,15 +3647,18 @@ Format strictly as JSON ONLY:
                                             <div className="w-24 h-24 rounded-full border-4 border-indigo-500/20 flex items-center justify-center relative mb-6"><div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div><span className="text-xl font-black text-indigo-500">{renderProgress}%</span></div>
                                             <h3 className="text-2xl font-bold mb-2">{progressStage}...</h3>
 
-{/* အစိမ်းရောင် Realtime Rendering Bar */}
-<div className="w-full max-w-md my-3 p-3 rounded-2xl bg-black/20 border border-emerald-500/20">
-    <div className="flex justify-between items-center text-xs font-bold text-emerald-400 mb-1.5">
-        <span>Realtime Video Rendering</span>
-        <span>{renderPercentage}%</span>
+{/* ပေါ်လွင်ထင်ရှားသော အပြာရောင် Realtime Rendering Bar */}
+<div className={`w-full max-w-md my-3 p-3.5 rounded-2xl ${neoPressedClass} border-2 border-blue-500/40`}>
+    <div className="flex justify-between items-center text-xs font-black text-blue-600 dark:text-blue-400 mb-2">
+        <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-blue-500 animate-ping"></span>
+            Realtime Video Rendering
+        </span>
+        <span className="font-mono text-sm">{renderPercentage}%</span>
     </div>
-    <div className="w-full h-3 bg-slate-900 rounded-full overflow-hidden p-0.5 border border-emerald-500/30">
+    <div className="w-full h-3 bg-slate-900/30 rounded-full overflow-hidden p-0.5 border border-blue-500/30">
         <div 
-            className="bg-emerald-500 h-full rounded-full transition-all duration-75 shadow-[0_0_12px_rgba(16,185,129,0.5)]" 
+            className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-75 shadow-[0_0_12px_rgba(37,99,235,0.6)]" 
             style={{ width: `${renderPercentage}%` }}
         ></div>
     </div>
@@ -3725,7 +3755,7 @@ Format strictly as JSON ONLY:
                                                         <h3 className="font-bold flex items-center gap-2 text-indigo-500"><Type className="w-5 h-5"/> Social Media Kit</h3>
                                                         {!socialContent && (
                                                             <button onClick={generateSocialContent} disabled={isGeneratingSocial} className="px-4 py-2 bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-md">
-                                                                {isGeneratingSocial ? "ဖန်တီးနေပါသည်..." : "Post စာသားများ ထုတ်မည်"}
+                                                                {isGeneratingSocial ? "ဖန်တီးနေပါသည်..." : `Post စာသားများ ထုတ်မည် (${globalSettings.social_kit_rate_per_use || 10} Credits)`}
                                                             </button>
                                                         )}
                                                     </div>
@@ -3988,7 +4018,7 @@ Format strictly as JSON ONLY:
                                                         className={`p-2.5 rounded-xl border text-left font-bold transition-all ${selectedVariant.name === v.name ? 'border-amber-500 bg-amber-500/20 text-white shadow' : 'border-current/10 opacity-70'}`}
                                                     >
                                                         <div className="truncate text-xs">{v.name}</div>
-                                                        <div className="text-yellow-400 font-mono text-[11px] mt-0.5">{v.price_mmk?.toLocaleString()} MMK</div>
+                                                        <div className="text-blue-600 dark:text-blue-400 font-black font-mono text-sm mt-0.5">{v.price_mmk?.toLocaleString()} MMK</div>
                                                     </button>
                                                 ))}
                                             </div>
@@ -4065,7 +4095,24 @@ Format strictly as JSON ONLY:
                                                         <span className="text-[10px] text-amber-500 mt-1 font-semibold">ဖိုင်အား Server မှ အလိုအလျောက် ဖျက်ပြီးပါပြီ</span>
                                                     </div>
                                                 ) : (
-                                                    <video src={h.url} controls className="w-full h-48 rounded-xl object-cover bg-black" />
+                                                    <>
+                                        <video 
+                                            src={h.url} 
+                                            controls 
+                                            preload="metadata"
+                                            playsInline
+                                            onError={(e) => {
+                                                e.target.style.display = 'none';
+                                                if (e.target.nextSibling) e.target.nextSibling.style.display = 'flex';
+                                            }}
+                                            className="w-full h-48 rounded-xl object-cover bg-black" 
+                                        />
+                                        <div style={{ display: 'none' }} className="w-full h-48 rounded-xl bg-slate-900 border border-slate-700 flex flex-col items-center justify-center p-4 text-center">
+                                            <Film className="w-8 h-8 text-amber-500 mb-2 opacity-60"/>
+                                            <p className="text-xs font-bold text-slate-300">ဆာဗာ Restart ဖြစ်သွားသဖြင့် ဖိုင်သက်တမ်း ကုန်သွားပါပြီ</p>
+                                            <span className="text-[10px] opacity-60 mt-1">ဗီဒီယိုပြီးဆုံးချိန်တွင် ဒေါင်းလုဒ်ရယူထားရန် အကြံပြုပါသည်</span>
+                                        </div>
+                                    </>
                                                 )}
                                                 <div className="flex justify-between items-center">
                                                     <p className="font-bold text-xs truncate max-w-[200px]">{h.title}</p>
@@ -4193,11 +4240,11 @@ Format strictly as JSON ONLY:
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                     <label className="text-xs font-bold block mb-1">Provider အမည်:</label>
-                    <input type="text" value={globalSettings.primary_provider || 'codecraft'} onChange={e => setGlobalSettings({...globalSettings, primary_provider: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs outline-none ${neoClass}`} />
+                    <input type="text" value={globalSettings.primary_provider || 'Gateway-Alpha'} onChange={e => setGlobalSettings({...globalSettings, primary_provider: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs outline-none ${neoClass}`} />
                 </div>
                 <div>
                     <label className="text-xs font-bold block mb-1">Base URL:</label>
-                    <input type="text" value={globalSettings.primary_base_url || 'https://codecraftapi.com/v1'} onChange={e => setGlobalSettings({...globalSettings, primary_base_url: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                    <input type="text" value={globalSettings.primary_base_url || ''} placeholder="https://your-api-endpoint.com/v1" onChange={e => setGlobalSettings({...globalSettings, primary_base_url: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
                 </div>
                 <div>
                     <label className="text-xs font-bold block mb-1">Model Name:</label>
@@ -4244,11 +4291,11 @@ Format strictly as JSON ONLY:
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                     <label className="text-xs font-bold block mb-1">Provider အမည်:</label>
-                    <input type="text" value={globalSettings.secondary_provider || 'chat_b_ai'} onChange={e => setGlobalSettings({...globalSettings, secondary_provider: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs outline-none ${neoClass}`} />
+                    <input type="text" value={globalSettings.secondary_provider || 'Gateway-Beta'} onChange={e => setGlobalSettings({...globalSettings, secondary_provider: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs outline-none ${neoClass}`} />
                 </div>
                 <div>
                     <label className="text-xs font-bold block mb-1">Base URL:</label>
-                    <input type="text" value={globalSettings.secondary_base_url || 'https://chat.b.ai/v1'} onChange={e => setGlobalSettings({...globalSettings, secondary_base_url: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                    <input type="text" value={globalSettings.secondary_base_url || ''} placeholder="https://your-api-endpoint.com/v1" onChange={e => setGlobalSettings({...globalSettings, secondary_base_url: e.target.value})} className={`w-full p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
                 </div>
                 <div>
                     <label className="text-xs font-bold block mb-1">Model Name:</label>
@@ -4296,9 +4343,22 @@ Format strictly as JSON ONLY:
 )}
                                 {adminTab === 'users' && (
                                     <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
-                                        <div className="flex justify-between items-center">
-                                            <h3 className="text-lg font-bold text-purple-400">User စာရင်းနှင့် အသေးစိတ်မှတ်တမ်းများ</h3>
-                                            <span className="text-xs opacity-70">စုစုပေါင်း: {adminUsers.length} ဦး</span>
+                                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                                            <div>
+                                                <h3 className="text-lg font-bold text-purple-400">User စာရင်းနှင့် အသေးစိတ်မှတ်တမ်းများ</h3>
+                                                <span className="text-xs opacity-70">စုစုပေါင်း: {adminUsers.length} ဦး</span>
+                                            </div>
+
+                                            {/* Email Search Input Box */}
+                                            <div className="w-full sm:w-72">
+                                                <input 
+                                                    type="text" 
+                                                    value={userSearchQuery} 
+                                                    onChange={e => setUserSearchQuery(e.target.value)} 
+                                                    placeholder="🔍 Email ဖြင့် ရှာဖွေပါ..." 
+                                                    className={`w-full p-2.5 rounded-xl outline-none text-xs font-mono border border-current/10 ${neoPressedClass}`} 
+                                                />
+                                            </div>
                                         </div>
 
                                         <div className="overflow-x-auto">
@@ -4315,7 +4375,9 @@ Format strictly as JSON ONLY:
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-current/5">
-                                                    {adminUsers.map(u => (
+                                                    {adminUsers
+                                                        .filter(u => (u.email || '').toLowerCase().includes(userSearchQuery.toLowerCase().trim()))
+                                                        .map(u => (
                                                         <tr key={u.email} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                                                             <td className="py-3 font-bold">
                                                                 <div>{u.name}</div>
@@ -4341,6 +4403,13 @@ Format strictly as JSON ONLY:
                                                             </td>
                                                         </tr>
                                                     ))}
+                                                    {adminUsers.filter(u => (u.email || '').toLowerCase().includes(userSearchQuery.toLowerCase().trim())).length === 0 && (
+                                                        <tr>
+                                                            <td colSpan="7" className="text-center py-8 opacity-50 font-bold">
+                                                                ရှာဖွေမှုနှင့် ကိုက်ညီသော User ရှာမတွေ့ပါ။
+                                                            </td>
+                                                        </tr>
+                                                    )}
                                                 </tbody>
                                             </table>
                                         </div>
@@ -4872,6 +4941,15 @@ Format strictly as JSON ONLY:
                                             <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-1">Ads Smart Link (ကြော်ငြာလင့်ခ်):</label>
                                                 <input type="url" value={globalSettings.ads_smart_link} onChange={e=>setGlobalSettings({...globalSettings, ads_smart_link: e.target.value})} className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`} />
+                                            </div>
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full`}>
+                                                <label className="text-xs font-bold text-purple-400 block mb-1">📢 Social Media Kit (၁ ကြိမ်စာ ကုန်ကျမည့် Credit နှုန်းထား):</label>
+                                                <input 
+                                                    type="number" 
+                                                    value={globalSettings.social_kit_rate_per_use || '10'} 
+                                                    onChange={e => setGlobalSettings({ ...globalSettings, social_kit_rate_per_use: e.target.value })} 
+                                                    className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
+                                                />
                                             </div>
                                             <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-2">ငွေလက်ခံအကောင့်များ စီမံခန့်ခွဲရန် (JSON ပုံစံဖြင့် သိမ်းဆည်းထားပါသည်):</label>
