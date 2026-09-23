@@ -14,6 +14,8 @@ import mimetypes
 import shutil
 import random
 import threading
+import glob
+import yt_dlp
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Any, List
 from pathlib import Path
@@ -502,7 +504,7 @@ async def login(request: Request, data: dict = {}):
         # နည်းလမ်း ၂: Library အဆင်မပြေပါက Google ၏ တရားဝင် tokeninfo API ဖြင့် တိုက်ရိုက် စစ်ဆေးခြင်း
         if not id_info:
             try:
-                async with httpx.AsyncClient(timeout=15.0, verify=False) as http_client:
+                async with httpx.AsyncClient(timeout=15.0) as http_client:
                     t_resp = await http_client.get(
                         f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}"
                     )
@@ -571,7 +573,18 @@ async def login(request: Request, data: dict = {}):
         client_settings = {k: v for k, v in all_settings.items() if k not in SECRET_SETTINGS_KEYS}
 
     if "_id" in user: del user["_id"]
-    
+    # ယနေ့အတွက် အသုံးပြုပြီးသော Free မိနစ်များနှင့် လက်ကျန် Free မိနစ် တွက်ချက်ခြင်း
+    today_str = current_utc().strftime("%Y-%m-%d")
+    free_quota = int(all_settings.get("free_minutes_per_day", "0"))
+    if user.get("free_mins_date") != today_str:
+        free_mins_used = 0
+    else:
+        free_mins_used = int(user.get("free_mins_used", 0))
+    free_mins_remaining = max(0, free_quota - free_mins_used)
+
+    user["free_mins_used"] = free_mins_used
+    user["free_mins_remaining"] = free_mins_remaining
+    user["free_mins_date"] = today_str
     remaining_days = None
     if user.get("credits_expire_at") and isinstance(user["credits_expire_at"], datetime):
         exp_date = user["credits_expire_at"]
@@ -659,62 +672,66 @@ async def mark_notifications_read(request: Request):
     notifications_col.update_many({"email": email, "is_read": False}, {"$set": {"is_read": True}})
     return {"status": "success"}
 
-def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = False, key_mode: str = "server") -> tuple[int, bool]:
+def calculate_video_cost(email: str, dur_sec: float, is_voice_clone: bool = False, key_mode: str = "server") -> tuple[int, bool, int]:
     full_mins = int(dur_sec // 60)
     rem_sec = dur_sec % 60
-    # စက္ကန့် ၃၀ အထိ မူရင်းမိနစ်ယူပြီး ၃၁ စက္ကန့်မှ နောက်တစ်မိနစ်သို့ တိုးယူခြင်း
+    # ၃၀ စက္ကန့် စည်းမျဉ်းအတိုင်း မိနစ် အတိုး/အလျော့ တွက်ချက်ခြင်း
     dur_mins = max(1, full_mins + 1 if rem_sec > 30 else full_mins)
 
-    # Voice Clone စနစ်ဖြစ်ပါက သီးသန့်နှုန်းထားအတိုင်း တွက်ချက်ခြင်း
     if is_voice_clone:
         rate_setting = settings_col.find_one({"key": "voice_clone_recap_rate_per_min"})
         base_rate = int(rate_setting.get("value", "80")) if rate_setting else 80
         cost = dur_mins * base_rate
-        return cost, False
+        return cost, False, 0
 
-    # Server Key သို့မဟုတ် Own Key အလိုက် နှုန်းထားများ ရယူခြင်း
     if key_mode == "own":
         rate_setting = settings_col.find_one({"key": "own_key_rate_per_min"})
         base_rate = int(rate_setting.get("value", "20")) if rate_setting else 20
-
         disc_setting = settings_col.find_one({"key": "own_key_discount_enabled"})
         disc_enabled = (disc_setting.get("value", "true") == "true") if disc_setting else True
-
         first_two_setting = settings_col.find_one({"key": "own_key_first_two_rate"})
         first_two_rate = int(first_two_setting.get("value", "15")) if first_two_setting else 15
     else:
         rate_setting = settings_col.find_one({"key": "server_key_rate_per_min"}) or settings_col.find_one({"key": "deduction_rate_per_min"})
         base_rate = int(rate_setting.get("value", "50")) if rate_setting else 50
-
         disc_setting = settings_col.find_one({"key": "server_key_discount_enabled"})
         disc_enabled = (disc_setting.get("value", "true") == "true") if disc_setting else True
-
         first_two_setting = settings_col.find_one({"key": "server_key_first_two_rate"}) or settings_col.find_one({"key": "first_two_min_rate"})
         first_two_rate = int(first_two_setting.get("value", "30")) if first_two_setting else 30
 
-    # Admin သတ်မှတ်ထားသော နေ့စဉ် Free Minutes ရယူခြင်း
+    # User ၏ ယနေ့ အသုံးပြုထားသော Free မိနစ်များကို စစ်ဆေးခြင်း
+    today_str = current_utc().strftime("%Y-%m-%d")
+    user = users_col.find_one({"email": email}) or {}
+    
     free_setting = settings_col.find_one({"key": "free_minutes_per_day"})
-    free_mins = int(free_setting.get("value", "0")) if free_setting else 0
+    daily_quota = int(free_setting.get("value", "0")) if free_setting else 0
 
-    if free_mins > 0:
-        if dur_mins <= free_mins:
-            # ၁။ သတ်မှတ် Free မိနစ်အတွင်း ဖြစ်ပါက လုံးဝ အခမဲ့ (0 Credit)
-            return 0, True
+    used_today = int(user.get("free_mins_used", 0)) if user.get("free_mins_date") == today_str else 0
+    available_free = max(0, daily_quota - used_today)
+
+    # ဤဗီဒီယိုအတွက် အသုံးပြုခွင့်ရမည့် Free မိနစ်
+    free_to_use = min(dur_mins, available_free)
+    chargeable_mins = dur_mins - free_to_use
+
+    # ၁။ Free မိနစ် အပြည့်အဝ ရရှိပါက (လုံးဝ အခမဲ့)
+    if free_to_use > 0 and chargeable_mins == 0:
+        return 0, True, free_to_use
+
+    # ၂။ Free မိနစ်အချို့ရပြီး ကျန်မိနစ်များ ကျန်ရှိပါက (ပိုသောမိနစ်ကို လျှော့ဈေးမပါဘဲ ပုံမှန် Base Rate ဖြင့် ဖြတ်မည်)
+    if free_to_use > 0 and chargeable_mins > 0:
+        cost = chargeable_mins * base_rate
+        return cost, False, free_to_use
+
+    # ၃။ Free မိနစ် လုံးဝမရတော့ပါက (သို့မဟုတ် ပိတ်ထားပါက) ပထမ ၂ မိနစ် လျှော့ဈေးဖြင့် တွက်မည်
+    if disc_enabled and first_two_rate > 0:
+        if chargeable_mins <= 2:
+            cost = first_two_rate
         else:
-            # ၂။ Free မိနစ်ထက် ပိုပါက ပိုသော မိနစ်အတွက်သာ လျှော့ဈေးမပါဘဲ ပုံမှန် base_rate ဖြင့် ဖြတ်တောက်ခြင်း
-            extra_mins = dur_mins - free_mins
-            cost = extra_mins * base_rate
-            return cost, False
+            cost = first_two_rate + ((chargeable_mins - 2) * base_rate)
     else:
-        # ၃။ Free မပေးထားပါက ပထမ ၂ မိနစ် လျှော့ဈေးစနစ်ဖြင့် တွက်ချက်ခြင်း
-        if disc_enabled and first_two_rate > 0:
-            if dur_mins <= 2:
-                cost = first_two_rate
-            else:
-                cost = first_two_rate + ((dur_mins - 2) * base_rate)
-        else:
-            cost = dur_mins * base_rate
-        return cost, False
+        cost = chargeable_mins * base_rate
+
+    return cost, False, 0
 
 @app.post("/api/video/pre-deduct")
 async def pre_deduct_video_cost(request: Request, data: dict):
@@ -722,7 +739,8 @@ async def pre_deduct_video_cost(request: Request, data: dict):
     dur_sec = float(data.get("duration", 60))
     is_clone = bool(data.get("is_voice_clone", False))
     key_mode = str(data.get("key_mode", "server")).strip().lower()
-    cost, is_free = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode=key_mode)
+    
+    cost, is_free, free_consumed = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode=key_mode)
 
     user = users_col.find_one({"email": email})
     if email != ADMIN_EMAIL and not is_free:
@@ -733,39 +751,54 @@ async def pre_deduct_video_cost(request: Request, data: dict):
             )
         users_col.update_one({"email": email}, {"$inc": {"credits": -cost}})
 
-    return {"status": "success", "deducted": cost if email != ADMIN_EMAIL else 0, "is_free": is_free}
+    # အသုံးပြုလိုက်သော Free မိနစ်ကို ယနေ့စာရင်းတွင် တိုးမြှင့်မှတ်သားခြင်း
+    if free_consumed > 0 and email != ADMIN_EMAIL:
+        today_str = current_utc().strftime("%Y-%m-%d")
+        if user.get("free_mins_date") == today_str:
+            users_col.update_one({"email": email}, {"$inc": {"free_mins_used": free_consumed}})
+        else:
+            users_col.update_one({"email": email}, {"$set": {"free_mins_date": today_str, "free_mins_used": free_consumed}})
+
+    return {
+        "status": "success", 
+        "deducted": cost if email != ADMIN_EMAIL else 0, 
+        "is_free": is_free, 
+        "free_consumed": free_consumed
+    }
 
 @app.post("/api/video/adjust-fallback-rate")
 async def adjust_fallback_rate(request: Request, data: dict):
-    """Server Key မရ၍ User Key သို့ Fallback ကူးသုံးပါက ကွာခြားချက်အား အလိုအလျောက် Refund ပေးခြင်း"""
     email = get_request_email(request)
     dur_sec = float(data.get("duration", 60))
     is_clone = bool(data.get("is_voice_clone", False))
 
-    server_cost, _ = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode="server")
-    own_cost, _ = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode="own")
+    server_cost, _, _ = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode="server")
+    own_cost, _, _ = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode="own")
 
     refund_diff = max(0, server_cost - own_cost)
     if email != ADMIN_EMAIL and refund_diff > 0:
         users_col.update_one({"email": email}, {"$inc": {"credits": refund_diff}})
-        create_notification(
-            email,
-            "Credit ပြန်အမ်းငွေ (Own Key နှုန်းထားသို့ ပြောင်းလဲခြင်း)",
-            f"Server Key Error ကြောင့် သင့် ကိုယ်ပိုင် Key ဖြင့် ဆက်လက်လုပ်ဆောင်ခဲ့သဖြင့် ကွာခြားချက် {refund_diff} Credits အား ပြန်လည် အမ်းပေးလိုက်ပါပြီခင်ဗျာ။"
-        )
     return {"status": "success", "refunded": refund_diff, "actual_cost": own_cost}
 
 @app.post("/api/video/refund-failed-pre-deduct")
 async def refund_failed_pre_deduct(request: Request, data: dict):
-    """Server Key Error ဖြစ်ပြီး User Key မရှိ၍ ရပ်တန့်သွားပါက ကြိုဖြတ်ထားသော Credit အပြည့် ပြန်အမ်းခြင်း"""
     email = get_request_email(request)
     dur_sec = float(data.get("duration", 60))
     is_clone = bool(data.get("is_voice_clone", False))
     key_mode = str(data.get("key_mode", "server")).strip().lower()
 
-    cost, is_free = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode=key_mode)
-    if email != ADMIN_EMAIL and cost > 0 and not is_free:
-        users_col.update_one({"email": email}, {"$inc": {"credits": cost}})
+    cost, is_free, free_consumed = calculate_video_cost(email, dur_sec, is_voice_clone=is_clone, key_mode=key_mode)
+    
+    if email != ADMIN_EMAIL:
+        if cost > 0 and not is_free:
+            users_col.update_one({"email": email}, {"$inc": {"credits": cost}})
+        # ဗီဒီယို ပျက်စီးသွားပါက Free မိနစ်ကိုလည်း ပြန်အမ်းပေးခြင်း
+        if free_consumed > 0:
+            today_str = current_utc().strftime("%Y-%m-%d")
+            user = users_col.find_one({"email": email})
+            if user and user.get("free_mins_date") == today_str:
+                users_col.update_one({"email": email}, {"$inc": {"free_mins_used": -free_consumed}})
+
     return {"status": "success", "refunded": cost}
 
 @app.post("/api/video/save-client-rendered")
@@ -778,7 +811,7 @@ async def save_client_rendered(
 ):
     email = get_request_email(request)
     dur_sec = float(duration)
-    cost, is_free = calculate_video_cost(email, dur_sec, key_mode=key_mode)
+    cost, is_free, _ = calculate_video_cost(email, dur_sec, key_mode=key_mode)
 
     upload_res = await save_upload(file, "rendered_videos")
     final_key = upload_res["key"]
@@ -1339,8 +1372,8 @@ async def admin_get_products(request: Request):
             "name": p.get("name", ""),
             "category": p.get("category", ""),
             "description": p.get("description", ""),
-            "image_url": f"/media/{p['image_key']}" if p.get("image_key") else (f"/media/{p['image_keys'][0]}" if p.get("image_keys") else None),
-            "image_urls": [f"/media/{k}" for k in p.get("image_keys", [])] if p.get("image_keys") else ([f"/media/{p['image_key']}"] if p.get("image_key") else []),
+            "image_url": p.get("image_url") or (f"/media/{p['image_key']}" if p.get("image_key") else (f"/media/{p['image_keys'][0]}" if p.get("image_keys") else None)),
+            "image_urls": p.get("image_urls") or ([f"/media/{k}" for k in p.get("image_keys", [])] if p.get("image_keys") else ([f"/media/{p['image_key']}"] if p.get("image_key") else [])),
             "variants": p.get("variants", [])
         } for p in prods]
     }
@@ -1369,17 +1402,17 @@ async def create_product(
         v["requires_game_id"] = bool(v.get("requires_game_id", False))
         v["requires_server_id"] = bool(v.get("requires_server_id", False))
 
+    image_keys = []
     image_urls = []
     if images:
         for img in images:
             if img.filename:
-                content = await img.read()
-                mime = img.content_type or "image/jpeg"
-                b64_str = base64.b64encode(content).decode("utf-8")
-                # MongoDB တွင် တိုက်ရိုက်သိမ်းဆည်းရန် Data URL အဖြစ် ပြောင်းလဲခြင်း
-                image_urls.append(f"data:{mime};base64,{b64_str}")
+                upload_res = await save_upload(img, "product_images")
+                image_keys.append(upload_res["key"])
+                image_urls.append(f"/media/{upload_res['key']}")
 
     primary_image = image_urls[0] if image_urls else ""
+    primary_key = image_keys[0] if image_keys else ""
 
     doc = {
         "name": name.strip(),
@@ -1387,6 +1420,8 @@ async def create_product(
         "description": description.strip(),
         "variants": variants,
         "payment_accounts": payment_accounts,
+        "image_key": primary_key,
+        "image_keys": image_keys,
         "image_url": primary_image,
         "image_urls": image_urls,
         "created_at": current_utc()
@@ -1428,13 +1463,15 @@ async def update_product(
     }
 
     if images and len(images) > 0 and images[0].filename:
+        image_keys = []
         image_urls = []
         for img in images:
             if img.filename:
-                content = await img.read()
-                mime = img.content_type or "image/jpeg"
-                b64_str = base64.b64encode(content).decode("utf-8")
-                image_urls.append(f"data:{mime};base64,{b64_str}")
+                upload_res = await save_upload(img, "product_images")
+                image_keys.append(upload_res["key"])
+                image_urls.append(f"/media/{upload_res['key']}")
+        update_doc["image_key"] = image_keys[0]
+        update_doc["image_keys"] = image_keys
         update_doc["image_url"] = image_urls[0]
         update_doc["image_urls"] = image_urls
 
@@ -1762,104 +1799,121 @@ async def get_protected_sfx(filename: str, request: Request):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     return response
 
-# --- ROBUST STANDALONE VIDEO DOWNLOADER (TIKTOK NO-WM / YT-DLP DIRECT) ---
-import yt_dlp
+# --- ADVANCED DUAL-ENGINE VIDEO DOWNLOADER ---
 
 DOWNLOADS_DIR = (MEDIA_ROOT / "downloads").resolve()
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-async def fetch_tiktok_direct_api(url: str) -> Optional[dict]:
-    """TikTok Video & Photos ကို Watermark ကင်းစင်စွာ တိုက်ရိုက်ဆွဲယူခြင်း"""
+def cleanup_old_downloads(folder: str, max_age_seconds: int = 1800):
+    """ဒေါင်းလုဒ်ဆွဲထားသော ဖိုင်ဟောင်းများအား မိနစ် ၃၀ ပြည့်ပါက Auto ဖျက်ပေးသည့်စနစ်"""
     try:
-        api_url = "https://www.tikwm.com/api/"
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.post(api_url, data={"url": url, "hd": 1})
+        now = time.time()
+        for f in glob.glob(os.path.join(folder, "*")):
+            if os.path.isfile(f) and (now - os.path.getmtime(f) > max_age_seconds):
+                try: os.remove(f)
+                except Exception: pass
+    except Exception as e:
+        print(f"[Download Cleanup Warning]: {e}")
+
+async def fetch_tiktok_direct_api(url: str):
+    """TikTok နှင့် Douyin များအတွက် Watermark-free CDN တိုက်ရိုက်ဆွဲယူသည့် စနစ်"""
+    try:
+        api_endpoint = "https://www.tikwm.com/api/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        }
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(api_endpoint, data={"url": url, "hd": 1}, headers=headers)
             if resp.status_code == 200:
-                data = resp.json()
-                if data.get("code") == 0 and "data" in data:
-                    item = data["data"]
-                    if "images" in item and item["images"]:
+                res_json = resp.json()
+                if res_json.get("code") == 0:
+                    data = res_json.get("data", {})
+                    title = data.get("title") or "TikTok_Media"
+
+                    # Photo Slides (ပုံများ) ဖြစ်နေပါက
+                    if data.get("images") and isinstance(data["images"], list):
                         return {
-                            "title": item.get("title", "TikTok_Image_Slide"),
-                            "stream_url": item["images"][0],
-                            "picker": [{"url": img} for img in item["images"]],
-                            "status": "picker"
+                            "status": "picker",
+                            "title": title,
+                            "picker": [{"type": "image", "url": img} for img in data["images"]],
+                            "stream_url": data["images"][0]
                         }
-                    v_url = item.get("play") or item.get("wmplay")
-                    if v_url:
-                        if not v_url.startswith("http"):
-                            v_url = f"https://www.tikwm.com{v_url}"
+
+                    # Video ဖြစ်ပါက Watermark မပါသော Direct CDN URL ပေးခြင်း
+                    video_url = data.get("play") or data.get("wmplay")
+                    if video_url:
+                        if video_url.startswith("/"):
+                            video_url = f"https://www.tikwm.com{video_url}"
                         return {
-                            "title": item.get("title", "TikTok_Video"),
-                            "stream_url": v_url,
-                            "status": "ready"
+                            "status": "direct",
+                            "title": title,
+                            "stream_url": video_url
                         }
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[TikWM API Error]: {e}")
     return None
 
-def extract_with_ytdlp(url: str) -> dict:
-    """YouTube Bot Detection Bypass နှင့် Direct Stream Link ထုတ်ယူခြင်း"""
-    file_uuid = uuid.uuid4().hex[:10]
-    out_template = str(DOWNLOADS_DIR / f"{file_uuid}_%(title).50s.%(ext)s")
-    
+def extract_with_ytdlp(url: str, output_dir: str):
+    """YouTube, RedNote, Facebook, Bilibili တို့အတွက် Anti-Bot ကျော်ဖြတ် 720p Remux Engine"""
     ydl_opts = {
-        'outtmpl': out_template,
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+        'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
+        'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
-        'socket_timeout': 30,
-        # YouTube Bot Detection ကို Android/iOS Client ဖြင့် ကျော်ဖြတ်ခြင်း
+        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'ios', 'web']
             }
-        },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36'
         }
     }
-    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
-        
-        # mp4 သို့ merge သွားပါက extension အမှန် စစ်ဆေးခြင်း
-        if not os.path.exists(filename):
-            base, _ = os.path.splitext(filename)
-            for ext in [".mp4", ".mkv", ".webm", ".m4a"]:
-                if os.path.exists(base + ext):
-                    filename = base + ext
-                    break
-        
-        rel_path = Path(filename).relative_to(MEDIA_ROOT).as_posix()
+        # Remux ပြီးသော .mp4 ဖိုင်အမည်သို့ ပြောင်းလဲသတ်မှတ်ခြင်း
+        if not filename.endswith('.mp4'):
+            possible_mp4 = filename.rsplit('.', 1)[0] + '.mp4'
+            if os.path.exists(possible_mp4):
+                filename = possible_mp4
         return {
-            "title": info.get("title", "Downloaded_Video"),
-            "stream_url": f"/media/{rel_path}",
-            "status": "ready"
+            "title": info.get('title', 'Downloaded_Video'),
+            "filepath": filename
         }
 
 @app.post("/api/downloader/inspect")
-async def inspect_video_universal(request: Request, data: dict):
-    get_request_email(request)
+async def inspect_video_download(request: Request, data: dict):
+    get_request_email(request)  # 🔒 Login စစ်ဆေးခြင်း
     url = data.get("url", "").strip()
     if not url:
-        raise HTTPException(status_code=400, detail="Video URL ထည့်သွင်းပေးပါ")
+        raise HTTPException(status_code=400, detail="Video URL လိုအပ်ပါသည်")
 
-    # အဆင့် ၁: TikTok / Douyin ဖြစ်ပါက Direct API အရင်စမ်းမည်
-    if "tiktok.com" in url or "douyin.com" in url:
+    # နည်းလမ်း ၁: TikTok / Douyin ဖြစ်ပါက TikWM API ဖြင့် အမြန်ဆုံး ချက်ချင်း ရယူခြင်း
+    if any(domain in url.lower() for domain in ["tiktok.com", "douyin.com"]):
         tiktok_res = await fetch_tiktok_direct_api(url)
         if tiktok_res:
             return tiktok_res
 
-    # အဆင့် ၂: YouTube, Rednote စသည်တို့အတွက် Local yt-dlp ဖြင့် တိုက်ရိုက်ဒေါင်းလုဒ်ဆွဲပြီး media link ပေးမည်
+    # နည်းလမ်း ၂: YouTube, RedNote (Xiaohongshu), FB, Instagram စသည်တို့အတွက် yt-dlp ဖြင့် ဆွဲယူခြင်း
     try:
+        downloads_dir = str(DOWNLOADS_DIR)
+
+        # ဆာဗာ Storage ပြည့်မသွားစေရန် ဖိုင်ဟောင်းများအား ရှင်းလင်းခြင်း
+        cleanup_old_downloads(downloads_dir, max_age_seconds=1800)
+
         loop = asyncio.get_event_loop()
-        res = await loop.run_in_executor(None, extract_with_ytdlp, url)
-        return res
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"ဒေါင်းလုဒ် မအောင်မြင်ပါ: {str(e)}")
+        result = await loop.run_in_executor(None, extract_with_ytdlp, url, downloads_dir)
+
+        filename = os.path.basename(result["filepath"])
+        return {
+            "status": "direct",
+            "title": result["title"],
+            "stream_url": f"/media/downloads/{filename}"
+        }
+    except Exception as err:
+        print(f"[yt-dlp Extraction Error]: {err}")
+        raise HTTPException(status_code=500, detail=f"Download Error: {str(err)}")
 # --- ADS ANIMATOR ENGINE (UNIVERSAL AI FIRST -> GEMINI FALLBACK -> REFUND ON FAIL) ---
 
 @app.post("/api/animator/generate-script")

@@ -950,24 +950,32 @@
                     ? (globalSettings.own_key_first_two_rate || 15) 
                     : (globalSettings.server_key_first_two_rate || globalSettings.first_two_min_rate || 30));
 
-                const freeMins = parseInt(globalSettings.free_minutes_per_day || '0');
+                const dailyQuota = parseInt(globalSettings.free_minutes_per_day || '0');
+                
+                // User ၏ ယနေ့ Free မိနစ် လက်ကျန် တွက်ချက်ခြင်း
+                const remainingFree = (userData && userData.free_mins_remaining !== undefined)
+                    ? userData.free_mins_remaining
+                    : Math.max(0, dailyQuota - (userData?.free_mins_used || 0));
 
-                // Free Minutes ဖွင့်ထားပါက
-                if (freeMins > 0) {
-                    if (durMins <= freeMins) {
-                        return 0; // လုံးဝ အခမဲ့
-                    } else {
-                        const extraMins = durMins - freeMins;
-                        return extraMins * baseRate; // ပိုသော မိနစ်အတွက်သာ လျှော့ဈေးမပါဘဲ တွက်မည်
-                    }
-                } else {
-                    // Free ပိတ်ထားပါက ပထမ ၂ မိနစ် လျှော့ဈေးဖြင့် တွက်မည်
-                    if (discEnabled && firstTwoRate > 0) {
-                        if (durMins <= 2) return firstTwoRate;
-                        return firstTwoRate + ((durMins - 2) * baseRate);
-                    }
-                    return durMins * baseRate;
+                const freeToUse = Math.min(durMins, remainingFree);
+                const chargeableMins = durMins - freeToUse;
+
+                // ၁။ Free မိနစ် အပြည့်အဝရပါက အခမဲ့
+                if (freeToUse > 0 && chargeableMins === 0) {
+                    return 0;
                 }
+
+                // ၂။ Free မိနစ် အချို့ရပြီး ပိုလာသော မိနစ်များအား လျှော့ဈေးမပါဘဲ ပုံမှန် Base Rate ဖြင့်သာ ဖြတ်မည်
+                if (freeToUse > 0 && chargeableMins > 0) {
+                    return chargeableMins * baseRate;
+                }
+
+                // ၃။ Free မရတော့ပါက ပထမ ၂ မိနစ် လျှော့ဈေးဖြင့် တွက်မည်
+                if (discEnabled && firstTwoRate > 0) {
+                    if (chargeableMins <= 2) return firstTwoRate;
+                    return firstTwoRate + ((chargeableMins - 2) * baseRate);
+                }
+                return chargeableMins * baseRate;
             };
             const executeWithApiLogic = async (operationName, requestFn) => {
                 const validKeys = geminiKeys.filter(k => k && k.trim() !== '');
@@ -1736,37 +1744,98 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                 ctx.restore();
                             }
 
-                            if (autoCaption && activeText) {
-                                const baseFontSize = Math.max(16, Math.round(vidH * 0.035 * subSize));
-                                ctx.font = `700 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
-                                ctx.textAlign = 'center';
-                                ctx.textBaseline = 'middle';
+                            // --- Responsive Cinematic Subtitle Engine (Supports 16:9 & 9:16) ---
+if (autoCaption && activeText) {
+    const isVertical = vidH > vidW; // ၉:၁၆ (Vertical) ဟုတ်/မဟုတ် စစ်ဆေးခြင်း
 
-                                const maxSubWidth = vidW * 0.85;
-                                const lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
-                                const lineHeight = baseFontSize * 1.3;
+    // ၉:၁၆ ဖြစ်ပါက အကျယ် (vidW) ပေါ် မူတည်၍ တွက်ပြီး၊ ၁၆:၉ ဖြစ်ပါက အမြင့် (vidH) ပေါ် မူတည်၍ တွက်ချက်ခြင်း
+    let baseFontSize = isVertical 
+        ? Math.max(16, Math.round(vidW * 0.052 * subSize)) 
+        : Math.max(16, Math.round(vidH * 0.040 * subSize));
 
-                                const targetY = autoBlurCaption 
-                                    ? vidH * ((manualBlurBox.yMin + manualBlurBox.yMax) / 2) 
-                                    : vidH * (subPosition / 100);
+    ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
 
-                                const startY = targetY - ((lines.length - 1) * lineHeight) / 2;
+    const maxSubWidth = vidW * (isVertical ? 0.88 : 0.82);
+    let lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
 
-                                lines.forEach((line, lineIdx) => {
-                                    const posY = startY + (lineIdx * lineHeight);
-                                    const posX = vidW / 2;
+    // စာကြောင်း ၃ ကြောင်းနှင့်အထက် ဖြစ်နေပါက အများဆုံး ၂ ကြောင်းသာ ဖြစ်စေရန် Font Size ကို လျှော့ချညှိယူခြင်း
+    if (lines.length > 2) {
+        baseFontSize = Math.round(baseFontSize * 0.82);
+        ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
+        lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
+    }
 
-                                    if (strokeColor !== 'none') {
-                                        ctx.strokeStyle = strokeColor;
-                                        ctx.lineWidth = Math.max(3, baseFontSize * 0.1);
-                                        ctx.lineJoin = 'round';
-                                        ctx.strokeText(line, posX, posY);
-                                    }
+    const lineHeight = baseFontSize * 1.35;
 
-                                    ctx.fillStyle = captionColor;
-                                    ctx.fillText(line, posX, posY);
-                                });
-                            }
+    // Blur Box ဗဟို သို့မဟုတ် သတ်မှတ်ထားသော Y Position နေရာချခြင်း
+    const targetY = autoBlurCaption 
+        ? vidH * ((manualBlurBox.yMin + manualBlurBox.yMax) / 2) 
+        : vidH * (subPosition / 100);
+
+    const totalHeight = lines.length * lineHeight;
+    const startY = targetY - (totalHeight / 2) + (lineHeight / 2);
+
+    // စာလုံးစတင်ပေါ်ချိန် Pop-in Entry Motion (၀.၁၅ စက္ကန့်အတွင်း ခုန်ထွက်သည့် Effect)
+    let popScale = 1.0;
+    if (currentEvent && currentEvent.type === 'narrate') {
+        const timeIntoBeat = elapsedSec - currentEvent.startReal;
+        if (timeIntoBeat < 0.15) {
+            const t = timeIntoBeat / 0.15;
+            popScale = 0.85 + (0.25 * Math.sin(t * Math.PI));
+        }
+    }
+
+    ctx.save();
+    ctx.translate(vidW / 2, targetY);
+    ctx.scale(popScale, popScale);
+    ctx.translate(-(vidW / 2), -targetY);
+
+    lines.forEach((line, lineIdx) => {
+        const posY = startY + (lineIdx * lineHeight);
+        const posX = vidW / 2;
+        const textMetrics = ctx.measureText(line);
+        const textWidth = textMetrics.width;
+
+        // ၁။ နောက်ခံ Dark Pill Box (CapCut စတိုင် ထောင့်ဝိုင်းဘား)
+        const padX = baseFontSize * 0.45;
+        const padY = baseFontSize * 0.18;
+        ctx.fillStyle = "rgba(0, 0, 0, 0.70)";
+        ctx.beginPath();
+        if (ctx.roundRect) {
+            ctx.roundRect(
+                posX - (textWidth / 2) - padX,
+                posY - (lineHeight / 2) - padY,
+                textWidth + (padX * 2),
+                lineHeight + (padY * 2),
+                baseFontSize * 0.3
+            );
+        } else {
+            ctx.rect(
+                posX - (textWidth / 2) - padX,
+                posY - (lineHeight / 2) - padY,
+                textWidth + (padX * 2),
+                lineHeight + (padY * 2)
+            );
+        }
+        ctx.fill();
+
+        // ၂။ အနားကွပ် Stroke ရေးဆွဲခြင်း
+        if (strokeColor !== 'none') {
+            ctx.strokeStyle = strokeColor;
+            ctx.lineWidth = Math.max(3, baseFontSize * 0.12);
+            ctx.lineJoin = 'round';
+            ctx.strokeText(line, posX, posY);
+        }
+
+        // ၃။ ပင်မ စာလုံးအရောင် တင်ခြင်း
+        ctx.fillStyle = captionColor;
+        ctx.fillText(line, posX, posY);
+    });
+
+    ctx.restore();
+}
 
                             animFrameId = requestAnimationFrame(drawFrame);
                         };
@@ -3612,36 +3681,53 @@ Format strictly as JSON ONLY:
 
                                         {errorMsg && <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-500 p-4 rounded-xl text-sm font-semibold flex items-center gap-3"><AlertCircle className="w-5 h-5"/> <span>{errorMsg}</span></div>}
                                         {/* 👉 Total Video Cost Real-time Card 👈 */}
-                                        {videoFile && videoDurationSec > 0 && (
-                                            <div className={`p-4 rounded-2xl mb-4 ${neoPressedClass} border-2 ${getCalculatedTotalCredit() === 0 ? 'border-emerald-500/50' : 'border-indigo-500/30'} flex items-center justify-between`}>
-                                                <div>
-                                                    <p className="text-[11px] font-bold opacity-70">
-                                                        ဗီဒီယိုကြာချိန်: <span className="text-indigo-400 font-mono">{Math.max(1, (videoDurationSec % 60 > 30) ? Math.floor(videoDurationSec / 60) + 1 : Math.floor(videoDurationSec / 60))} မိနစ်</span> ({Math.round(videoDurationSec)}s)
-                                                    </p>
-                                                    <p className="text-[10px] opacity-60 mt-0.5">
-                                                        {parseInt(globalSettings.free_minutes_per_day || '0') > 0 ? (
-                                                            getCalculatedTotalCredit() === 0 
-                                                                ? <span className="text-emerald-400 font-bold">🎁 Free {globalSettings.free_minutes_per_day} မိနစ် ခွင့်ပြုချက်အတွင်း ဖြစ်ပါသည်</span>
-                                                                : <span className="text-amber-400 font-bold">🎁 Free {globalSettings.free_minutes_per_day} မိနစ် နုတ်ပြီး ပိုသော {Math.max(1, (videoDurationSec % 60 > 30) ? Math.floor(videoDurationSec / 60) + 1 : Math.floor(videoDurationSec / 60)) - parseInt(globalSettings.free_minutes_per_day)} မိနစ်စာသာ ဖြတ်ပါမည်</span>
+                                        {videoFile && videoDurationSec > 0 && (() => {
+                                            const fullMins = Math.floor(videoDurationSec / 60);
+                                            const remSec = videoDurationSec % 60;
+                                            const durMins = Math.max(1, remSec > 30 ? fullMins + 1 : fullMins);
+                                            const dailyQuota = parseInt(globalSettings.free_minutes_per_day || '0');
+                                            const remainingFree = (userData && userData.free_mins_remaining !== undefined)
+                                                ? userData.free_mins_remaining
+                                                : Math.max(0, dailyQuota - (userData?.free_mins_used || 0));
+                                            const freeToUse = Math.min(durMins, remainingFree);
+                                            const chargeableMins = durMins - freeToUse;
+                                            const totalCost = getCalculatedTotalCredit();
+
+                                            return (
+                                                <div className={`p-4 rounded-2xl mb-4 ${neoPressedClass} border-2 ${totalCost === 0 ? 'border-emerald-500/50' : 'border-indigo-500/30'} flex items-center justify-between`}>
+                                                    <div>
+                                                        <p className="text-[11px] font-bold opacity-70">
+                                                            ဗီဒီယိုကြာချိန်: <span className="text-indigo-400 font-mono">{durMins} မိနစ်</span> ({Math.round(videoDurationSec)}s)
+                                                        </p>
+                                                        <p className="text-[10px] opacity-60 mt-0.5">
+                                                            {dailyQuota > 0 ? (
+                                                                freeToUse > 0 ? (
+                                                                    chargeableMins === 0 
+                                                                        ? <span className="text-emerald-400 font-bold">🎁 ယနေ့ Free လက်ကျန်ထဲမှ {freeToUse} မိနစ် သုံးပါမည် (ကျန်: {remainingFree - freeToUse} မိနစ်)</span>
+                                                                        : <span className="text-amber-400 font-bold">🎁 Free {freeToUse} မိနစ် နုတ်ပြီး ပိုသော {chargeableMins} မိနစ်အား ပုံမှန်နှုန်းဖြင့် ဖြတ်ပါမည်</span>
+                                                                ) : (
+                                                                    <span className="text-red-400 font-bold">⚠️ ယနေ့ Free {dailyQuota} မိနစ် ကုန်သွားပါသဖြင့် ပထမ ၂ မိနစ် လျှော့ဈေးဖြင့် ဖြတ်ပါမည်</span>
+                                                                )
+                                                            ) : (
+                                                                <span>{videoKeyMode === 'own' ? '🔑 Own Key နှုန်းထား' : '⚡ Server Key နှုန်းထား'} (၂ မိနစ် လျှော့ဈေး အကျုံးဝင်သည်)</span>
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className="text-[10px] font-bold text-amber-500 block uppercase">Total Cost</span>
+                                                        {totalCost === 0 ? (
+                                                            <span className="text-2xl font-black text-emerald-400 font-mono animate-pulse">
+                                                                FREE <span className="text-xs text-emerald-300">(အခမဲ့)</span>
+                                                            </span>
                                                         ) : (
-                                                            <span>{videoKeyMode === 'own' ? '🔑 Own Key နှုန်းထား' : '⚡ Server Key နှုန်းထား'} (၂ မိနစ် လျှော့ဈေးပါဝင်သည်)</span>
+                                                            <span className="text-2xl font-black text-yellow-400 font-mono">
+                                                                {totalCost} <span className="text-xs text-slate-300">Credits</span>
+                                                            </span>
                                                         )}
-                                                    </p>
+                                                    </div>
                                                 </div>
-                                                <div className="text-right">
-                                                    <span className="text-[10px] font-bold text-amber-500 block uppercase">Total Cost</span>
-                                                    {getCalculatedTotalCredit() === 0 ? (
-                                                        <span className="text-2xl font-black text-emerald-400 font-mono animate-pulse">
-                                                            FREE <span className="text-xs text-emerald-300">(အခမဲ့)</span>
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-2xl font-black text-yellow-400 font-mono">
-                                                            {getCalculatedTotalCredit()} <span className="text-xs text-slate-300">Credits</span>
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )}
+                                            );
+                                        })()}
                                         <button onClick={handleOneClickRecap} disabled={isProcessing || !videoFile || !isFfmpegLoaded} className={`w-full py-5 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 ${isProcessing || !videoFile || !isFfmpegLoaded ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg'}`}>{!isFfmpegLoaded ? "Video Engine Procressing လုပ်နေသည်..." : isProcessing ? "Render နေပါသည်..." : <><Sparkles className="w-6 h-6"/> videoစတင်ဖန်တီးမည် </>}</button>
                                     </div>
                                 </div>
