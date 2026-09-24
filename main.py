@@ -1890,9 +1890,15 @@ def extract_with_ytdlp(url: str, output_dir: str):
     # Render Secret Files နှင့် Local ဖိုင် နှစ်ခုလုံးကို အလိုအလျောက် ရှာဖွေခြင်း
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
+    writable_temp_cookie = Path("/tmp/cookies.txt")
     
     if render_secret_cookie.exists():
-        cookie_file_to_use = str(render_secret_cookie)
+        try:
+            # Read-only ဖြစ်နေသော Secret Cookie အား ရေးခွင့်ရှိသည့် /tmp ထဲသို့ Copy ကူးယူခြင်း
+            shutil.copy(render_secret_cookie, writable_temp_cookie)
+            cookie_file_to_use = str(writable_temp_cookie)
+        except Exception:
+            cookie_file_to_use = str(render_secret_cookie)
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
     else:

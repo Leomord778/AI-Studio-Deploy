@@ -860,7 +860,7 @@
                 const a = document.createElement("a");
                 a.href = data.stream_url;
                 a.setAttribute('download', data.title || 'video.mp4');
-                a.target = '_blank';
+                // a.target = '_blank';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
