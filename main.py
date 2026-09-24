@@ -1888,11 +1888,12 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube (Flexible Format & Cookie Auth) Engine"""
+    """YouTube (iOS Bot-Bypass & Universal Format) Engine"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
 
+    cookie_file_to_use = None
     if render_secret_cookie.exists():
         try:
             shutil.copy(render_secret_cookie, writable_temp_cookie)
@@ -1901,22 +1902,22 @@ def extract_with_ytdlp(url: str, output_dir: str):
             cookie_file_to_use = str(render_secret_cookie)
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
-    else:
-        cookie_file_to_use = None
 
     ydl_opts = {
-        # 720p ရုပ်+သံ ပေါင်းမည်၊ မရှိပါက ရနိုင်သော အကောင်းဆုံး format အား အလိုအလျောက် ဆွဲမည်
-        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best',
+        # iOS Client တွင် format ရှာမတွေ့သည့် ပြဿနာ မဖြစ်စေရန် best ကို ဦးစားပေး ချိတ်ဆက်ခြင်း
+        'format': 'best[height<=720]/bestvideo[height<=720]+bestaudio/best',
         'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
         'socket_timeout': 30,
+        # Cookie ဖိုင်ရှိပါက အသုံးပြုမည်
         'cookiefile': cookie_file_to_use,
+        # Render IP ပေါ်တွင် Bot စစ်ဆေးမှု လုံးဝမတက်သည့် iOS Client သီးသန့် အသုံးပြုခြင်း
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios']
+                'player_client': ['ios']
             }
         },
         'http_headers': {
