@@ -1886,15 +1886,13 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube (iOS/Android Native Bypass) Engine"""
-    # Render Secret Files နှင့် Local ဖိုင် နှစ်ခုလုံးကို အလိုအလျောက် ရှာဖွေခြင်း
+    """YouTube (Aligned Fingerprint & Cookie Auth) Engine"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
-    
+
     if render_secret_cookie.exists():
         try:
-            # Read-only ဖြစ်နေသော Secret Cookie အား ရေးခွင့်ရှိသည့် /tmp ထဲသို့ Copy ကူးယူခြင်း
             shutil.copy(render_secret_cookie, writable_temp_cookie)
             cookie_file_to_use = str(writable_temp_cookie)
         except Exception:
@@ -1913,14 +1911,14 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'no_warnings': True,
         'socket_timeout': 30,
         'cookiefile': cookie_file_to_use,
-        # 'tv_downgraded' အစား 'ios' နှင့် 'android' သာ ထားပါ
+        # Desktop Chrome Cookie နှင့် ကိုက်ညီသည့် Web / MWeb Clients များ သတ်မှတ်ခြင်း
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android']
+                'player_client': ['mweb', 'web', 'android']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9'
         }
     }
@@ -1935,6 +1933,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
             "title": info.get('title', 'Downloaded_Video'),
             "filepath": filename
         }
+    
 @app.get("/api/downloader/proxy-file")
 async def proxy_download_file(url: str, title: str = "TikTok_Video"):
     """TikTok Video ကို Max MB (Content-Length) အတိအကျဖြင့် Direct Download ဆွဲစေသည့် Proxy Engine"""
