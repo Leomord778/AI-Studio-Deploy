@@ -1888,7 +1888,7 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube 16:9 (Landscape) နှင့် 9:16 (Shorts) အားလုံးအတွက် Universal Engine"""
+    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (VR & Embedded Bypass)"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
@@ -1903,51 +1903,69 @@ def extract_with_ytdlp(url: str, output_dir: str):
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
 
-    base_opts = {
-        'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
-        'merge_output_format': 'mp4',
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
-        'socket_timeout': 30,
-        'cookiefile': cookie_file_to_use,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'ios']
-            }
+    strategies = [
+        # နည်းဗျူဟာ ၁: android_vr (Datacenter IP တွင် Bot စစ်ဆေးမှုနှင့် Format မပျောက်စေသော Client)
+        {
+            'player_client': ['android_vr'],
+            'use_cookie': False
         },
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9'
+        # နည်းဗျူဟာ ၂: web_embedded (Iframe ပလေယာ စနစ်)
+        {
+            'player_client': ['web_embedded'],
+            'use_cookie': False
+        },
+        # နည်းဗျူဟာ ၃: Cookie ဖြင့် Android Client အသုံးပြုခြင်း (အရန်)
+        {
+            'player_client': ['android'],
+            'use_cookie': True
         }
-    }
+    ]
 
-    # အဆင့် ၁ - 16:9 နှင့် 9:16 Shorts နှစ်မျိုးလုံးအတွက် အကြည်ဆုံး Video + Audio ပေါင်းစပ်ဒေါင်းလုဒ်ဆွဲခြင်း
-    try:
-        ydl_opts = {
-            **base_opts,
-            'format': 'bestvideo*+bestaudio/best'
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-    except Exception:
-        # အဆင့် ၂ - Format ခွဲမရပါက Pre-merged Stream ဖြင့် အလိုအလျောက် ဒုတိယအကြိမ် ဆွဲယူခြင်း (Fallback)
-        ydl_opts = {
-            **base_opts,
-            'format': 'best'
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+    last_error = None
+    info = None
+    target_filepath = None
 
-    filename = ydl.prepare_filename(info)
-    if not filename.endswith('.mp4'):
-        possible_mp4 = filename.rsplit('.', 1)[0] + '.mp4'
+    for strategy in strategies:
+        try:
+            ydl_opts = {
+                'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
+                'merge_output_format': 'mp4',
+                'noplaylist': True,
+                'quiet': True,
+                'no_warnings': True,
+                'socket_timeout': 30,
+                'format': 'bestvideo*+bestaudio/best',
+                'cookiefile': cookie_file_to_use if strategy['use_cookie'] else None,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': strategy['player_client']
+                    }
+                },
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9'
+                }
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if info:
+                    target_filepath = ydl.prepare_filename(info)
+                    break
+        except Exception as e:
+            last_error = e
+            continue
+
+    if not info or not target_filepath:
+        raise Exception(f"Download မအောင်မြင်ပါ: {last_error}")
+
+    if not target_filepath.endswith('.mp4'):
+        possible_mp4 = target_filepath.rsplit('.', 1)[0] + '.mp4'
         if os.path.exists(possible_mp4):
-            filename = possible_mp4
+            target_filepath = possible_mp4
 
     return {
         "title": info.get('title', 'Downloaded_Video'),
-        "filepath": filename
+        "filepath": target_filepath
     }
     
 @app.get("/api/downloader/proxy-file")
