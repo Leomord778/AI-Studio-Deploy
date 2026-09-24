@@ -1886,7 +1886,7 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube (Aligned Fingerprint & Cookie Auth) Engine"""
+    """YouTube (Flexible Format & Cookie Auth) Engine"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
@@ -1903,7 +1903,8 @@ def extract_with_ytdlp(url: str, output_dir: str):
         cookie_file_to_use = None
 
     ydl_opts = {
-        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
+        # 720p ကို အရင်ရှာမည်၊ Shorts (သို့မဟုတ်) 720p မရှိပါက ရနိုင်သော အကြည်ဆုံး format အား အလိုအလျောက် ဒေါင်းမည်
+        'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best',
         'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'noplaylist': True,
@@ -1911,7 +1912,6 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'no_warnings': True,
         'socket_timeout': 30,
         'cookiefile': cookie_file_to_use,
-        # Desktop Chrome Cookie နှင့် ကိုက်ညီသည့် Web / MWeb Clients များ သတ်မှတ်ခြင်း
         'extractor_args': {
             'youtube': {
                 'player_client': ['mweb', 'web', 'android']
