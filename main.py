@@ -23,7 +23,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, Form, Response, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -1799,13 +1799,14 @@ async def get_protected_sfx(filename: str, request: Request):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     return response
 
-# --- ADVANCED DUAL-ENGINE VIDEO DOWNLOADER ---
+# --- ADVANCED MULTI-PLATFORM VIDEO DOWNLOADER ENGINE ---
+import re
 
 DOWNLOADS_DIR = (MEDIA_ROOT / "downloads").resolve()
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 def cleanup_old_downloads(folder: str, max_age_seconds: int = 1800):
-    """ဒေါင်းလုဒ်ဆွဲထားသော ဖိုင်ဟောင်းများအား မိနစ် ၃၀ ပြည့်ပါက Auto ဖျက်ပေးသည့်စနစ်"""
+    """မိနစ် ၃၀ ကျော်သွားသော ဖိုင်ဟောင်းများအား အလိုအလျောက် ရှင်းလင်းခြင်း"""
     try:
         now = time.time()
         for f in glob.glob(os.path.join(folder, "*")):
@@ -1815,22 +1816,33 @@ def cleanup_old_downloads(folder: str, max_age_seconds: int = 1800):
     except Exception as e:
         print(f"[Download Cleanup Warning]: {e}")
 
-async def fetch_tiktok_direct_api(url: str):
-    """TikTok နှင့် Douyin များအတွက် Watermark-free CDN တိုက်ရိုက်ဆွဲယူသည့် စနစ်"""
+def clean_input_url(raw_text: str) -> str:
+    """Xiaohongshu/TikTok App များမှ ကော်ပီကူးလာသော စာသားများထဲမှ URL အစစ်ကို ဆွဲထုတ်ခြင်း"""
+    match = re.search(r'(https?://[^\s]+)', raw_text)
+    if match:
+        clean = match.group(1).strip()
+        return clean.split("?")[0] if "xhslink.com" in clean else clean
+    return raw_text.strip()
+
+async def fetch_tiktok_media(url: str):
+    """TikTok နှင့် Douyin များအတွက် Watermark-free CDN တိုက်ရိုက်ဆွဲယူသည့် စနစ် (Dual Proxy)"""
+    import urllib.parse
+
+    # 1. TikWM API
     try:
         api_endpoint = "https://www.tikwm.com/api/"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json"
         }
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             resp = await client.post(api_endpoint, data={"url": url, "hd": 1}, headers=headers)
             if resp.status_code == 200:
                 res_json = resp.json()
-                if res_json.get("code") == 0:
-                    data = res_json.get("data", {})
+                if res_json.get("code") == 0 and "data" in res_json:
+                    data = res_json["data"]
                     title = data.get("title") or "TikTok_Media"
 
-                    # Photo Slides (ပုံများ) ဖြစ်နေပါက
                     if data.get("images") and isinstance(data["images"], list):
                         return {
                             "status": "picker",
@@ -1839,22 +1851,44 @@ async def fetch_tiktok_direct_api(url: str):
                             "stream_url": data["images"][0]
                         }
 
-                    # Video ဖြစ်ပါက Watermark မပါသော Direct CDN URL ပေးခြင်း
                     video_url = data.get("play") or data.get("wmplay")
                     if video_url:
                         if video_url.startswith("/"):
                             video_url = f"https://www.tikwm.com{video_url}"
+
+                        download_url = f"/api/downloader/proxy-file?url={urllib.parse.quote(video_url)}&title={urllib.parse.quote(title)}"
                         return {
                             "status": "direct",
                             "title": title,
-                            "stream_url": video_url
+                            "stream_url": download_url
                         }
     except Exception as e:
-        print(f"[TikWM API Error]: {e}")
+        print(f"[TikWM Error]: {e}")
+
+    # 2. TikSave Fallback API
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            f_resp = await client.get(f"https://api.tiklydown.eu.org/api/download?url={url}")
+            if f_resp.status_code == 200:
+                f_data = f_resp.json()
+                v_url = f_data.get("video", {}).get("noWatermark") or f_data.get("video", {}).get("watermark")
+                if v_url:
+                    title = f_data.get("title") or "TikTok_Video"
+                    download_url = f"/api/downloader/proxy-file?url={urllib.parse.quote(v_url)}&title={urllib.parse.quote(title)}"
+                    return {
+                        "status": "direct",
+                        "title": title,
+                        "stream_url": download_url
+                    }
+    except Exception as e:
+        print(f"[Tiklydown Error]: {e}")
+
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube, RedNote, Facebook, Bilibili တို့အတွက် Anti-Bot ကျော်ဖြတ် 720p Remux Engine"""
+    """YouTube (iOS/Android Native Bypass) Engine"""
+    cookie_path = APP_DIR / "cookies.txt"
+
     ydl_opts = {
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
         'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
@@ -1862,17 +1896,23 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+        'socket_timeout': 30,
+        # cookies.txt ရှိလျှင် အသုံးပြုမည်
+        'cookiefile': str(cookie_path) if cookie_path.exists() else None,
+        # 'tv_downgraded' အစား 'ios' နှင့် 'android' သာ ထားပါ
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web']
+                'player_client': ['ios', 'android']
             }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'Accept-Language': 'en-US,en;q=0.9'
         }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
-        # Remux ပြီးသော .mp4 ဖိုင်အမည်သို့ ပြောင်းလဲသတ်မှတ်ခြင်း
         if not filename.endswith('.mp4'):
             possible_mp4 = filename.rsplit('.', 1)[0] + '.mp4'
             if os.path.exists(possible_mp4):
@@ -1881,25 +1921,52 @@ def extract_with_ytdlp(url: str, output_dir: str):
             "title": info.get('title', 'Downloaded_Video'),
             "filepath": filename
         }
+@app.get("/api/downloader/proxy-file")
+async def proxy_download_file(url: str, title: str = "TikTok_Video"):
+    """TikTok Video ကို Link ဆီ မရောက်စေဘဲ Browser ထဲ တိုက်ရိုက် Download ဆွဲစေသည့် Proxy Engine"""
+    safe_title = "".join(c for c in title if c.isalnum() or c in " _-")[:50].strip() or "TikTok_Video"
+    filename = f"{safe_title}.mp4"
 
+    client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
+    req = client.build_request("GET", url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+        "Referer": "https://www.tiktok.com/"
+    })
+    resp = await client.send(req, stream=True)
+
+    async def file_iterator():
+        try:
+            async for chunk in resp.aiter_bytes(chunk_size=1024 * 64):
+                yield chunk
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Content-Type": "video/mp4"
+    }
+    return StreamingResponse(file_iterator(), headers=headers)
 @app.post("/api/downloader/inspect")
 async def inspect_video_download(request: Request, data: dict):
     get_request_email(request)  # 🔒 Login စစ်ဆေးခြင်း
-    url = data.get("url", "").strip()
-    if not url:
+    raw_url = data.get("url", "").strip()
+    if not raw_url:
         raise HTTPException(status_code=400, detail="Video URL လိုအပ်ပါသည်")
 
-    # နည်းလမ်း ၁: TikTok / Douyin ဖြစ်ပါက TikWM API ဖြင့် အမြန်ဆုံး ချက်ချင်း ရယူခြင်း
-    if any(domain in url.lower() for domain in ["tiktok.com", "douyin.com"]):
-        tiktok_res = await fetch_tiktok_direct_api(url)
+    # လင့်ခ်ထဲမှ စာသားအပိုများ သန့်စင်ခြင်း
+    url = clean_input_url(raw_url)
+
+    # နည်းလမ်း ၁: TikTok / Douyin ဖြစ်ပါက Direct API များဖြင့် Watermark ကင်းစင်စွာ ရယူခြင်း
+    if any(d in url.lower() for d in ["tiktok.com", "douyin.com"]):
+        tiktok_res = await fetch_tiktok_media(url)
         if tiktok_res:
             return tiktok_res
+        raise HTTPException(status_code=400, detail="TikTok ဗီဒီယိုအား ရယူ၍ မရနိုင်ပါ။ Link အမှန်ဖြစ်ကြောင်း သေချာပါစေ။")
 
-    # နည်းလမ်း ၂: YouTube, RedNote (Xiaohongshu), FB, Instagram စသည်တို့အတွက် yt-dlp ဖြင့် ဆွဲယူခြင်း
+    # နည်းလမ်း ၂: YouTube, RedNote, FB, Instagram စသည်တို့အတွက်
     try:
         downloads_dir = str(DOWNLOADS_DIR)
-
-        # ဆာဗာ Storage ပြည့်မသွားစေရန် ဖိုင်ဟောင်းများအား ရှင်းလင်းခြင်း
         cleanup_old_downloads(downloads_dir, max_age_seconds=1800)
 
         loop = asyncio.get_event_loop()
@@ -1912,8 +1979,13 @@ async def inspect_video_download(request: Request, data: dict):
             "stream_url": f"/media/downloads/{filename}"
         }
     except Exception as err:
-        print(f"[yt-dlp Extraction Error]: {err}")
-        raise HTTPException(status_code=500, detail=f"Download Error: {str(err)}")
+        err_str = str(err)
+        print(f"[Downloader Error]: {err_str}")
+        if "confirm you're not a bot" in err_str:
+            raise HTTPException(status_code=403, detail="YouTube မှ ယာယီ Bot စစ်ဆေးမှုပြုလုပ်နေပါသဖြင့် နောက် ၅ မိနစ်ခန့်အကြာတွင် ပြန်လည်စမ်းသပ်ပေးပါခင်ဗျာ။")
+        elif "Unsupported URL" in err_str:
+            raise HTTPException(status_code=400, detail="မထောက်ပံ့ထားသော Link ဖြစ်နေပါသည် (လင့်ခ်ထဲတွင် Login စာမျက်နှာ ရောက်နေပါသည်)။")
+        raise HTTPException(status_code=500, detail=f"Download မအောင်မြင်ပါ: {err_str[:120]}")
 # --- ADS ANIMATOR ENGINE (UNIVERSAL AI FIRST -> GEMINI FALLBACK -> REFUND ON FAIL) ---
 
 @app.post("/api/animator/generate-script")
