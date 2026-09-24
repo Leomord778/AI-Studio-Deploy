@@ -1888,7 +1888,7 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube Universal Multi-Client & Dynamic Format Engine"""
+    """YouTube 16:9 (Landscape) နှင့် 9:16 (Shorts) အားလုံးအတွက် Universal Engine"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
@@ -1903,11 +1903,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
 
-    ydl_opts = {
-        # 1. 720p ရှိက 720p ဆွဲမည်
-        # 2. Shorts သို့မဟုတ် Height မပါသော HLS ဖိုင်များကိုပါ '?' ဖြင့် အလိုအလျောက် လက်ခံမည်
-        # 3. 720p မရှိပါက ရနိုင်သော မည်သည့် format ကိုမဆို Error မတက်ဘဲ အကုန် ဒေါင်းလုဒ် ဆွဲမည်
-        'format': 'bv*[height<=?720]+ba/b[height<=?720]/bv*+ba/b',
+    base_opts = {
         'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'noplaylist': True,
@@ -1915,28 +1911,44 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'no_warnings': True,
         'socket_timeout': 30,
         'cookiefile': cookie_file_to_use,
-        # iOS ၏ HLS နှင့် Android ၏ DASH Streams နှစ်ခုလုံး ရရှိစေရန် ပေါင်းစပ်အသုံးပြုခြင်း
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios', 'android']
+                'player_client': ['android', 'ios']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36',
             'Accept-Language': 'en-US,en;q=0.9'
         }
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        filename = ydl.prepare_filename(info)
-        if not filename.endswith('.mp4'):
-            possible_mp4 = filename.rsplit('.', 1)[0] + '.mp4'
-            if os.path.exists(possible_mp4):
-                filename = possible_mp4
-        return {
-            "title": info.get('title', 'Downloaded_Video'),
-            "filepath": filename
+
+    # အဆင့် ၁ - 16:9 နှင့် 9:16 Shorts နှစ်မျိုးလုံးအတွက် အကြည်ဆုံး Video + Audio ပေါင်းစပ်ဒေါင်းလုဒ်ဆွဲခြင်း
+    try:
+        ydl_opts = {
+            **base_opts,
+            'format': 'bestvideo*+bestaudio/best'
         }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except Exception:
+        # အဆင့် ၂ - Format ခွဲမရပါက Pre-merged Stream ဖြင့် အလိုအလျောက် ဒုတိယအကြိမ် ဆွဲယူခြင်း (Fallback)
+        ydl_opts = {
+            **base_opts,
+            'format': 'best'
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+
+    filename = ydl.prepare_filename(info)
+    if not filename.endswith('.mp4'):
+        possible_mp4 = filename.rsplit('.', 1)[0] + '.mp4'
+        if os.path.exists(possible_mp4):
+            filename = possible_mp4
+
+    return {
+        "title": info.get('title', 'Downloaded_Video'),
+        "filepath": filename
+    }
     
 @app.get("/api/downloader/proxy-file")
 async def proxy_download_file(url: str, title: str = "TikTok_Video"):
