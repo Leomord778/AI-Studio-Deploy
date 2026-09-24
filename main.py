@@ -1,3 +1,5 @@
+import static_ffmpeg
+static_ffmpeg.add_paths()
 import os
 import httpx
 import math
@@ -1903,7 +1905,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
         cookie_file_to_use = None
 
     ydl_opts = {
-        # 720p ကို အရင်ရှာမည်၊ Shorts (သို့မဟုတ်) 720p မရှိပါက ရနိုင်သော အကြည်ဆုံး format အား အလိုအလျောက် ဒေါင်းမည်
+        # 720p ရုပ်+သံ ပေါင်းမည်၊ မရှိပါက ရနိုင်သော အကောင်းဆုံး format အား အလိုအလျောက် ဆွဲမည်
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo+bestaudio/best',
         'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
@@ -1914,11 +1916,11 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'cookiefile': cookie_file_to_use,
         'extractor_args': {
             'youtube': {
-                'player_client': ['mweb', 'web', 'android']
+                'player_client': ['android', 'ios']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
             'Accept-Language': 'en-US,en;q=0.9'
         }
     }
