@@ -1888,7 +1888,7 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (Cookie-Aligned Multi-Client)"""
+    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (Bundled FFmpeg)"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
@@ -1903,73 +1903,41 @@ def extract_with_ytdlp(url: str, output_dir: str):
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
 
-    # 16:9 နှင့် 9:16 Shorts များ၏ Audio + Video ကို ပေါင်းစပ်ရန် FFmpeg လမ်းကြောင်း ရှာဖွေခြင်း
+    # Render ပေါ်တွင် FFmpeg လမ်းကြောင်းကို အလိုအလျောက် ရယူခြင်း
     try:
-        import static_ffmpeg
-        static_ffmpeg.add_paths()
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
-        pass
-    ffmpeg_bin = shutil.which("ffmpeg")
+        ffmpeg_exe = shutil.which("ffmpeg")
 
-    # Render IP ပေါ်တွင် Bot ကျော်ပြီး Format အပြည့်အဝ ရရှိစေမည့် နည်းဗျူဟာများ (Cookie အမြဲ သုံးမည်)
-    strategies = [
-        # နည်းဗျူဟာ ၁: Web + MWeb (Desktop Cookie & User-Agent နှင့် 100% အံဝင်ခွင်ကျ အဖြစ်ဆုံး စနစ်)
-        {
-            'client': ['web', 'mweb'],
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'
-        },
-        # နည်းဗျူဟာ ၂: Smart TV (Format အစုံထွက်ပြီး Datacenter တွင် Bot စစ်ဆေးမှု လျော့ပေါ့သော စနစ်)
-        {
-            'client': ['tv'],
-            'user_agent': 'Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/6.0 TV Safari/538.1'
-        },
-        # နည်းဗျူဟာ ၃: iOS Client (iPhone Safari User-Agent သီးသန့် ချိတ်ဆက်မှု)
-        {
-            'client': ['ios'],
-            'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1'
-        }
-    ]
-
-    last_error = None
-    info = None
-    target_filepath = None
-
-    for st in strategies:
-        try:
-            ydl_opts = {
-                'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
-                'merge_output_format': 'mp4',
-                'noplaylist': True,
-                'quiet': True,
-                'no_warnings': True,
-                'socket_timeout': 30,
-                # 16:9 ရော 9:16 Shorts ပါ အသံနှင့်ဗီဒီယို အပြည့်အစုံ ရယူမည့် Format
-                'format': 'bestvideo*+bestaudio/best/bv*+ba/b',
-                'cookiefile': cookie_file_to_use,
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': st['client']
-                    }
-                },
-                'http_headers': {
-                    'User-Agent': st['user_agent'],
-                    'Accept-Language': 'en-US,en;q=0.9'
-                }
+    ydl_opts = {
+        'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
+        'merge_output_format': 'mp4',
+        'noplaylist': True,
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 30,
+        'cookiefile': cookie_file_to_use,
+        # 16:9 ရော 9:16 Shorts ပါ Video + Audio အကြည်ဆုံးကို FFmpeg ဖြင့် ပေါင်းစပ်ဒေါင်းလုဒ်ဆွဲခြင်း
+        'format': 'bestvideo*+bestaudio/best',
+        # Desktop Cookie နှင့် 100% ကိုက်ညီသော Web Client
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['web']
             }
-            if ffmpeg_bin:
-                ydl_opts['ffmpeg_location'] = ffmpeg_bin
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+        }
+    }
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                if info:
-                    target_filepath = ydl.prepare_filename(info)
-                    break
-        except Exception as e:
-            last_error = e
-            continue
+    if ffmpeg_exe:
+        ydl_opts['ffmpeg_location'] = ffmpeg_exe
 
-    if not info or not target_filepath:
-        raise Exception(f"Download မအောင်မြင်ပါ: {last_error}")
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        target_filepath = ydl.prepare_filename(info)
 
     if not target_filepath.endswith('.mp4'):
         possible_mp4 = target_filepath.rsplit('.', 1)[0] + '.mp4'
