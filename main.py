@@ -1887,7 +1887,16 @@ async def fetch_tiktok_media(url: str):
 
 def extract_with_ytdlp(url: str, output_dir: str):
     """YouTube (iOS/Android Native Bypass) Engine"""
-    cookie_path = APP_DIR / "cookies.txt"
+    # Render Secret Files နှင့် Local ဖိုင် နှစ်ခုလုံးကို အလိုအလျောက် ရှာဖွေခြင်း
+    render_secret_cookie = Path("/etc/secrets/cookies.txt")
+    local_cookie = APP_DIR / "cookies.txt"
+    
+    if render_secret_cookie.exists():
+        cookie_file_to_use = str(render_secret_cookie)
+    elif local_cookie.exists():
+        cookie_file_to_use = str(local_cookie)
+    else:
+        cookie_file_to_use = None
 
     ydl_opts = {
         'format': 'bestvideo[height<=720]+bestaudio/best[height<=720]/best',
@@ -1897,8 +1906,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'quiet': True,
         'no_warnings': True,
         'socket_timeout': 30,
-        # cookies.txt ရှိလျှင် အသုံးပြုမည်
-        'cookiefile': str(cookie_path) if cookie_path.exists() else None,
+        'cookiefile': cookie_file_to_use,
         # 'tv_downgraded' အစား 'ios' နှင့် 'android' သာ ထားပါ
         'extractor_args': {
             'youtube': {
@@ -1923,7 +1931,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
         }
 @app.get("/api/downloader/proxy-file")
 async def proxy_download_file(url: str, title: str = "TikTok_Video"):
-    """TikTok Video ကို Link ဆီ မရောက်စေဘဲ Browser ထဲ တိုက်ရိုက် Download ဆွဲစေသည့် Proxy Engine"""
+    """TikTok Video ကို Max MB (Content-Length) အတိအကျဖြင့် Direct Download ဆွဲစေသည့် Proxy Engine"""
     safe_title = "".join(c for c in title if c.isalnum() or c in " _-")[:50].strip() or "TikTok_Video"
     filename = f"{safe_title}.mp4"
 
@@ -1933,6 +1941,9 @@ async def proxy_download_file(url: str, title: str = "TikTok_Video"):
         "Referer": "https://www.tiktok.com/"
     })
     resp = await client.send(req, stream=True)
+
+    # TikTok CDN မှ ပြန်လာသော File အရွယ်အစား (Bytes) အား ဖတ်ယူခြင်း
+    content_length = resp.headers.get("content-length")
 
     async def file_iterator():
         try:
@@ -1944,9 +1955,15 @@ async def proxy_download_file(url: str, title: str = "TikTok_Video"):
 
     headers = {
         "Content-Disposition": f'attachment; filename="{filename}"',
-        "Content-Type": "video/mp4"
+        "Content-Type": resp.headers.get("content-type", "video/mp4")
     }
+
+    # Browser က Max MB အတိအကျ သိရှိစေရန် Content-Length ထည့်ပေးခြင်း
+    if content_length:
+        headers["Content-Length"] = content_length
+
     return StreamingResponse(file_iterator(), headers=headers)
+
 @app.post("/api/downloader/inspect")
 async def inspect_video_download(request: Request, data: dict):
     get_request_email(request)  # 🔒 Login စစ်ဆေးခြင်း
