@@ -1888,7 +1888,7 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube (iOS Bot-Bypass & Universal Format) Engine"""
+    """YouTube Universal Multi-Client & Dynamic Format Engine"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
@@ -1904,20 +1904,21 @@ def extract_with_ytdlp(url: str, output_dir: str):
         cookie_file_to_use = str(local_cookie)
 
     ydl_opts = {
-        # iOS Client တွင် format ရှာမတွေ့သည့် ပြဿနာ မဖြစ်စေရန် best ကို ဦးစားပေး ချိတ်ဆက်ခြင်း
-        'format': 'best[height<=720]/bestvideo[height<=720]+bestaudio/best',
+        # 1. 720p ရှိက 720p ဆွဲမည်
+        # 2. Shorts သို့မဟုတ် Height မပါသော HLS ဖိုင်များကိုပါ '?' ဖြင့် အလိုအလျောက် လက်ခံမည်
+        # 3. 720p မရှိပါက ရနိုင်သော မည်သည့် format ကိုမဆို Error မတက်ဘဲ အကုန် ဒေါင်းလုဒ် ဆွဲမည်
+        'format': 'bv*[height<=?720]+ba/b[height<=?720]/bv*+ba/b',
         'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
         'merge_output_format': 'mp4',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
         'socket_timeout': 30,
-        # Cookie ဖိုင်ရှိပါက အသုံးပြုမည်
         'cookiefile': cookie_file_to_use,
-        # Render IP ပေါ်တွင် Bot စစ်ဆေးမှု လုံးဝမတက်သည့် iOS Client သီးသန့် အသုံးပြုခြင်း
+        # iOS ၏ HLS နှင့် Android ၏ DASH Streams နှစ်ခုလုံး ရရှိစေရန် ပေါင်းစပ်အသုံးပြုခြင်း
         'extractor_args': {
             'youtube': {
-                'player_client': ['ios']
+                'player_client': ['ios', 'android']
             }
         },
         'http_headers': {
