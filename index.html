@@ -1201,15 +1201,17 @@
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
-                // STRICT TARGET LANGUAGE ENFORCEMENT PROMPT
-                const ownRecapPrompt = `You are a professional movie recap narrator and cinematic storyteller.
-Analyze the provided scene segments and generate a compelling, cinematic recap script strictly synchronized with the timestamps.
+                // STRICT STORYTELLING MOVIE RECAP PROMPT
+                const ownRecapPrompt = `You are a professional YouTube Movie Recap Narrator (like "Wonder Why" or popular movie recap channels).
+Your job is to watch the characters and narrate the STORY from a third-person observer perspective in natural spoken Myanmar language (${selectedLang}).
 
-[RULES & STORYTELLING GUIDELINES]
-1. Do NOT translate dialog word-by-word. Rewrite contextually as an engaging third-person movie recap narrator with high emotional and dramatic impact.
-2. Pace and Duration: Keep the narration length concise enough to fit naturally within each segment's duration (approx. 2.5 to 3 Burmese words per second).
-3. Tone of Voice: Cinematic, captivating, suspenseful, and natural spoken Myanmar storytelling style (Standard Unicode).
-4. Timestamp Precision: Keep 'id', 'start', and 'end' exactly identical to input segments.
+[CRITICAL STORYTELLING RULES]
+1. NEVER translate the character's direct dialogue word-for-word. (လုံးဝ စကားပြောတိုက်ရိုက် မပြန်ရ)
+   - BAD (Direct): "မင်း ဘယ်သွားမလဲလို့ သူက ပြောတယ်" / "ငါ့ကို လွှတ်ပေးပါ"
+   - GOOD (Storytelling): "ဒီအချိန်မှာတော့ ကောင်လေးဟာ အခြေအနေကို သတိထားမိသွားပြီး ထွက်ပြေးဖို့ ကြိုးစားပါတော့တယ်..."
+2. Narrate what is HAPPENING in the scene as an engaging, suspenseful story (ဇာတ်လမ်းထဲမှာ ဖြစ်ပျက်နေတာကို ဘေးကနေ ပုံပြင်ပြောပြသလို စိတ်ဝင်စားဖွယ် ဇာတ်ကြောင်းပြန်ရမည်)။
+3. Use storytelling connector phrases: "ဒီအခါမှာတော့...", "အဲ့ဒီနောက်...", "သူတို့နှစ်ယောက်ဟာ...", "မထင်မှတ်ဘဲ...", "ရုတ်တရက်..."
+4. Keep the narration natural, concise, and fit the timestamp duration.
 5. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
 
                 const originalPrompt = `You are an expert translator. 
@@ -1221,6 +1223,10 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                     const batch = batches[i];
                     let translatedBatch = null;
                     const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
+                    // User Message ကို Mode အလိုက် ခွဲခြားသတ်မှတ်ခြင်း
+                    const userInstruction = activeMode === 'own'
+                        ? `Rewrite these scene lines into an exciting 3rd-person movie recap story in ${selectedLang} (DO NOT translate dialogues literally, narrate what is happening):\n` + JSON.stringify(batch)
+                        : `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch);
 
                     if (!forceOwnKey) {
                         try {
@@ -1231,11 +1237,12 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                                     model: "neural-compute-stream",
                                     messages: [
                                         { role: "system", content: sysPrompt },
-                                        { role: "user", content: `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch) }
+                                        { role: "user", content: userInstruction } // <-- ပြင်ဆင်ထားသော userInstruction ထည့်ပါ
                                     ],
-                                    temperature: activeMode === 'own' ? 0.6 : 0.2
+                                    temperature: activeMode === 'own' ? 0.7 : 0.2
                                 })
                             });
+                    
                             if (sRes.ok) {
                                 const sData = await sRes.json();
                                 const cText = sData?.choices?.[0]?.message?.content || "";
@@ -1251,10 +1258,14 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                     // ၂။ User Gemini Key သို့ Fallback ပြုလုပ်ခြင်း
                     if (!translatedBatch) {
                         translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
+                            const geminiUserText = activeMode === 'own'
+                                ? `Rewrite these dialogue lines into a 3rd-person movie recap story narration in ${selectedLang} (Do NOT translate dialogue words, narrate the action and story):\n${JSON.stringify(batch)}`
+                                : `Strictly translate this JSON array into ${selectedLang}:\n${JSON.stringify(batch)}`;
+
                             const payload = {
-                                contents: [{ parts: [{ text: `Strictly translate this JSON array into ${selectedLang}:\n${JSON.stringify(batch)}` }] }],
+                                contents: [{ parts: [{ text: geminiUserText }] }],
                                 systemInstruction: { parts: [{ text: sysPrompt }] },
-                                generationConfig: { temperature: activeMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
+                                generationConfig: { temperature: activeMode === 'own' ? 0.7 : 0.2, responseMimeType: "application/json" }
                             };
                             const url = apiKey 
                                 ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
