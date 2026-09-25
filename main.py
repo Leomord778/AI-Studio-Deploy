@@ -1888,13 +1888,21 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    # Cookie ဖိုင် စစ်ဆေးခြင်း
+    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (Writable Cookie Fix)"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
+    writable_temp_cookie = Path("/tmp/cookies.txt")
+
     cookie_file_to_use = None
 
+    # Render ပေါ်တွင် Read-only error မတက်စေရန် /tmp/ ထဲသို့ copy ကူးယူခြင်း
     if render_secret_cookie.exists():
-        cookie_file_to_use = str(render_secret_cookie)
+        try:
+            shutil.copy(render_secret_cookie, writable_temp_cookie)
+            cookie_file_to_use = str(writable_temp_cookie)
+        except Exception as e:
+            print(f"[Cookie Copy Error]: {e}")
+            cookie_file_to_use = None
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
 
@@ -1912,9 +1920,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'no_warnings': True,
         'socket_timeout': 30,
         'cookiefile': cookie_file_to_use,
-        # Format ရှာမတွေ့သည့် Error မတက်စေရန် Flexible ဖြစ်သော format သတ်မှတ်ခြင်း
         'format': 'bestvideo*+bestaudio/best',
-        # Web အပြင် Android နှင့် iOS Client များကိုပါ စစ်ဆေးခိုင်းခြင်း
         'extractor_args': {
             'youtube': {
                 'player_client': ['android', 'ios', 'web'],
