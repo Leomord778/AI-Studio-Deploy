@@ -1888,7 +1888,7 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (Fixed Player Response)"""
+    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (Fixed Format & iOS/Android Client)"""
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
     writable_temp_cookie = Path("/tmp/cookies.txt")
@@ -1917,15 +1917,16 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'no_warnings': True,
         'socket_timeout': 30,
         'cookiefile': cookie_file_to_use,
+        # Format ရှာမတွေ့သည့် Error မဖြစ်စေရန် fallback ပါဝင်သော selector
         'format': 'bestvideo*+bestaudio/best',
-        # player_skip ကို ဖြုတ်ပြီး mweb, web client သတ်မှတ်ထားပါသည်
+        # PO-token စစ်ဆေးမှုကင်းလွတ်သော ios နှင့် android client သုံးခြင်း
         'extractor_args': {
             'youtube': {
-                'player_client': ['mweb', 'web']
+                'player_client': ['ios', 'android', 'tv_embedded']
             }
         },
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
             'Accept-Language': 'en-US,en;q=0.9'
         }
     }
@@ -1945,8 +1946,7 @@ def extract_with_ytdlp(url: str, output_dir: str):
     return {
         "title": info.get('title', 'Downloaded_Video'),
         "filepath": target_filepath
-    }
-    
+    } 
 @app.get("/api/downloader/proxy-file")
 async def proxy_download_file(url: str, title: str = "TikTok_Video"):
     """TikTok Video ကို Max MB (Content-Length) အတိအကျဖြင့် Direct Download ဆွဲစေသည့် Proxy Engine"""
