@@ -3112,12 +3112,12 @@ Format strictly as JSON ONLY:
         ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-6 max-w-5xl mx-auto py-6">
                 {globalSettings.tool_status_downloader !== 'false' && (
-                    <button onClick={() => navigateTo('downloader')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
-                        <div className="p-5 rounded-full bg-blue-500/20 text-blue-500 mb-4"><Download className="w-8 h-8" /></div>
-                        <h2 className="text-lg font-black mb-1">📥 Video Downloader</h2>
-                        <p className="text-xs opacity-70">TikTok, YT, FB (No Watermark)</p>
-                    </button>
-                )}
+    <button onClick={() => navigateTo('downloader')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
+        <div className="p-5 rounded-full bg-cyan-500/20 text-cyan-400 mb-4"><Download className="w-8 h-8" /></div>
+        <h2 className="text-lg font-black mb-1">🎵 TikTok Downloader</h2>
+        <p className="text-xs opacity-70">Watermark ကင်းစင်သော HD ဗီဒီယိုများ ရယူမည်</p>
+    </button>
+)}
                 {globalSettings.tool_status_animator !== 'false' && (
                     <button onClick={() => navigateTo('animator')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
                         <div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4"><Sparkles className="w-8 h-8" /></div>
@@ -3156,58 +3156,58 @@ Format strictly as JSON ONLY:
     </div>
 )}
                         {currentView === 'downloader' && (
-                            <div className="max-w-2xl mx-auto space-y-6">
-                                <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-4`}>
-                                    <h2 className="text-xl font-bold flex items-center gap-2 text-blue-500">
-                                        <Download className="w-6 h-6" /> Universal Video Downloader
-                                    </h2>
-                                    <p className="text-xs opacity-70">
-                                        YouTube, TikTok (No Watermark), Facebook, Instagram, Bilibili စသည့် Platform များမှ Link ကို ထည့်သွင်း၍ တိုက်ရိုက်ဒေါင်းလုဒ်ယူနိုင်ပါသည်။
-                                    </p>
-                                    <div className="flex gap-2">
-                                        <input 
-                                            type="url" 
-                                            value={dlUrl} 
-                                            onChange={e => setDlUrl(e.target.value)} 
-                                            placeholder="Paste Video URL (YouTube, TikTok, etc.)..." 
-                                            className={`flex-1 p-3.5 rounded-xl outline-none text-xs ${neoPressedClass}`} 
-                                        />
-                                        <button 
-                                            onClick={handleInspectVideo} 
-                                            disabled={dlLoading || !dlUrl.trim()} 
-                                            className="px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
-                                        >
-                                            {dlLoading ? (
-                                                <>
-                                                    <Loader2 className="w-4 h-4 animate-spin"/>
-                                                    <span>ဆွဲယူနေသည်...</span>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Download className="w-4 h-4"/>
-                                                    <span>Download</span>
-                                                </>
-                                            )}
-                                        </button>
-                                    </div>
+    <div className="max-w-2xl mx-auto space-y-6">
+        <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-4`}>
+            <h2 className="text-xl font-bold flex items-center gap-2 text-cyan-400">
+                <Download className="w-6 h-6" /> 🎵 TikTok Video Downloader
+            </h2>
+            <p className="text-xs opacity-70">
+                TikTok နှင့် Douyin ဗီဒီယိုများမှ Watermark မပါသော မူရင်း HD ဖိုင်ကို တိုက်ရိုက်ဒေါင်းလုဒ် ရယူနိုင်ပါသည်။
+            </p>
+            <div className="flex gap-2">
+                <input 
+                    type="url" 
+                    value={dlUrl} 
+                    onChange={e => setDlUrl(e.target.value)} 
+                    placeholder="Paste TikTok / Douyin Video Link here..." 
+                    className={`flex-1 p-3.5 rounded-xl outline-none text-xs ${neoPressedClass}`} 
+                />
+                <button 
+                    onClick={handleInspectVideo} 
+                    disabled={dlLoading || !dlUrl.trim()} 
+                    className="px-6 bg-cyan-500 hover:bg-cyan-600 text-black font-bold rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-1.5"
+                >
+                    {dlLoading ? (
+                        <>
+                            <Loader2 className="w-4 h-4 animate-spin"/>
+                            <span>ဒေါင်းလုဒ်ဆွဲနေသည်...</span>
+                        </>
+                    ) : (
+                        <>
+                            <Download className="w-4 h-4"/>
+                            <span>Download</span>
+                        </>
+                    )}
+                </button>
+            </div>
 
-                                    {dlLoading && (
-                                        <div className="space-y-1.5 pt-2">
-                                            <div className="flex justify-between text-xs font-bold">
-                                                <span className="text-blue-400">{dlStatusText}</span>
-                                                <span className="font-mono text-emerald-400">{dlProgress}%</span>
-                                            </div>
-                                            <div className="w-full h-2.5 bg-black/20 rounded-full overflow-hidden p-0.5">
-                                                <div 
-                                                    className="bg-blue-500 h-full rounded-full transition-all duration-200" 
-                                                    style={{ width: `${dlProgress}%` }}
-                                                ></div>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
+            {dlLoading && (
+                <div className="space-y-1.5 pt-2">
+                    <div className="flex justify-between text-xs font-bold">
+                        <span className="text-cyan-400">{dlStatusText}</span>
+                        <span className="font-mono text-emerald-400">{dlProgress}%</span>
+                    </div>
+                    <div className="w-full h-2.5 bg-black/20 rounded-full overflow-hidden p-0.5">
+                        <div 
+                            className="bg-cyan-400 h-full rounded-full transition-all duration-200" 
+                            style={{ width: `${dlProgress}%` }}
+                        ></div>
+                    </div>
+                </div>
+            )}
+        </div>
+    </div>
+)}
                         {currentView === 'animator' && (
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                                 <div className="lg:col-span-6 space-y-6">
@@ -4294,7 +4294,7 @@ Format strictly as JSON ONLY:
         <h3 className="text-lg font-bold text-purple-400">🛠️ Tools On/Off Switches (ဝန်ဆောင်မှုများ ဖွင့်/ပိတ်ခြင်း)</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[
-                { id: 'tool_status_downloader', label: '📥 Universal Video Downloader' },
+                { id: 'tool_status_downloader', label: '🎵 TikTok Video Downloader' },
                 { id: 'tool_status_animator', label: '⚡ Ads Animator' },
                 { id: 'tool_status_recap', label: '🎬 Movie Recap Tool' },
                 { id: 'tool_status_subtitle', label: '📝 Subtitle Burn-in' },
