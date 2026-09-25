@@ -1888,22 +1888,16 @@ async def fetch_tiktok_media(url: str):
     return None
 
 def extract_with_ytdlp(url: str, output_dir: str):
-    """YouTube 16:9 Landscape & 9:16 Shorts Universal Engine (Bundled FFmpeg)"""
+    # Cookie ဖိုင် စစ်ဆေးခြင်း
     render_secret_cookie = Path("/etc/secrets/cookies.txt")
     local_cookie = APP_DIR / "cookies.txt"
-    writable_temp_cookie = Path("/tmp/cookies.txt")
-
     cookie_file_to_use = None
+
     if render_secret_cookie.exists():
-        try:
-            shutil.copy(render_secret_cookie, writable_temp_cookie)
-            cookie_file_to_use = str(writable_temp_cookie)
-        except Exception:
-            cookie_file_to_use = str(render_secret_cookie)
+        cookie_file_to_use = str(render_secret_cookie)
     elif local_cookie.exists():
         cookie_file_to_use = str(local_cookie)
 
-    # Render ပေါ်တွင် FFmpeg လမ်းကြောင်းကို အလိုအလျောက် ရယူခြင်း
     try:
         import imageio_ffmpeg
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -1918,12 +1912,13 @@ def extract_with_ytdlp(url: str, output_dir: str):
         'no_warnings': True,
         'socket_timeout': 30,
         'cookiefile': cookie_file_to_use,
-        # 16:9 ရော 9:16 Shorts ပါ Video + Audio အကြည်ဆုံးကို FFmpeg ဖြင့် ပေါင်းစပ်ဒေါင်းလုဒ်ဆွဲခြင်း
+        # Format ရှာမတွေ့သည့် Error မတက်စေရန် Flexible ဖြစ်သော format သတ်မှတ်ခြင်း
         'format': 'bestvideo*+bestaudio/best',
-        # Desktop Cookie နှင့် 100% ကိုက်ညီသော Web Client
+        # Web အပြင် Android နှင့် iOS Client များကိုပါ စစ်ဆေးခိုင်းခြင်း
         'extractor_args': {
             'youtube': {
-                'player_client': ['web']
+                'player_client': ['android', 'ios', 'web'],
+                'player_skip': ['webpage', 'configs']
             }
         },
         'http_headers': {
