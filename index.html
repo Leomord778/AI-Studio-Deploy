@@ -1177,20 +1177,22 @@
             };
             // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
             // ရွေးချယ်ထားသော Language အတိုင်း မဖြစ်မနေ ဘာသာပြန်မည့် Engine
+            // စာကြောင်းတစ်ကြောင်းချင်းစီ အလိုက် ၁-to-၁ မပျောက်မပျက် ဘာသာပြန်မည့် စနစ်
             const performTranslation = async (originalSrt, modeOverride = null, forceOwnKey = false) => {
                 const activeMode = modeOverride || recapMode;
-                setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
-                addSysLog(`AI ဖြင့် [Target Language: ${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ ပြန်ဆိုနေပါသည်...`);
+                setProgressStage(activeMode === 'own' ? "ဇာတ်ကြောင်းပြန် စတိုင်လ် Script ထုတ်နေသည်" : "မူရင်းစကားပြော ဘာသာပြန်နေသည်");
+                addSysLog(`AI ဖြင့် [${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Dialogue'} ၁-to-၁ ဘာသာပြန်နေပါသည်...`);
                 
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
                 let allTranslated = [];
 
+                // AI မချုပ်ပစ်စေရန် ၅ ကြောင်းမှ ၈ ကြောင်းသာ အစုငယ်ခွဲ၍ ပို့ခြင်း
                 const batches = [];
                 let currentBatch = [];
                 let batchStart = originalBlocks[0]?.start || 0;
 
                 for (const b of originalBlocks) {
-                    if (currentBatch.length > 0 && (b.end - batchStart > 90)) {
+                    if (currentBatch.length >= 7 || (currentBatch.length > 0 && (b.end - batchStart > 30))) {
                         batches.push(currentBatch);
                         currentBatch = [b];
                         batchStart = b.start;
@@ -1201,32 +1203,34 @@
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
-                // STRICT STORYTELLING MOVIE RECAP PROMPT
-                const ownRecapPrompt = `You are a professional YouTube Movie Recap Narrator (like "Wonder Why" or popular movie recap channels).
-Your job is to watch the characters and narrate the STORY from a third-person observer perspective in natural spoken Myanmar language (${selectedLang}).
+                // ၁။ မူရင်း စကားပြောအတိုင်း တိုက်ရိုက် ဘာသာပြန်မည့် Prompt
+                const originalPrompt = `You are a professional film dialogue translator.
+Target Language: ${selectedLang}.
 
-[CRITICAL STORYTELLING RULES]
-1. NEVER translate the character's direct dialogue word-for-word. (လုံးဝ စကားပြောတိုက်ရိုက် မပြန်ရ)
-   - BAD (Direct): "မင်း ဘယ်သွားမလဲလို့ သူက ပြောတယ်" / "ငါ့ကို လွှတ်ပေးပါ"
-   - GOOD (Storytelling): "ဒီအချိန်မှာတော့ ကောင်လေးဟာ အခြေအနေကို သတိထားမိသွားပြီး ထွက်ပြေးဖို့ ကြိုးစားပါတော့တယ်..."
-2. Narrate what is HAPPENING in the scene as an engaging, suspenseful story (ဇာတ်လမ်းထဲမှာ ဖြစ်ပျက်နေတာကို ဘေးကနေ ပုံပြင်ပြောပြသလို စိတ်ဝင်စားဖွယ် ဇာတ်ကြောင်းပြန်ရမည်)။
-3. Use storytelling connector phrases: "ဒီအခါမှာတော့...", "အဲ့ဒီနောက်...", "သူတို့နှစ်ယောက်ဟာ...", "မထင်မှတ်ဘဲ...", "ရုတ်တရက်..."
-4. Keep the narration natural, concise, and fit the timestamp duration.
-5. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
+[STRICT 1-TO-1 TRANSLATION RULES]
+1. Translate the EXACT spoken words of the characters line by line.
+2. DO NOT summarize. DO NOT narrate in third-person. DO NOT use storytelling phrases like "ဒီအခါမှာတော့", "သူက ပြောတယ်", "ဇာတ်ကောင်က".
+3. STRICT 1-TO-1 MAPPING: You MUST return the exact same number of items as the input JSON array. Keep "id", "start", and "end" identical.
+4. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
 
-                const originalPrompt = `You are an expert translator. 
-CRITICAL REQUIREMENT: Translate all dialogue/text strictly into fluent, natural spoken ${selectedLang}.
-DO NOT output in English unless the selected target language is explicitly English.
-Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objects with keys: id, start, end, text.`;
+                // ၂။ တစ်ကြောင်းချင်းစီ ဘေးကနေ ဇာတ်ကြောင်းပြန်မည့် Storytelling Prompt
+                const ownRecapPrompt = `You are an expert movie recap narrator.
+Target Language: ${selectedLang}.
+
+[STRICT 1-TO-1 STORYTELLING RULES]
+1. For EACH segment, describe what the character is doing or what is happening at that specific moment from a 3rd-person observer perspective (e.g., instead of direct dialogue "ငါမင်းကိုသတ်မယ်", narrate "ရန်သူကို ဒေါသတကြီး ရန်စတိုက်ခိုက်ပါတော့တယ်")။
+2. STRICT 1-TO-1 MAPPING: You MUST output a line for EVERY single segment in the input. DO NOT summarize or combine multiple lines into one! If input has 7 items, output MUST have 7 items.
+3. Pacing: Keep each narration line very concise (around 3 to 6 Burmese words) so it fits inside the timestamp duration.
+4. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
 
                 for (let i = 0; i < batches.length; i++) {
                     const batch = batches[i];
                     let translatedBatch = null;
                     const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
-                    // User Message ကို Mode အလိုက် ခွဲခြားသတ်မှတ်ခြင်း
+                    
                     const userInstruction = activeMode === 'own'
-                        ? `Rewrite these scene lines into an exciting 3rd-person movie recap story in ${selectedLang} (DO NOT translate dialogues literally, narrate what is happening):\n` + JSON.stringify(batch)
-                        : `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch);
+                        ? `Narrate each individual scene line from a 3rd-person movie recap perspective in ${selectedLang}. Maintain strict 1-to-1 mapping without summarizing:\n` + JSON.stringify(batch)
+                        : `Translate each character's dialogue directly into natural spoken ${selectedLang} line by line. Maintain strict 1-to-1 mapping without summarizing:\n` + JSON.stringify(batch);
 
                     if (!forceOwnKey) {
                         try {
@@ -1237,12 +1241,11 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                                     model: "neural-compute-stream",
                                     messages: [
                                         { role: "system", content: sysPrompt },
-                                        { role: "user", content: userInstruction } // <-- ပြင်ဆင်ထားသော userInstruction ထည့်ပါ
+                                        { role: "user", content: userInstruction }
                                     ],
-                                    temperature: activeMode === 'own' ? 0.7 : 0.2
+                                    temperature: activeMode === 'own' ? 0.5 : 0.2
                                 })
                             });
-                    
                             if (sRes.ok) {
                                 const sData = await sRes.json();
                                 const cText = sData?.choices?.[0]?.message?.content || "";
@@ -1255,17 +1258,12 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                         }
                     }
 
-                    // ၂။ User Gemini Key သို့ Fallback ပြုလုပ်ခြင်း
                     if (!translatedBatch) {
                         translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
-                            const geminiUserText = activeMode === 'own'
-                                ? `Rewrite these dialogue lines into a 3rd-person movie recap story narration in ${selectedLang} (Do NOT translate dialogue words, narrate the action and story):\n${JSON.stringify(batch)}`
-                                : `Strictly translate this JSON array into ${selectedLang}:\n${JSON.stringify(batch)}`;
-
                             const payload = {
-                                contents: [{ parts: [{ text: geminiUserText }] }],
+                                contents: [{ parts: [{ text: userInstruction }] }],
                                 systemInstruction: { parts: [{ text: sysPrompt }] },
-                                generationConfig: { temperature: activeMode === 'own' ? 0.7 : 0.2, responseMimeType: "application/json" }
+                                generationConfig: { temperature: activeMode === 'own' ? 0.5 : 0.2, responseMimeType: "application/json" }
                             };
                             const url = apiKey 
                                 ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
@@ -1276,7 +1274,6 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                         });
                     }
 
-                    // Item Mapping စစ်ဆေးခြင်း
                     for (let j = 0; j < batch.length; j++) {
                         let item = null;
                         if (Array.isArray(translatedBatch)) {
@@ -1454,27 +1451,56 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                     }
                 }
 
-                // --- Continuous Monotonic Audio Timeline Engine (No Rewind) ---
+                // --- Timestamp အတိုင်း အသံနှင့် ဗီဒီယို Speed တွက်ချက်သည့် Timeline စနစ် ---
+                processedChunks.sort((a, b) => a.vStart - b.vStart);
+
                 let currentRealTime = 0;
+                let currentVTime = 0;
                 const syncTimeline = [];
-                const pauseBetweenSentences = 0.2; // စာကြောင်းကြား အသက်ရှူရပ်နားချိန်
 
                 for (let i = 0; i < processedChunks.length; i++) {
                     const chunk = processedChunks[i];
-                    if (!chunk.audioBuffer || chunk.audioDur <= 0.05) continue;
+
+                    // ၁။ စကားမပြောသော ကြားကာလ (Gap) ရှိပါက မူရင်း 1.0x Speed အတိုင်း သွားမည်
+                    if (chunk.vStart > currentVTime + 0.05) {
+                        const gapDur = chunk.vStart - currentVTime;
+                        syncTimeline.push({
+                            type: 'gap',
+                            startReal: currentRealTime,
+                            endReal: currentRealTime + gapDur,
+                            vStart: currentVTime,
+                            vEnd: chunk.vStart,
+                            vSpeed: 1.0,
+                            text: "",
+                            audioBuffer: null,
+                            durationReal: gapDur
+                        });
+                        currentRealTime += gapDur;
+                        currentVTime = chunk.vStart;
+                    }
+
+                    // ၂။ စကားပြော/ဇာတ်ကြောင်းပြန်သည့် အပိုင်း - Video အလျားကို အသံအလျားနှင့် ကိုက်အောင် Speed တွက်ခြင်း
+                    const vDur = Math.max(0.1, chunk.vEnd - chunk.vStart);
+                    const aDur = Math.max(0.2, chunk.audioDur);
+                    // Video Speed = Video အလျား ÷ အသံ အလျား
+                    const segmentSpeed = Math.max(0.35, Math.min(2.5, vDur / aDur));
 
                     syncTimeline.push({
                         type: 'narrate',
                         startReal: currentRealTime,
-                        endReal: currentRealTime + chunk.audioDur,
+                        endReal: currentRealTime + aDur,
+                        vStart: chunk.vStart,
+                        vEnd: chunk.vEnd,
+                        vSpeed: segmentSpeed,
                         text: chunk.text,
                         audioBuffer: chunk.audioBuffer,
-                        durationReal: chunk.audioDur
+                        durationReal: aDur
                     });
-                    currentRealTime += chunk.audioDur + pauseBetweenSentences;
+                    currentRealTime += aDur;
+                    currentVTime = chunk.vEnd;
                 }
 
-                const totalAudioDur = Math.max(5, currentRealTime);
+                const totalAudioDur = currentRealTime > 0 ? currentRealTime : 10;
                 tempAudioCtx.close();
                 return { syncTimeline, totalAudioDur };
             };
@@ -1490,8 +1516,7 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                         setRenderProgress(65);
 
                         const sampleRate = 44100;
-                        // အသံနှင့် ဗီဒီယို ၁၀၀% တူညီစေမည့် အလျား
-                        const finalAudioLength = currentView === 'recap' ? totalAudioDur : meta.duration;
+                        const finalAudioLength = currentView === 'recap' ? Math.max(totalAudioDur, meta.duration || 10) : meta.duration;
 
                         const video = document.createElement('video');
                         video.src = videoSrcUrl;
@@ -1597,17 +1622,11 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                             }
                         };
 
-                        // 🎯 အသံအလျားနှင့် ဗီဒီယိုအလျားကို အချိုးကျ ညှိယူခြင်း (နောက်ပြန်လုံးဝမဆွဲပါ)
-                        const basePlaybackRate = currentView === 'recap' 
-                            ? Math.max(0.3, Math.min(2.8, (meta.duration || 10) / finalAudioLength))
-                            : 1.0;
-                        video.playbackRate = basePlaybackRate;
-                        video.currentTime = 0;
-
                         mediaRecorder.start(100);
                         video.play();
 
                         const renderStartTime = performance.now();
+                        let currentEventIndex = -1;
                         let activeText = "";
 
                         const drawFrame = () => {
@@ -1617,24 +1636,25 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                             const realPct = Math.min(100, Math.max(0, Math.floor((elapsedSec / finalAudioLength) * 100)));
                             setRenderPercentage(realPct);
 
-                            if (elapsedSec >= finalAudioLength || (currentView !== 'recap' && video.ended)) {
+                            if (elapsedSec >= finalAudioLength || video.ended) {
                                 finishRecording();
                                 return;
                             }
 
-                            // လက်ရှိ အသံနှင့် ကိုက်ညီသော စာတန်းကိုသာ ရွေးချယ်ခြင်း
+                            // လက်ရှိ အသံနှင့် ကိုက်ညီသော စာကြောင်းကို ရှာဖွေခြင်း
                             const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
-                            activeText = currentEvent ? (currentEvent.text || "") : "";
 
-                            // ဗီဒီယိုအား နောက်ပြန်မခုန်စေဘဲ ရှေ့သို့ ချောမွေ့စွာ ပြေးစေခြင်း
-                            if (currentView === 'recap') {
-                                const expectedVTime = (elapsedSec / finalAudioLength) * (meta.duration || 10);
-                                const diff = expectedVTime - video.currentTime;
-                                if (Math.abs(diff) > 0.15) {
-                                    video.playbackRate = diff > 0 ? basePlaybackRate * 1.08 : basePlaybackRate * 0.92;
-                                } else {
-                                    video.playbackRate = basePlaybackRate;
+                            if (currentEvent) {
+                                activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
+
+                                // စာကြောင်းအသစ်ရောက်ပါက ထိုအပိုင်းအတွက် တွက်ထားသော Video Speed ကို ချက်ချင်း ချိန်ညှိခြင်း (နောက်ပြန်ဆွဲခြင်း လုံးဝမပါပါ)
+                                if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
+                                    currentEventIndex = syncTimeline.indexOf(currentEvent);
+                                    video.playbackRate = currentEvent.vSpeed;
                                 }
+                            } else {
+                                activeText = "";
+                                if (currentView === 'recap') video.playbackRate = 1.0;
                             }
 
                             setRenderProgress(Math.min(75, Math.max(65, Math.floor(65 + (elapsedSec / finalAudioLength) * 10))));
