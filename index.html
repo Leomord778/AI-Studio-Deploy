@@ -1454,55 +1454,27 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                     }
                 }
 
-                // အသံမပါသော အပိုင်းများ (Silent Gaps) မပျောက်စေရန် Timeline ပြန်လည်တည်ဆောက်ခြင်း
-                processedChunks.sort((a, b) => a.vStart - b.vStart);
-
+                // --- Continuous Monotonic Audio Timeline Engine (No Rewind) ---
                 let currentRealTime = 0;
-                let currentVTime = 0;
                 const syncTimeline = [];
+                const pauseBetweenSentences = 0.2; // စာကြောင်းကြား အသက်ရှူရပ်နားချိန်
 
                 for (let i = 0; i < processedChunks.length; i++) {
                     const chunk = processedChunks[i];
-
-                    // စကားမပြောသော ကြားအပိုင်း (Gap) ရှိပါက မူရင်း Speed (1.0x) အတိုင်း ဆက်လက် run စေခြင်း
-                    if (chunk.vStart > currentVTime + 0.05) {
-                        const gapDuration = chunk.vStart - currentVTime;
-                        syncTimeline.push({
-                            type: 'gap',
-                            startReal: currentRealTime,
-                            endReal: currentRealTime + gapDuration,
-                            vStart: currentVTime,
-                            vEnd: chunk.vStart,
-                            vSpeed: 1.0,
-                            text: "",
-                            audioBuffer: null,
-                            durationReal: gapDuration
-                        });
-                        currentRealTime += gapDuration;
-                        currentVTime = chunk.vStart;
-                    }
-
-                    // Voice Speed အလိုက် Video Playback Speed ကို သဟဇာတဖြစ်အောင် ချိန်ညှိခြင်း
-                    const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    const speedRatio = vDuration / Math.max(0.1, chunk.audioDur);
-                    const calculatedSpeed = Math.max(0.35, Math.min(2.5, speedRatio));
+                    if (!chunk.audioBuffer || chunk.audioDur <= 0.05) continue;
 
                     syncTimeline.push({
                         type: 'narrate',
                         startReal: currentRealTime,
                         endReal: currentRealTime + chunk.audioDur,
-                        vStart: chunk.vStart,
-                        vEnd: chunk.vEnd,
-                        vSpeed: calculatedSpeed,
                         text: chunk.text,
                         audioBuffer: chunk.audioBuffer,
                         durationReal: chunk.audioDur
                     });
-                    currentRealTime += chunk.audioDur;
-                    currentVTime = chunk.vEnd;
+                    currentRealTime += chunk.audioDur + pauseBetweenSentences;
                 }
 
-                const totalAudioDur = currentRealTime > 0 ? currentRealTime : 10;
+                const totalAudioDur = Math.max(5, currentRealTime);
                 tempAudioCtx.close();
                 return { syncTimeline, totalAudioDur };
             };
@@ -1518,7 +1490,8 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                         setRenderProgress(65);
 
                         const sampleRate = 44100;
-                        const finalAudioLength = currentView === 'recap' ? Math.max(totalAudioDur, meta.duration || 10) : meta.duration;
+                        // အသံနှင့် ဗီဒီယို ၁၀၀% တူညီစေမည့် အလျား
+                        const finalAudioLength = currentView === 'recap' ? totalAudioDur : meta.duration;
 
                         const video = document.createElement('video');
                         video.src = videoSrcUrl;
@@ -1551,18 +1524,20 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                             });
 
                             if (bgMusicFile) {
-                                const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                                const bgArrBuf = await bgMusicFile.arrayBuffer();
-                                const bgDecoded = await tempAudioCtx.decodeAudioData(bgArrBuf);
-                                const bgSrc = offlineCtx.createBufferSource();
-                                bgSrc.buffer = bgDecoded;
-                                bgSrc.loop = true;
-                                const bgGain = offlineCtx.createGain();
-                                bgGain.gain.value = bgMusicVolume / 100;
-                                bgSrc.connect(bgGain);
-                                bgGain.connect(offlineCtx.destination);
-                                bgSrc.start(0);
-                                tempAudioCtx.close();
+                                try {
+                                    const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                                    const bgArrBuf = await bgMusicFile.arrayBuffer();
+                                    const bgDecoded = await tempAudioCtx.decodeAudioData(bgArrBuf);
+                                    const bgSrc = offlineCtx.createBufferSource();
+                                    bgSrc.buffer = bgDecoded;
+                                    bgSrc.loop = true;
+                                    const bgGain = offlineCtx.createGain();
+                                    bgGain.gain.value = bgMusicVolume / 100;
+                                    bgSrc.connect(bgGain);
+                                    bgGain.connect(offlineCtx.destination);
+                                    bgSrc.start(0);
+                                    tempAudioCtx.close();
+                                } catch(e){}
                             }
 
                             const masterAudioBuffer = await offlineCtx.startRendering();
@@ -1583,33 +1558,22 @@ Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objec
                         canvas.height = vidH;
                         const ctx = canvas.getContext('2d');
 
-                        const freezeCanvas = document.createElement('canvas');
-                        freezeCanvas.width = vidW;
-                        freezeCanvas.height = vidH;
-                        const freezeCtx = freezeCanvas.getContext('2d');
-
-                        const canvasStream = canvas.captureStream(18);
+                        const canvasStream = canvas.captureStream(24);
                         const combinedStream = new MediaStream([
                             ...canvasStream.getVideoTracks(),
                             ...dest.stream.getAudioTracks()
                         ]);
 
                         const supportedTypes = [
-    'video/webm; codecs="h264, opus"',
-    'video/webm; codecs="h264, aac"',
-    'video/webm; codecs=h264',
-    'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
-    'video/webm; codecs="vp8, opus"',
-    'video/webm'
-];
-let mimeType = '';
-for (const type of supportedTypes) {
-    if (MediaRecorder.isTypeSupported(type)) {
-        mimeType = type;
-        break;
-    }
-}
-const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 3500000 } : undefined);
+                            'video/webm; codecs="h264, opus"',
+                            'video/webm; codecs="h264, aac"',
+                            'video/webm; codecs=h264',
+                            'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+                            'video/webm; codecs="vp8, opus"',
+                            'video/webm'
+                        ];
+                        let mimeType = supportedTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 4500000 } : undefined);
                         const recordedChunks = [];
                         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
 
@@ -1622,85 +1586,54 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                         };
 
                         mediaRecorder.onstop = () => {
-    try { playAudioCtx.close(); } catch(e){}
-    const rawWebmBlob = new Blob(recordedChunks, { type: mimeType || 'video/webm' });
-    if (window.ysFixWebmDuration) {
-        window.ysFixWebmDuration(rawWebmBlob, finalAudioLength * 1000, (fixedBlob) => {
-            resolve(fixedBlob);
-        });
-    } else {
-        resolve(rawWebmBlob);
-    }
-};
+                            try { playAudioCtx.close(); } catch(e){}
+                            const rawWebmBlob = new Blob(recordedChunks, { type: mimeType || 'video/webm' });
+                            if (window.ysFixWebmDuration) {
+                                window.ysFixWebmDuration(rawWebmBlob, finalAudioLength * 1000, (fixedBlob) => {
+                                    resolve(fixedBlob);
+                                });
+                            } else {
+                                resolve(rawWebmBlob);
+                            }
+                        };
+
+                        // 🎯 အသံအလျားနှင့် ဗီဒီယိုအလျားကို အချိုးကျ ညှိယူခြင်း (နောက်ပြန်လုံးဝမဆွဲပါ)
+                        const basePlaybackRate = currentView === 'recap' 
+                            ? Math.max(0.3, Math.min(2.8, (meta.duration || 10) / finalAudioLength))
+                            : 1.0;
+                        video.playbackRate = basePlaybackRate;
+                        video.currentTime = 0;
 
                         mediaRecorder.start(100);
                         video.play();
 
                         const renderStartTime = performance.now();
-                        let currentEventIndex = -1;
                         let activeText = "";
-
-                        let isFreezing = false;
-                        let freezeStartTime = 0;
-                        let lastFreezeTriggerT = 0;
-                        let freezeSnapshotTaken = false;
 
                         const drawFrame = () => {
                             if (isFinished) return;
 
                             const elapsedSec = (performance.now() - renderStartTime) / 1000;
-
-                            // 👉 ဒီကုဒ် ၂ ကြောင်းကို အသစ်တိုးထည့်ပါ 👈
                             const realPct = Math.min(100, Math.max(0, Math.floor((elapsedSec / finalAudioLength) * 100)));
                             setRenderPercentage(realPct);
 
-                            if (elapsedSec >= finalAudioLength || video.ended) {
+                            if (elapsedSec >= finalAudioLength || (currentView !== 'recap' && video.ended)) {
                                 finishRecording();
                                 return;
                             }
 
+                            // လက်ရှိ အသံနှင့် ကိုက်ညီသော စာတန်းကိုသာ ရွေးချယ်ခြင်း
                             const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
+                            activeText = currentEvent ? (currentEvent.text || "") : "";
 
-                            if (currentEvent) {
-                                activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
-                                
-                                if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
-                                    currentEventIndex = syncTimeline.indexOf(currentEvent);
-                                    video.playbackRate = currentEvent.vSpeed;
-
-                                    const expectedVTime = currentEvent.vStart + ((elapsedSec - currentEvent.startReal) * currentEvent.vSpeed);
-                                    if (Math.abs(video.currentTime - expectedVTime) > 0.8) {
-                                        video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
-                                    }
-                                }
-                            } else {
-                                activeText = "";
-                            }
-
-                            let zoom = 1.0;
-                            if (freezeInterval > 0 && currentView === 'recap') {
-                                if (!isFreezing && (elapsedSec - lastFreezeTriggerT >= freezeInterval) && (elapsedSec < finalAudioLength - zoomDuration - 0.5)) {
-                                    isFreezing = true;
-                                    freezeStartTime = elapsedSec;
-                                    freezeSnapshotTaken = false;
-                                    video.pause();
-                                }
-
-                                if (isFreezing) {
-                                    if (!freezeSnapshotTaken) {
-                                        freezeCtx.drawImage(video, 0, 0, vidW, vidH);
-                                        freezeSnapshotTaken = true;
-                                    }
-
-                                    const freezeElapsed = elapsedSec - freezeStartTime;
-                                    const progress = Math.min(1.0, Math.max(0, freezeElapsed / zoomDuration));
-                                    zoom = 1.0 + progress * (zoomIntensity - 1.0);
-
-                                    if (freezeElapsed >= zoomDuration) {
-                                        isFreezing = false;
-                                        lastFreezeTriggerT = elapsedSec;
-                                        video.play();
-                                    }
+                            // ဗီဒီယိုအား နောက်ပြန်မခုန်စေဘဲ ရှေ့သို့ ချောမွေ့စွာ ပြေးစေခြင်း
+                            if (currentView === 'recap') {
+                                const expectedVTime = (elapsedSec / finalAudioLength) * (meta.duration || 10);
+                                const diff = expectedVTime - video.currentTime;
+                                if (Math.abs(diff) > 0.15) {
+                                    video.playbackRate = diff > 0 ? basePlaybackRate * 1.08 : basePlaybackRate * 0.92;
+                                } else {
+                                    video.playbackRate = basePlaybackRate;
                                 }
                             }
 
@@ -1717,16 +1650,7 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                             const sVal = manualAdjust.s;
                             ctx.filter = `brightness(${bVal}%) contrast(${cVal}%) saturate(${sVal}%) ${activeFilter !== 'none' ? activeFilter : ''}`;
 
-                            const drawW = vidW * zoom;
-                            const drawH = vidH * zoom;
-                            const offsetX = (vidW - drawW) / 2;
-                            const offsetY = (vidH - drawH) / 2;
-
-                            if (isFreezing) {
-                                ctx.drawImage(freezeCanvas, offsetX, offsetY, drawW, drawH);
-                            } else {
-                                ctx.drawImage(video, 0, 0, vidW, vidH);
-                            }
+                            ctx.drawImage(video, 0, 0, vidW, vidH);
                             ctx.restore();
 
                             if (autoBlurCaption) {
@@ -1735,118 +1659,68 @@ const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, v
                                 const origBw = vidW * (manualBlurBox.xMax - manualBlurBox.xMin);
                                 const origBh = vidH * (manualBlurBox.yMax - manualBlurBox.yMin);
 
-                                const centerBx = origBx + origBw / 2;
-                                const centerBy = origBy + origBh / 2;
-
-                                const zoomedBw = origBw * zoom;
-                                const zoomedBh = origBh * zoom;
-
-                                const zoomedBx = (centerBx - vidW / 2) * zoom + vidW / 2 - zoomedBw / 2;
-                                const zoomedBy = (centerBy - vidH / 2) * zoom + vidH / 2 - zoomedBh / 2;
-
-                                const finalBx = Math.max(0, zoomedBx);
-                                const finalBy = Math.max(0, zoomedBy);
-                                const finalBw = Math.min(vidW - finalBx, zoomedBw);
-                                const finalBh = Math.min(vidH - finalBy, zoomedBh);
-
                                 ctx.save();
                                 ctx.filter = 'blur(16px)';
-                                ctx.drawImage(canvas, finalBx, finalBy, finalBw, finalBh, finalBx, finalBy, finalBw, finalBh);
+                                ctx.drawImage(canvas, origBx, origBy, origBw, origBh, origBx, origBy, origBw, origBh);
                                 ctx.restore();
                             }
 
-                            // --- Responsive Cinematic Subtitle Engine (Supports 16:9 & 9:16) ---
-if (autoCaption && activeText) {
-    const isVertical = vidH > vidW; // ၉:၁၆ (Vertical) ဟုတ်/မဟုတ် စစ်ဆေးခြင်း
+                            if (autoCaption && activeText) {
+                                const isVertical = vidH > vidW;
+                                let baseFontSize = isVertical 
+                                    ? Math.max(16, Math.round(vidW * 0.052 * subSize)) 
+                                    : Math.max(16, Math.round(vidH * 0.040 * subSize));
 
-    // ၉:၁၆ ဖြစ်ပါက အကျယ် (vidW) ပေါ် မူတည်၍ တွက်ပြီး၊ ၁၆:၉ ဖြစ်ပါက အမြင့် (vidH) ပေါ် မူတည်၍ တွက်ချက်ခြင်း
-    let baseFontSize = isVertical 
-        ? Math.max(16, Math.round(vidW * 0.052 * subSize)) 
-        : Math.max(16, Math.round(vidH * 0.040 * subSize));
+                                ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
 
-    ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+                                const maxSubWidth = vidW * (isVertical ? 0.88 : 0.82);
+                                let lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
+                                if (lines.length > 2) {
+                                    baseFontSize = Math.round(baseFontSize * 0.82);
+                                    ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
+                                    lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
+                                }
 
-    const maxSubWidth = vidW * (isVertical ? 0.88 : 0.82);
-    let lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
+                                const lineHeight = baseFontSize * 1.35;
+                                const targetY = autoBlurCaption 
+                                    ? vidH * ((manualBlurBox.yMin + manualBlurBox.yMax) / 2) 
+                                    : vidH * (subPosition / 100);
 
-    // စာကြောင်း ၃ ကြောင်းနှင့်အထက် ဖြစ်နေပါက အများဆုံး ၂ ကြောင်းသာ ဖြစ်စေရန် Font Size ကို လျှော့ချညှိယူခြင်း
-    if (lines.length > 2) {
-        baseFontSize = Math.round(baseFontSize * 0.82);
-        ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
-        lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
-    }
+                                const totalHeight = lines.length * lineHeight;
+                                const startY = targetY - (totalHeight / 2) + (lineHeight / 2);
 
-    const lineHeight = baseFontSize * 1.35;
+                                ctx.save();
+                                lines.forEach((line, lineIdx) => {
+                                    const posY = startY + (lineIdx * lineHeight);
+                                    const posX = vidW / 2;
+                                    const textMetrics = ctx.measureText(line);
+                                    const textWidth = textMetrics.width;
 
-    // Blur Box ဗဟို သို့မဟုတ် သတ်မှတ်ထားသော Y Position နေရာချခြင်း
-    const targetY = autoBlurCaption 
-        ? vidH * ((manualBlurBox.yMin + manualBlurBox.yMax) / 2) 
-        : vidH * (subPosition / 100);
+                                    const padX = baseFontSize * 0.45;
+                                    const padY = baseFontSize * 0.18;
+                                    ctx.fillStyle = "rgba(0, 0, 0, 0.70)";
+                                    ctx.beginPath();
+                                    if (ctx.roundRect) {
+                                        ctx.roundRect(posX - (textWidth / 2) - padX, posY - (lineHeight / 2) - padY, textWidth + (padX * 2), lineHeight + (padY * 2), baseFontSize * 0.3);
+                                    } else {
+                                        ctx.rect(posX - (textWidth / 2) - padX, posY - (lineHeight / 2) - padY, textWidth + (padX * 2), lineHeight + (padY * 2));
+                                    }
+                                    ctx.fill();
 
-    const totalHeight = lines.length * lineHeight;
-    const startY = targetY - (totalHeight / 2) + (lineHeight / 2);
+                                    if (strokeColor !== 'none') {
+                                        ctx.strokeStyle = strokeColor;
+                                        ctx.lineWidth = Math.max(3, baseFontSize * 0.12);
+                                        ctx.lineJoin = 'round';
+                                        ctx.strokeText(line, posX, posY);
+                                    }
 
-    // စာလုံးစတင်ပေါ်ချိန် Pop-in Entry Motion (၀.၁၅ စက္ကန့်အတွင်း ခုန်ထွက်သည့် Effect)
-    let popScale = 1.0;
-    if (currentEvent && currentEvent.type === 'narrate') {
-        const timeIntoBeat = elapsedSec - currentEvent.startReal;
-        if (timeIntoBeat < 0.15) {
-            const t = timeIntoBeat / 0.15;
-            popScale = 0.85 + (0.25 * Math.sin(t * Math.PI));
-        }
-    }
-
-    ctx.save();
-    ctx.translate(vidW / 2, targetY);
-    ctx.scale(popScale, popScale);
-    ctx.translate(-(vidW / 2), -targetY);
-
-    lines.forEach((line, lineIdx) => {
-        const posY = startY + (lineIdx * lineHeight);
-        const posX = vidW / 2;
-        const textMetrics = ctx.measureText(line);
-        const textWidth = textMetrics.width;
-
-        // ၁။ နောက်ခံ Dark Pill Box (CapCut စတိုင် ထောင့်ဝိုင်းဘား)
-        const padX = baseFontSize * 0.45;
-        const padY = baseFontSize * 0.18;
-        ctx.fillStyle = "rgba(0, 0, 0, 0.70)";
-        ctx.beginPath();
-        if (ctx.roundRect) {
-            ctx.roundRect(
-                posX - (textWidth / 2) - padX,
-                posY - (lineHeight / 2) - padY,
-                textWidth + (padX * 2),
-                lineHeight + (padY * 2),
-                baseFontSize * 0.3
-            );
-        } else {
-            ctx.rect(
-                posX - (textWidth / 2) - padX,
-                posY - (lineHeight / 2) - padY,
-                textWidth + (padX * 2),
-                lineHeight + (padY * 2)
-            );
-        }
-        ctx.fill();
-
-        // ၂။ အနားကွပ် Stroke ရေးဆွဲခြင်း
-        if (strokeColor !== 'none') {
-            ctx.strokeStyle = strokeColor;
-            ctx.lineWidth = Math.max(3, baseFontSize * 0.12);
-            ctx.lineJoin = 'round';
-            ctx.strokeText(line, posX, posY);
-        }
-
-        // ၃။ ပင်မ စာလုံးအရောင် တင်ခြင်း
-        ctx.fillStyle = captionColor;
-        ctx.fillText(line, posX, posY);
-    });
-
-    ctx.restore();
-}
+                                    ctx.fillStyle = captionColor;
+                                    ctx.fillText(line, posX, posY);
+                                });
+                                ctx.restore();
+                            }
 
                             animFrameId = requestAnimationFrame(drawFrame);
                         };
