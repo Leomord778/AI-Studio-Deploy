@@ -1,5 +1,9 @@
-import static_ffmpeg
-static_ffmpeg.add_paths()
+try:
+    import static_ffmpeg
+    static_ffmpeg.add_paths()
+except Exception as e:
+    print(f"[FFmpeg Setup Warning]: {e}")
+
 import os
 import httpx
 import math

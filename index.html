@@ -1176,23 +1176,22 @@
                 }
             };
             // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
+            // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
             // ရွေးချယ်ထားသော Language အတိုင်း မဖြစ်မနေ ဘာသာပြန်မည့် Engine
-            // စာကြောင်းတစ်ကြောင်းချင်းစီ အလိုက် ၁-to-၁ မပျောက်မပျက် ဘာသာပြန်မည့် စနစ်
-            const performTranslation = async (originalSrt, modeOverride = null, forceOwnKey = false) => {
+            const performTranslation = async (originalSrt, modeOverride = null) => {
                 const activeMode = modeOverride || recapMode;
-                setProgressStage(activeMode === 'own' ? "ဇာတ်ကြောင်းပြန် စတိုင်လ် Script ထုတ်နေသည်" : "မူရင်းစကားပြော ဘာသာပြန်နေသည်");
-                addSysLog(`AI ဖြင့် [${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Dialogue'} ၁-to-၁ ဘာသာပြန်နေပါသည်...`);
+                setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
+                addSysLog(`AI ဖြင့် [Target Language: ${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ ပြန်ဆိုနေပါသည်...`);
                 
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
                 let allTranslated = [];
 
-                // AI မချုပ်ပစ်စေရန် ၅ ကြောင်းမှ ၈ ကြောင်းသာ အစုငယ်ခွဲ၍ ပို့ခြင်း
                 const batches = [];
                 let currentBatch = [];
                 let batchStart = originalBlocks[0]?.start || 0;
 
                 for (const b of originalBlocks) {
-                    if (currentBatch.length >= 7 || (currentBatch.length > 0 && (b.end - batchStart > 30))) {
+                    if (currentBatch.length > 0 && (b.end - batchStart > 180)) {
                         batches.push(currentBatch);
                         currentBatch = [b];
                         batchStart = b.start;
@@ -1203,67 +1202,54 @@
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
-                // ၁။ မူရင်း စကားပြောအတိုင်း တိုက်ရိုက် ဘာသာပြန်မည့် Prompt
-                const originalPrompt = `You are a professional film dialogue translator.
-Target Language: ${selectedLang}.
+                // STRICT TARGET LANGUAGE ENFORCEMENT PROMPT
+                const ownRecapPrompt = `You are a professional Movie Recap Narrator and captivating storyteller.
+DO NOT translate dialog directly word-for-word. 
+Instead, observe the events and describe the character actions, plot twists, emotional reactions, and unfolding drama as a third-person storyteller in natural, captivating Myanmar spoken language (ဥပမာ: "ဒီလူကတော့ တောင်ထိပ်မှာ တွင်းကြီးတစ်ခုကို အချိန်ယူတူးနေတာပါ...", "အဲ့ဒီအချိန်မှာပဲ နဂါးကြီးကို တွေ့လိုက်ရလို့ အလန့်တကြား ဖြစ်သွားခဲ့ပါတယ်").
+Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exactly identical. Output ONLY a valid JSON array of objects with keys: id, start, end, text.`;
 
-[STRICT 1-TO-1 TRANSLATION RULES]
-1. Translate the EXACT spoken words of the characters line by line.
-2. DO NOT summarize. DO NOT narrate in third-person. DO NOT use storytelling phrases like "ဒီအခါမှာတော့", "သူက ပြောတယ်", "ဇာတ်ကောင်က".
-3. STRICT 1-TO-1 MAPPING: You MUST return the exact same number of items as the input JSON array. Keep "id", "start", and "end" identical.
-4. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
-
-                // ၂။ တစ်ကြောင်းချင်းစီ ဘေးကနေ ဇာတ်ကြောင်းပြန်မည့် Storytelling Prompt
-                const ownRecapPrompt = `You are an expert movie recap narrator.
-Target Language: ${selectedLang}.
-
-[STRICT 1-TO-1 STORYTELLING RULES]
-1. For EACH segment, describe what the character is doing or what is happening at that specific moment from a 3rd-person observer perspective (e.g., instead of direct dialogue "ငါမင်းကိုသတ်မယ်", narrate "ရန်သူကို ဒေါသတကြီး ရန်စတိုက်ခိုက်ပါတော့တယ်")။
-2. STRICT 1-TO-1 MAPPING: You MUST output a line for EVERY single segment in the input. DO NOT summarize or combine multiple lines into one! If input has 7 items, output MUST have 7 items.
-3. Pacing: Keep each narration line very concise (around 3 to 6 Burmese words) so it fits inside the timestamp duration.
-4. Output format: Return ONLY a valid JSON array of objects with keys: "id", "start", "end", "text".`;
+                const originalPrompt = `You are an expert translator. 
+CRITICAL REQUIREMENT: Translate all dialogue/text strictly into fluent, natural spoken ${selectedLang}.
+DO NOT output in English unless the selected target language is explicitly English.
+Keep 'id', 'start', and 'end' identical. Return ONLY a valid JSON array of objects with keys: id, start, end, text.`;
 
                 for (let i = 0; i < batches.length; i++) {
                     const batch = batches[i];
                     let translatedBatch = null;
                     const sysPrompt = activeMode === 'own' ? ownRecapPrompt : originalPrompt;
-                    
-                    const userInstruction = activeMode === 'own'
-                        ? `Narrate each individual scene line from a 3rd-person movie recap perspective in ${selectedLang}. Maintain strict 1-to-1 mapping without summarizing:\n` + JSON.stringify(batch)
-                        : `Translate each character's dialogue directly into natural spoken ${selectedLang} line by line. Maintain strict 1-to-1 mapping without summarizing:\n` + JSON.stringify(batch);
 
-                    if (!forceOwnKey) {
+                    // ၁။ Server Pool (Apinex) ဖြင့် ဘာသာပြန်ခြင်း
+                    if (globalSettings.primary_base_url || globalSettings.secondary_base_url) {
                         try {
                             const sRes = await apiFetch('/api/engine/neural-compute', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
-                                    model: "neural-compute-stream",
+                                    model: globalSettings.primary_model || "gemini-3.7-flash",
                                     messages: [
                                         { role: "system", content: sysPrompt },
-                                        { role: "user", content: userInstruction }
+                                        { role: "user", content: `Translate this JSON array strictly into ${selectedLang}:\n` + JSON.stringify(batch) }
                                     ],
-                                    temperature: activeMode === 'own' ? 0.5 : 0.2
+                                    temperature: activeMode === 'own' ? 0.6 : 0.2
                                 })
                             });
                             if (sRes.ok) {
                                 const sData = await sRes.json();
                                 const cText = sData?.choices?.[0]?.message?.content || "";
                                 translatedBatch = JSON.parse(cText.replace(/^```(json)?\n?/i, '').replace(/\n```$/i, '').trim());
-                            } else {
-                                throw new Error("Server AI Error");
                             }
                         } catch (sErr) {
-                            if (!forceOwnKey) throw sErr;
+                            addSysLog(`Neural Engine ချိတ်ဆက်မရပါ -> Gemini API ဖြင့် ဆက်လက်ဘာသာပြန်ပါမည်...`);
                         }
                     }
 
+                    // ၂။ User Gemini Key သို့ Fallback ပြုလုပ်ခြင်း
                     if (!translatedBatch) {
                         translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
                             const payload = {
-                                contents: [{ parts: [{ text: userInstruction }] }],
+                                contents: [{ parts: [{ text: `Strictly translate this JSON array into ${selectedLang}:\n${JSON.stringify(batch)}` }] }],
                                 systemInstruction: { parts: [{ text: sysPrompt }] },
-                                generationConfig: { temperature: activeMode === 'own' ? 0.5 : 0.2, responseMimeType: "application/json" }
+                                generationConfig: { temperature: activeMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
                             };
                             const url = apiKey 
                                 ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
@@ -1274,6 +1260,7 @@ Target Language: ${selectedLang}.
                         });
                     }
 
+                    // Item Mapping စစ်ဆေးခြင်း
                     for (let j = 0; j < batch.length; j++) {
                         let item = null;
                         if (Array.isArray(translatedBatch)) {
@@ -1452,6 +1439,7 @@ Target Language: ${selectedLang}.
                 }
 
                 // --- Timestamp အတိုင်း အသံနှင့် ဗီဒီယို Speed တွက်ချက်သည့် Timeline စနစ် ---
+                // အသံမပါသော အပိုင်းများ (Silent Gaps) မပျောက်စေရန် Timeline ပြန်လည်တည်ဆောက်ခြင်း
                 processedChunks.sort((a, b) => a.vStart - b.vStart);
 
                 let currentRealTime = 0;
@@ -1461,42 +1449,39 @@ Target Language: ${selectedLang}.
                 for (let i = 0; i < processedChunks.length; i++) {
                     const chunk = processedChunks[i];
 
-                    // ၁။ စကားမပြောသော ကြားကာလ (Gap) ရှိပါက မူရင်း 1.0x Speed အတိုင်း သွားမည်
+                    // စကားမပြောသော ကြားအပိုင်း (Gap) ရှိပါက မူရင်း Speed (1.0x) အတိုင်း ဆက်လက် run စေခြင်း
                     if (chunk.vStart > currentVTime + 0.05) {
-                        const gapDur = chunk.vStart - currentVTime;
+                        const gapDuration = chunk.vStart - currentVTime;
                         syncTimeline.push({
                             type: 'gap',
                             startReal: currentRealTime,
-                            endReal: currentRealTime + gapDur,
+                            endReal: currentRealTime + gapDuration,
                             vStart: currentVTime,
                             vEnd: chunk.vStart,
                             vSpeed: 1.0,
                             text: "",
                             audioBuffer: null,
-                            durationReal: gapDur
+                            durationReal: gapDuration
                         });
-                        currentRealTime += gapDur;
+                        currentRealTime += gapDuration;
                         currentVTime = chunk.vStart;
                     }
 
-                    // ၂။ စကားပြော/ဇာတ်ကြောင်းပြန်သည့် အပိုင်း - Video အလျားကို အသံအလျားနှင့် ကိုက်အောင် Speed တွက်ခြင်း
-                    const vDur = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    const aDur = Math.max(0.2, chunk.audioDur);
-                    // Video Speed = Video အလျား ÷ အသံ အလျား
-                    const segmentSpeed = Math.max(0.35, Math.min(2.5, vDur / aDur));
-
+                    // စကားပြောခန်း (Dialogue) ဖြစ်ပါက အသံကြာချိန်နှင့်အညီ ဗီဒီယို speed အနှေးအမြန် ချိန်ညှိခြင်း
+                    const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
+                    const calculatedSpeed = Math.max(0.35, Math.min(2.0, vDuration / chunk.audioDur));
                     syncTimeline.push({
                         type: 'narrate',
                         startReal: currentRealTime,
-                        endReal: currentRealTime + aDur,
+                        endReal: currentRealTime + chunk.audioDur,
                         vStart: chunk.vStart,
                         vEnd: chunk.vEnd,
-                        vSpeed: segmentSpeed,
+                        vSpeed: calculatedSpeed,
                         text: chunk.text,
                         audioBuffer: chunk.audioBuffer,
-                        durationReal: aDur
+                        durationReal: chunk.audioDur
                     });
-                    currentRealTime += aDur;
+                    currentRealTime += chunk.audioDur;
                     currentVTime = chunk.vEnd;
                 }
 
@@ -1504,7 +1489,6 @@ Target Language: ${selectedLang}.
                 tempAudioCtx.close();
                 return { syncTimeline, totalAudioDur };
             };
-
             const renderToWebM = async (syncData, videoSrcUrl, meta) => {
                 return new Promise(async (resolve, reject) => {
                     let animFrameId = null;
@@ -1583,7 +1567,12 @@ Target Language: ${selectedLang}.
                         canvas.height = vidH;
                         const ctx = canvas.getContext('2d');
 
-                        const canvasStream = canvas.captureStream(24);
+                        const freezeCanvas = document.createElement('canvas');
+                        freezeCanvas.width = vidW;
+                        freezeCanvas.height = vidH;
+                        const freezeCtx = freezeCanvas.getContext('2d');
+
+                        const canvasStream = canvas.captureStream(18);
                         const combinedStream = new MediaStream([
                             ...canvasStream.getVideoTracks(),
                             ...dest.stream.getAudioTracks()
@@ -1597,8 +1586,14 @@ Target Language: ${selectedLang}.
                             'video/webm; codecs="vp8, opus"',
                             'video/webm'
                         ];
-                        let mimeType = supportedTypes.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
-                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 4500000 } : undefined);
+                        let mimeType = '';
+                        for (const type of supportedTypes) {
+                            if (MediaRecorder.isTypeSupported(type)) {
+                                mimeType = type;
+                                break;
+                            }
+                        }
+                        const mediaRecorder = new MediaRecorder(combinedStream, mimeType ? { mimeType, videoBitsPerSecond: 3500000 } : undefined);
                         const recordedChunks = [];
                         mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
 
@@ -1629,6 +1624,11 @@ Target Language: ${selectedLang}.
                         let currentEventIndex = -1;
                         let activeText = "";
 
+                        let isFreezing = false;
+                        let freezeStartTime = 0;
+                        let lastFreezeTriggerT = 0;
+                        let freezeSnapshotTaken = false;
+
                         const drawFrame = () => {
                             if (isFinished) return;
 
@@ -1641,20 +1641,50 @@ Target Language: ${selectedLang}.
                                 return;
                             }
 
-                            // လက်ရှိ အသံနှင့် ကိုက်ညီသော စာကြောင်းကို ရှာဖွေခြင်း
                             const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
 
                             if (currentEvent) {
                                 activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
-
-                                // စာကြောင်းအသစ်ရောက်ပါက ထိုအပိုင်းအတွက် တွက်ထားသော Video Speed ကို ချက်ချင်း ချိန်ညှိခြင်း (နောက်ပြန်ဆွဲခြင်း လုံးဝမပါပါ)
+                                
                                 if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
                                     currentEventIndex = syncTimeline.indexOf(currentEvent);
                                     video.playbackRate = currentEvent.vSpeed;
+
+                                    const expectedVTime = currentEvent.vStart + ((elapsedSec - currentEvent.startReal) * currentEvent.vSpeed);
+                                    if (Math.abs(video.currentTime - expectedVTime) > 0.8) {
+                                        video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
+                                    }
                                 }
                             } else {
                                 activeText = "";
-                                if (currentView === 'recap') video.playbackRate = 1.0;
+                            }
+
+                            let zoom = 1.0;
+                            if (freezeInterval > 0 && currentView === 'recap') {
+                                if (!isFreezing && (elapsedSec - lastFreezeTriggerT >= freezeInterval) && (elapsedSec < finalAudioLength - zoomDuration - 0.5)) {
+                                    isFreezing = true;
+                                    freezeStartTime = elapsedSec;
+                                    freezeSnapshotTaken = false;
+                                    video.pause();
+                                }
+
+                                if (isFreezing) {
+                                    if (!freezeSnapshotTaken) {
+                                        freezeCtx.drawImage(video, 0, 0, vidW, vidH);
+                                        freezeSnapshotTaken = true;
+                                    }
+
+                                    const freezeElapsed = elapsedSec - freezeStartTime;
+                                    const progress = Math.min(1.0, Math.max(0, freezeElapsed / zoomDuration));
+                                    zoom = 1.0 + progress * (zoomIntensity - 1.0);
+
+                                    if (freezeElapsed >= zoomDuration) {
+                                        isFreezing = false;
+                                        freezeStartTime = 0;
+                                        lastFreezeTriggerT = elapsedSec;
+                                        video.play();
+                                    }
+                                }
                             }
 
                             setRenderProgress(Math.min(75, Math.max(65, Math.floor(65 + (elapsedSec / finalAudioLength) * 10))));
@@ -1670,7 +1700,16 @@ Target Language: ${selectedLang}.
                             const sVal = manualAdjust.s;
                             ctx.filter = `brightness(${bVal}%) contrast(${cVal}%) saturate(${sVal}%) ${activeFilter !== 'none' ? activeFilter : ''}`;
 
-                            ctx.drawImage(video, 0, 0, vidW, vidH);
+                            const drawW = vidW * zoom;
+                            const drawH = vidH * zoom;
+                            const offsetX = (vidW - drawW) / 2;
+                            const offsetY = (vidH - drawH) / 2;
+
+                            if (isFreezing) {
+                                ctx.drawImage(freezeCanvas, offsetX, offsetY, drawW, drawH);
+                            } else {
+                                ctx.drawImage(video, 0, 0, vidW, vidH);
+                            }
                             ctx.restore();
 
                             if (autoBlurCaption) {
@@ -1679,59 +1718,49 @@ Target Language: ${selectedLang}.
                                 const origBw = vidW * (manualBlurBox.xMax - manualBlurBox.xMin);
                                 const origBh = vidH * (manualBlurBox.yMax - manualBlurBox.yMin);
 
+                                const centerBx = origBx + origBw / 2;
+                                const centerBy = origBy + origBh / 2;
+
+                                const zoomedBw = origBw * zoom;
+                                const zoomedBh = origBh * zoom;
+
+                                const zoomedBx = (centerBx - vidW / 2) * zoom + vidW / 2 - zoomedBw / 2;
+                                const zoomedBy = (centerBy - vidH / 2) * zoom + vidH / 2 - zoomedBh / 2;
+
+                                const finalBx = Math.max(0, zoomedBx);
+                                const finalBy = Math.max(0, zoomedBy);
+                                const finalBw = Math.min(vidW - finalBx, zoomedBw);
+                                const finalBh = Math.min(vidH - finalBy, zoomedBh);
+
                                 ctx.save();
                                 ctx.filter = 'blur(16px)';
-                                ctx.drawImage(canvas, origBx, origBy, origBw, origBh, origBx, origBy, origBw, origBh);
+                                ctx.drawImage(canvas, finalBx, finalBy, finalBw, finalBh, finalBx, finalBy, finalBw, finalBh);
                                 ctx.restore();
                             }
 
                             if (autoCaption && activeText) {
-                                const isVertical = vidH > vidW;
-                                let baseFontSize = isVertical 
-                                    ? Math.max(16, Math.round(vidW * 0.052 * subSize)) 
-                                    : Math.max(16, Math.round(vidH * 0.040 * subSize));
-
-                                ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
+                                const baseFontSize = Math.max(16, Math.round(vidH * 0.035 * subSize));
+                                ctx.font = `700 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
                                 ctx.textAlign = 'center';
                                 ctx.textBaseline = 'middle';
 
-                                const maxSubWidth = vidW * (isVertical ? 0.88 : 0.82);
-                                let lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
-                                if (lines.length > 2) {
-                                    baseFontSize = Math.round(baseFontSize * 0.82);
-                                    ctx.font = `900 ${baseFontSize}px 'Pyidaungsu', 'Inter', sans-serif`;
-                                    lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
-                                }
+                                const maxSubWidth = vidW * 0.85;
+                                const lines = wrapMyanmarText(ctx, activeText, maxSubWidth);
+                                const lineHeight = baseFontSize * 1.3;
 
-                                const lineHeight = baseFontSize * 1.35;
                                 const targetY = autoBlurCaption 
                                     ? vidH * ((manualBlurBox.yMin + manualBlurBox.yMax) / 2) 
                                     : vidH * (subPosition / 100);
 
-                                const totalHeight = lines.length * lineHeight;
-                                const startY = targetY - (totalHeight / 2) + (lineHeight / 2);
+                                const startY = targetY - ((lines.length - 1) * lineHeight) / 2;
 
-                                ctx.save();
                                 lines.forEach((line, lineIdx) => {
                                     const posY = startY + (lineIdx * lineHeight);
                                     const posX = vidW / 2;
-                                    const textMetrics = ctx.measureText(line);
-                                    const textWidth = textMetrics.width;
-
-                                    const padX = baseFontSize * 0.45;
-                                    const padY = baseFontSize * 0.18;
-                                    ctx.fillStyle = "rgba(0, 0, 0, 0.70)";
-                                    ctx.beginPath();
-                                    if (ctx.roundRect) {
-                                        ctx.roundRect(posX - (textWidth / 2) - padX, posY - (lineHeight / 2) - padY, textWidth + (padX * 2), lineHeight + (padY * 2), baseFontSize * 0.3);
-                                    } else {
-                                        ctx.rect(posX - (textWidth / 2) - padX, posY - (lineHeight / 2) - padY, textWidth + (padX * 2), lineHeight + (padY * 2));
-                                    }
-                                    ctx.fill();
 
                                     if (strokeColor !== 'none') {
                                         ctx.strokeStyle = strokeColor;
-                                        ctx.lineWidth = Math.max(3, baseFontSize * 0.12);
+                                        ctx.lineWidth = Math.max(3, baseFontSize * 0.1);
                                         ctx.lineJoin = 'round';
                                         ctx.strokeText(line, posX, posY);
                                     }
@@ -1739,7 +1768,6 @@ Target Language: ${selectedLang}.
                                     ctx.fillStyle = captionColor;
                                     ctx.fillText(line, posX, posY);
                                 });
-                                ctx.restore();
                             }
 
                             animFrameId = requestAnimationFrame(drawFrame);
