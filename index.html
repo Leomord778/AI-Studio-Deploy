@@ -555,22 +555,22 @@
             const [isRecording, setIsRecording] = useState(false);
             const [recapVoice, setRecapVoice] = useState('my-MM-ThihaNeural');
             const [voiceSpeed, setVoiceSpeed] = useState(1.0); // 0.9 မှ 1.4 အထိ
-            const [freezeInterval, setFreezeInterval] = useState(4);
+            const [freezeInterval, setFreezeInterval] = useState(0); // 👈 0 ဆိုလျှင် Off (ပိတ်ထားမည်)
             const [zoomDuration, setZoomDuration] = useState(2);
             const [zoomIntensity, setZoomIntensity] = useState(1.25);
             const [activeFilter, setActiveFilter] = useState(FILTERS[0].css);
             const [manualAdjust, setManualAdjust] = useState({ b: 100, c: 100, s: 100 });
-            const [autoBlurCaption, setAutoBlurCaption] = useState(true);
+            const [autoBlurCaption, setAutoBlurCaption] = useState(false); // 👈 Visual Blur ကို ပိတ်ထားမည်
             const [manualBlurBox, setManualBlurBox] = useState({ yMin: 0.82, yMax: 0.94, xMin: 0.06, xMax: 0.94 });
-            const [autoCaption, setAutoCaption] = useState(true);
+            const [autoCaption, setAutoCaption] = useState(false); // 👈 Subtitle Burn-In ကို ပိတ်ထားမည်
             const [captionColor, setCaptionColor] = useState("#eab308");
             const [strokeColor, setStrokeColor] = useState("#000000");
             const [subPosition, setSubPosition] = useState(88.0);
             const [subSize, setSubSize] = useState(1.0);
             const [mirrorVideo, setMirrorVideo] = useState(false);
-            const [recapMode, setRecapMode] = useState('original'); // 'original' သို့မဟုတ် 'own' (storytelling style)
+            const [recapMode, setRecapMode] = useState('original');
             const [renderPercentage, setRenderPercentage] = useState(0);
-            const [enableHook, setEnableHook] = useState(true);
+            const [enableHook, setEnableHook] = useState(false); // 👈 Dramatic Hook ကို ပိတ်ထားမည်
             const [hookSeconds, setHookSeconds] = useState(3);
             const [isProcessing, setIsProcessing] = useState(false);
             const [progressStage, setProgressStage] = useState('');
@@ -678,12 +678,14 @@
                     setLastRenderedMeta(null);
                     setActiveFilter(FILTERS[0].css);
                     setManualAdjust({ b: 100, c: 100, s: 100 });
-                    setFreezeInterval(4);
+                    setFreezeInterval(0); // 👈 0 (Off) အဖြစ် reset ချမည်
                     setZoomDuration(2);
                     setZoomIntensity(1.25);
                     setRecapMode('original');
-                    setEnableHook(true);
+                    setEnableHook(false); // 👈 Hook ကို ပိတ်ထားမည်
                     setHookSeconds(3);
+                    setAutoBlurCaption(false); // 👈 Visual Blur ကို ပိတ်ထားမည်
+                    setAutoCaption(false); // 👈 Subtitle ကို ပိတ်ထားမည်
                     setTtsTextInput('');
                     setTtsAudioUrl('');
                     setAdMinutes(0);
