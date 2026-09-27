@@ -1164,6 +1164,19 @@ async def update_settings(request: Request, data: dict):
     for key, value in data.items():
         settings_col.update_one({"key": key}, {"$set": {"value": str(value)}}, upsert=True)
     return {"status": "success"}
+# မည်သည့် Device မဆို Announcement နှင့် Tool Switcher အခြေအနေများ ဆွဲယူနိုင်မည့် API
+@app.get("/api/public-settings")
+async def get_public_settings():
+    try:
+        all_settings = {doc["key"]: doc["value"] for doc in settings_col.find()}
+        for t_key in ["tool_status_downloader", "tool_status_animator", "tool_status_recap", "tool_status_subtitle", "tool_status_tts", "tool_status_store"]:
+            if t_key not in all_settings:
+                all_settings[t_key] = "true"
+        # API Keys များ User ထံ မပေါက်ကြားစေရန် ဖယ်ထုတ်ပြီး ပြန်ပေးခြင်း
+        client_settings = {k: v for k, v in all_settings.items() if k not in SECRET_SETTINGS_KEYS}
+        return {"status": "success", "settings": client_settings}
+    except Exception as e:
+        return {"status": "error", "settings": {}}
 
 @app.get("/api/admin/revenue-analytics")
 async def get_revenue_analytics(
@@ -1384,6 +1397,7 @@ async def admin_get_products(request: Request):
         } for p in prods]
     }
 
+# --- Permanent MongoDB Base64 Product Image Storage ---
 @app.post("/api/admin/products")
 async def create_product(
     request: Request,
@@ -1408,17 +1422,16 @@ async def create_product(
         v["requires_game_id"] = bool(v.get("requires_game_id", False))
         v["requires_server_id"] = bool(v.get("requires_server_id", False))
 
-    image_keys = []
-    image_urls = []
+    # ဓာတ်ပုံများကို Server ဒစ်ခ်ပေါ်မသိမ်းဘဲ Database ထဲ Base64 အဖြစ် တိုက်ရိုက်သိမ်းခြင်း (Never Disappear)
+    saved_image_urls = []
     if images:
         for img in images:
-            if img.filename:
-                upload_res = await save_upload(img, "product_images")
-                image_keys.append(upload_res["key"])
-                image_urls.append(f"/media/{upload_res['key']}")
-
-    primary_image = image_urls[0] if image_urls else ""
-    primary_key = image_keys[0] if image_keys else ""
+            if img and img.filename:
+                content = await img.read()
+                if content:
+                    mime_type = img.content_type or "image/jpeg"
+                    b64_str = base64.b64encode(content).decode("utf-8")
+                    saved_image_urls.append(f"data:{mime_type};base64,{b64_str}")
 
     doc = {
         "name": name.strip(),
@@ -1426,10 +1439,8 @@ async def create_product(
         "description": description.strip(),
         "variants": variants,
         "payment_accounts": payment_accounts,
-        "image_key": primary_key,
-        "image_keys": image_keys,
-        "image_url": primary_image,
-        "image_urls": image_urls,
+        "image_url": saved_image_urls[0] if saved_image_urls else "",
+        "image_urls": saved_image_urls,
         "created_at": current_utc()
     }
     res = products_col.insert_one(doc)
@@ -1468,18 +1479,19 @@ async def update_product(
         "payment_accounts": payment_accounts
     }
 
-    if images and len(images) > 0 and images[0].filename:
-        image_keys = []
-        image_urls = []
+    # ပုံအသစ် တင်ပေးမှသာ အသစ်ပြောင်းမည်၊ မတင်ပါက မူရင်းပုံကို အမြဲတမ်း ဆက်လက်ထိန်းသိမ်းထားမည်
+    if images and any(img.filename for img in images):
+        saved_image_urls = []
         for img in images:
-            if img.filename:
-                upload_res = await save_upload(img, "product_images")
-                image_keys.append(upload_res["key"])
-                image_urls.append(f"/media/{upload_res['key']}")
-        update_doc["image_key"] = image_keys[0]
-        update_doc["image_keys"] = image_keys
-        update_doc["image_url"] = image_urls[0]
-        update_doc["image_urls"] = image_urls
+            if img and img.filename:
+                content = await img.read()
+                if content:
+                    mime_type = img.content_type or "image/jpeg"
+                    b64_str = base64.b64encode(content).decode("utf-8")
+                    saved_image_urls.append(f"data:{mime_type};base64,{b64_str}")
+        if saved_image_urls:
+            update_doc["image_url"] = saved_image_urls[0]
+            update_doc["image_urls"] = saved_image_urls
 
     products_col.update_one({"_id": ObjectId(product_id)}, {"$set": update_doc})
     return {"status": "success", "message": "Product updated successfully"}
@@ -1670,7 +1682,58 @@ def parse_settings_keys(raw_val) -> list[str]:
             if raw_val.strip():
                 return [raw_val.strip()]
     return []
+# --- SECURE RECAP TRANSLATION ENGINE (HIDDEN PROMPTS IN BACKEND) ---
+@app.post("/api/engine/translate-recap")
+async def translate_recap_segments(request: Request):
+    get_request_email(request)  # 🔒 Login စစ်ဆေးခြင်း
+    body = await request.json()
+    batch = body.get("batch", [])
+    mode = body.get("mode", "original")  # "own" သို့မဟုတ် "original"
+    target_lang = body.get("target_lang", "မြန်မာ (Myanmar)")
 
+    if not batch:
+        return {"status": "success", "data": []}
+
+    # 🛡️ AI Prompts များကို Backend ထဲတွင်သာ လုံခြုံစွာ ဝှက်သိမ်းထားခြင်း (Frontend တွင် လုံးဝမပေါ်ပါ)
+    if mode == "own":
+        sys_prompt = (
+            "You are a professional Movie Recap Narrator and captivating storyteller.\n"
+            "DO NOT translate dialog directly word-for-word.\n"
+            "Instead, observe the events and describe the character actions, plot twists, emotional reactions, and unfolding drama as a third-person storyteller in natural, captivating Myanmar spoken language (ဥပမာ: 'ဒီလူကတော့ တောင်ထိပ်မှာ တွင်းကြီးတစ်ခုကို အချိန်ယူတူးနေတာပါ...', 'အဲ့ဒီအချိန်မှာပဲ နဂါးကြီးကို တွေ့လိုက်ရလို့ အလန့်တကြား ဖြစ်သွားခဲ့ပါတယ်').\n"
+            "Keep each segment's duration pacing natural. Keep 'id', 'start', and 'end' exactly identical.\n"
+            "Return ONLY a valid JSON array of objects with keys: id, start, end, text."
+        )
+        user_msg = f"Narrate each scene from a 3rd-person recap perspective in {target_lang}:\n" + json.dumps(batch, ensure_ascii=False)
+        temperature = 0.6
+    else:
+        sys_prompt = (
+            "You are an expert film dialogue translator.\n"
+            f"CRITICAL REQUIREMENT: Translate all dialogue strictly into fluent, natural spoken {target_lang} line by line.\n"
+            "DO NOT output in English unless the selected target language is explicitly English.\n"
+            "Keep 'id', 'start', and 'end' identical.\n"
+            "Return ONLY a valid JSON array of objects with keys: id, start, end, text."
+        )
+        user_msg = f"Translate this dialogue JSON array strictly into {target_lang}:\n" + json.dumps(batch, ensure_ascii=False)
+        temperature = 0.2
+
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {"role": "user", "content": user_msg}
+    ]
+
+    # Universal AI (Codecraft / Chat B.ai / Groq / Gemini) ဆာဗာကီးများဖြင့် အလိုအလျောက် ခေါ်ယူခြင်း
+    reply_text = await call_universal_ai(messages, temperature=temperature)
+    clean_json_str = reply_text.strip()
+    if clean_json_str.startswith("```"):
+        clean_json_str = re.sub(r"^```(?:json)?\n?", "", clean_json_str, flags=re.IGNORECASE)
+        clean_json_str = re.sub(r"\n?```$", "", clean_json_str)
+
+    try:
+        translated_data = json.loads(clean_json_str.strip())
+        return {"status": "success", "data": translated_data}
+    except Exception as e:
+        print(f"[Translate JSON Error]: {e} | Raw: {reply_text}")
+        raise HTTPException(status_code=500, detail="AI အဖြေအား JSON format အဖြစ် ပြောင်းမရပါ")
 @app.post("/api/engine/neural-compute")
 async def proxy_neural_compute(request: Request):
     get_request_email(request)
