@@ -496,7 +496,7 @@
             const [adVideoUrl, setAdVideoUrl] = useState('');
             const adImageInputRef = useRef(null);
             const adVoiceInputRef = useRef(null);
-            const [isDark, setIsDark] = useState(() => getSafeStorage('theme', 'dark') === 'dark');
+            const [isDark, setIsDark] = useState(() => getSafeStorage('theme', 'light') === 'dark');
 
             const [engineLoading, setEngineLoading] = useState(true);
             const [engineLoadPercent, setEngineLoadPercent] = useState(0);
@@ -1207,7 +1207,7 @@
             // Prompt များကို Backend ထဲ ဝှက်သိမ်းထားပြီး User တိုင်း Server Key သုံးနိုင်စေမည့် စနစ်
             const performTranslation = async (originalSrt, modeOverride = null, forceOwnKey = false) => {
                 const activeMode = modeOverride || recapMode;
-                setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ရေးသားနေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
+                setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ထုတ်နေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
                 addSysLog(`AI ဖြင့် [Target Language: ${selectedLang}] သို့ ${activeMode === 'own' ? 'Storytelling Recap' : 'Direct Translation'} စနစ်သုံး၍ ပြန်ဆိုနေပါသည်...`);
                 
                 const originalBlocks = parseSrtBlocks(originalSrt).map((b, i) => ({ id: i + 1, start: b.start, end: b.end, text: b.text }));
@@ -3433,7 +3433,7 @@ Format strictly as JSON ONLY:
                                                                 <Volume2 className="w-4 h-4 text-indigo-500"/> Smart Audio Ducking
                                                             </div>
                                                             <div className="text-[11px] opacity-70">
-                                                                မူရင်း BGM/SFX မဖျောက်ဘဲ စကားပြောချိန်တွင် ၅% သို့ အလိုအလျောက် လျှော့ချမည်
+                                                                ဖွင့်ထားပါက မူရင်း BGM/SFX များကို muteမလုပ်ပါ 
                                                             </div>
                                                         </div>
                                                         <input 
