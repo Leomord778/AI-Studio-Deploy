@@ -568,6 +568,7 @@
             const [subPosition, setSubPosition] = useState(88.0);
             const [subSize, setSubSize] = useState(1.0);
             const [mirrorVideo, setMirrorVideo] = useState(false);
+            const [preserveOriginalAudio, setPreserveOriginalAudio] = useState(false); // 👈 Audio Ducking ခလုတ် State
             const [recapMode, setRecapMode] = useState('original');
             const [renderPercentage, setRenderPercentage] = useState(0);
             const [enableHook, setEnableHook] = useState(false); // 👈 Dramatic Hook ကို ပိတ်ထားမည်
@@ -1519,7 +1520,7 @@
                         const video = document.createElement('video');
                         video.src = videoSrcUrl;
                         video.crossOrigin = "anonymous";
-                        video.muted = (currentView === 'recap');
+                        video.muted = (currentView === 'recap' && !preserveOriginalAudio);
                         video.playsInline = true;
 
                         await new Promise((res, rej) => {
@@ -1531,10 +1532,20 @@
                         if (playAudioCtx.state === 'suspended') await playAudioCtx.resume();
                         const dest = playAudioCtx.createMediaStreamDestination();
 
+                        let vidGainNode = null;
                         if (currentView === 'subtitle') {
                             const vidSourceNode = playAudioCtx.createMediaElementSource(video);
                             vidSourceNode.connect(dest);
                         } else {
+                            // Audio Ducking ဖွင့်ထားပါက မူရင်းဗီဒီယိုအသံကို GainNode မှတစ်ဆင့် dest သို့ ချိတ်ဆက်ခြင်း
+                            if (preserveOriginalAudio) {
+                                const vidSourceNode = playAudioCtx.createMediaElementSource(video);
+                                vidGainNode = playAudioCtx.createGain();
+                                vidGainNode.gain.value = 1.0;
+                                vidSourceNode.connect(vidGainNode);
+                                vidGainNode.connect(dest);
+                            }
+
                             const offlineCtx = new OfflineAudioContext(2, Math.ceil(finalAudioLength * sampleRate), sampleRate);
                             syncTimeline.forEach(event => {
                                 if (event.type === 'narrate' && event.audioBuffer) {
@@ -1659,7 +1670,16 @@
 
                             if (currentEvent) {
                                 activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
-                                
+                                // --- Realtime Smart Audio Ducking Control ---
+                            if (currentView === 'recap' && preserveOriginalAudio && vidGainNode) {
+                                if (currentEvent && currentEvent.type === 'narrate') {
+                                    // စကားပြောခန်းတွင် မူရင်းအသံကို ၅% (0.05) သို့ ညင်သာစွာ လျှော့ချခြင်း
+                                    vidGainNode.gain.setTargetAtTime(0.05, playAudioCtx.currentTime, 0.05);
+                                } else {
+                                    // စကားမပြောသော အခန်းများတွင် မူရင်း BGM/SFX ကို ၁၀၀% (1.0) အပြည့် ချက်ချင်း ပြန်တင်ခြင်း
+                                    vidGainNode.gain.setTargetAtTime(1.0, playAudioCtx.currentTime, 0.05);
+                                }
+                            }
                                 if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
                                     currentEventIndex = syncTimeline.indexOf(currentEvent);
                                     video.playbackRate = currentEvent.vSpeed;
@@ -1671,6 +1691,7 @@
                                 }
                             } else {
                                 activeText = "";
+                                if (vidGainNode) vidGainNode.gain.setTargetAtTime(1.0, playAudioCtx.currentTime, 0.05);
                             }
 
                             let zoom = 1.0;
@@ -3403,6 +3424,25 @@ Format strictly as JSON ONLY:
                                                     <p className="text-[10px] opacity-60 mt-2">
                                                         {recapMode === 'own' ? "★ AI က ဇာတ်ကောင်လှုပ်ရှားမှုများကို ဘေးကနေ ပုံပြင်ပြောပြသလို စိတ်ဝင်စားဖွယ် ဇာတ်ကြောင်းပြန်ပါမည်။" : "★ မူရင်း စကားပြော Script ကို ဘာသာပြန်ဆို၍ Recap လုပ်ပါမည်။"}
                                                     </p>
+                                                </div>
+                                                {/* Smart Audio Ducking Toggle Button */}
+                                                <div className={`p-4 rounded-2xl mb-4 ${neoPressedClass} border border-indigo-500/20`}>
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <div className="text-sm font-bold flex items-center gap-2">
+                                                                <Volume2 className="w-4 h-4 text-indigo-500"/> Smart Audio Ducking
+                                                            </div>
+                                                            <div className="text-[11px] opacity-70">
+                                                                မူရင်း BGM/SFX မဖျောက်ဘဲ စကားပြောချိန်တွင် ၅% သို့ အလိုအလျောက် လျှော့ချမည်
+                                                            </div>
+                                                        </div>
+                                                        <input 
+                                                            type="checkbox" 
+                                                            checked={preserveOriginalAudio} 
+                                                            onChange={(e) => setPreserveOriginalAudio(e.target.checked)} 
+                                                            className="w-5 h-5 accent-indigo-500 cursor-pointer"
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         )}
