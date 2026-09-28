@@ -2061,85 +2061,66 @@ async def inspect_video(request: Request):
     if not raw_url:
         raise HTTPException(status_code=400, detail="Video Link ထည့်သွင်းပေးပါ")
 
-    # ၁။ TikTok App မှ စာသားများ ရောပါလာပါက URL အစစ်ကိုသာ သန့်စင်ဆွဲထုတ်ခြင်း
+    # TikTok App မှ စာသားများ ရောပါလာပါက URL သီးသန့်ဆွဲထုတ်ခြင်း
     match = re.search(r'(https?://[^\s]+)', raw_url)
     video_url = match.group(1).rstrip(")]>,;\"'") if match else raw_url
 
-    browser_headers = {
+    headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9"
+        "Accept": "*/*"
     }
 
-    # ၂။ နည်းလမ်း (၁) - TikWM API (User-Agent အပြည့်ဖြင့် No-Watermark ဆွဲယူခြင်း)
-    for endpoint in ["https://www.tikwm.com/api/", "https://tikwm.com/api/"]:
-        try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                res = await client.post(endpoint, data={"url": video_url, "hd": 1}, headers=browser_headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    if data.get("code") == 0 and "data" in data:
-                        v_data = data["data"]
-                        title = v_data.get("title") or "TikTok_Video"
-                        
-                        # Photo Slideshow ဖြစ်နေပါက
-                        if v_data.get("images") and isinstance(v_data["images"], list) and len(v_data["images"]) > 0:
-                            return {
-                                "status": "picker",
-                                "title": f"{title[:50]}",
-                                "stream_url": v_data["images"][0],
-                                "picker": [{"type": "image", "url": img} for img in v_data["images"]]
-                            }
-
-                        stream_url = v_data.get("hdplay") or v_data.get("play") or v_data.get("wmplay")
-                        if stream_url:
-                            if stream_url.startswith("/"):
-                                stream_url = f"https://www.tikwm.com{stream_url}"
-                            
-                            # ဖုန်းထဲသို့ တိုက်ရိုက်ဒေါင်းလုဒ် ဆွဲစေရန် proxy-file ဖြင့် လှည့်ပေးခြင်း
-                            import urllib.parse
-                            proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
-                            return {
-                                "stream_url": proxied_dl,
-                                "title": f"{title[:50]}.mp4",
-                                "status": "success"
-                            }
-        except Exception as e:
-            print(f"[TikWM {endpoint} Error]: {e}")
-
-    # ၃။ နည်းလမ်း (၂) - yt-dlp Universal Engine ဖြင့် အရန်တိုက်ရိုက်ထုတ်ယူခြင်း
+    # အဆင့် ၁ - TikWM API (Form Data ဖြင့် စစ်ဆေးခြင်း)
     try:
-        loop = asyncio.get_running_loop()
-        def run_ytdlp():
-            ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
-                'format': 'best',
-                'socket_timeout': 20,
-                'http_headers': browser_headers
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.extract_info(video_url, download=False)
-        
-        info = await loop.run_in_executor(None, run_ytdlp)
-        if info:
-            stream_url = info.get("url")
-            title = info.get("title") or "TikTok_Video"
-            if stream_url:
-                import urllib.parse
-                proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
-                return {
-                    "stream_url": proxied_dl,
-                    "title": f"{title[:50]}.mp4",
-                    "status": "success"
-                }
-    except Exception as e:
-        print(f"[yt-dlp TikTok Error]: {e}")
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.post("https://www.tikwm.com/api/", data={"url": video_url, "hd": 1}, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == 0 and "data" in data:
+                    v_data = data["data"]
+                    title = v_data.get("title") or "TikTok_Video"
+                    
+                    if v_data.get("images") and isinstance(v_data["images"], list) and len(v_data["images"]) > 0:
+                        return {
+                            "status": "picker",
+                            "title": title[:50],
+                            "stream_url": v_data["images"][0],
+                            "picker": [{"type": "image", "url": img} for img in v_data["images"]]
+                        }
 
-    # ၄။ နည်းလမ်း (၃) - Tiklydown (SSL Verify ပိတ်ထားပြီး ဆွဲယူခြင်း)
+                    stream_url = v_data.get("hdplay") or v_data.get("play") or v_data.get("wmplay")
+                    if stream_url:
+                        if stream_url.startswith("/"):
+                            stream_url = f"https://www.tikwm.com{stream_url}"
+                        import urllib.parse
+                        proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
+                        return {"stream_url": proxied_dl, "title": f"{title[:50]}.mp4", "status": "success"}
+    except Exception as e:
+        print(f"[TikWM POST Error]: {e}")
+
+    # အဆင့် ၂ - TikWM GET Request ဖြင့် အရန်စစ်ဆေးခြင်း
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(f"https://www.tikwm.com/api/?url={video_url}&hd=1", headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == 0 and "data" in data:
+                    v_data = data["data"]
+                    title = v_data.get("title") or "TikTok_Video"
+                    stream_url = v_data.get("hdplay") or v_data.get("play") or v_data.get("wmplay")
+                    if stream_url:
+                        if stream_url.startswith("/"):
+                            stream_url = f"https://www.tikwm.com{stream_url}"
+                        import urllib.parse
+                        proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
+                        return {"stream_url": proxied_dl, "title": f"{title[:50]}.mp4", "status": "success"}
+    except Exception as e:
+        print(f"[TikWM GET Error]: {e}")
+
+    # အဆင့် ၃ - Tiklydown Fallback API
     try:
         async with httpx.AsyncClient(verify=False, timeout=15.0, follow_redirects=True) as client:
-            res = await client.get(f"https://api.tiklydown.eu.org/api/download?url={video_url}", headers=browser_headers)
+            res = await client.get(f"https://api.tiklydown.eu.org/api/download?url={video_url}", headers=headers)
             if res.status_code == 200:
                 data = res.json()
                 video_obj = data.get("video", {})
@@ -2148,14 +2129,11 @@ async def inspect_video(request: Request):
                 if stream_url:
                     import urllib.parse
                     proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
-                    return {
-                        "stream_url": proxied_dl,
-                        "title": f"{title[:50]}.mp4",
-                        "status": "success"
-                    }
+                    return {"stream_url": proxied_dl, "title": f"{title[:50]}.mp4", "status": "success"}
     except Exception as e:
-        print(f"[Tiklydown Fallback Error]: {e}")
+        print(f"[Tiklydown Error]: {e}")
 
+    # မှတ်ချက်: Server IP Block ခံရခြင်းမှ ကာကွယ်ရန် yt-dlp ကို TikTok အတွက် တိုက်ရိုက် မခေါ်စေတော့ပါ
     raise HTTPException(status_code=400, detail="TikTok ဗီဒီယိုအား ရယူ၍ မရနိုင်ပါ။ Link အမှန်ဖြစ်ကြောင်း သေချာပါစေ။")
 # --- ADS ANIMATOR ENGINE (UNIVERSAL AI FIRST -> GEMINI FALLBACK -> REFUND ON FAIL) ---
 
