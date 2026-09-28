@@ -229,7 +229,33 @@
             }
             return new Blob([view], { type: 'audio/wav' });
         };
+        // TTS အသံဖိုင်၏ ရှေ့/နောက် အပို Silence များကို ဖြတ်ထုတ်ပေးသော function
+        function trimAudioBuffer(audioBuffer, threshold = 0.01) {
+            const channelData = audioBuffer.getChannelData(0);
+            let start = 0;
+            let end = channelData.length - 1;
 
+            while (start < channelData.length && Math.abs(channelData[start]) < threshold) {
+                start++;
+            }
+            while (end > start && Math.abs(channelData[end]) < threshold) {
+                end--;
+            }
+
+            const trimmedLength = Math.max(1, end - start);
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const trimmedBuffer = audioCtx.createBuffer(
+                audioBuffer.numberOfChannels,
+                trimmedLength,
+                audioBuffer.sampleRate
+            );
+
+            for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+                trimmedBuffer.copyToChannel(audioBuffer.getChannelData(c).subarray(start, end), c);
+            }
+            audioCtx.close();
+            return trimmedBuffer;
+        }
         function wrapMyanmarText(ctx, text, maxWidth) {
             const words = text.includes(' ') ? text.split(' ') : text.match(/.{1,10}/g) || [text];
             const lines = [];
@@ -1348,7 +1374,8 @@
                                 });
                                 if (!response.ok) throw new Error("TTS generation failed");
                                 const mp3Blob = await response.blob();
-                                audioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
+                                const rawBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
+                                audioBuffer = trimAudioBuffer(rawBuffer);
                                 actualDur = audioBuffer.duration;
                             } catch (e) {
                                 const offlineCtx = new OfflineAudioContext(1, 24000, 24000);
@@ -1464,8 +1491,8 @@
                 for (let i = 0; i < processedChunks.length; i++) {
                     const chunk = processedChunks[i];
 
-                    // စကားမပြောသော ကြားအပိုင်း (Gap) ရှိပါက မူရင်း Speed (1.0x) အတိုင်း ဆက်လက် run စေခြင်း
-                    if (chunk.vStart > currentVTime + 0.05) {
+                    // စကားမပြောသော ကြားအပိုင်း (Gap) မပျောက်စေရန်
+                    if (chunk.vStart > currentVTime + 0.02) {
                         const gapDuration = chunk.vStart - currentVTime;
                         syncTimeline.push({
                             type: 'gap',
@@ -1482,21 +1509,24 @@
                         currentVTime = chunk.vStart;
                     }
 
-                    // စကားပြောခန်း (Dialogue) ဖြစ်ပါက အသံကြာချိန်နှင့်အညီ ဗီဒီယို speed အနှေးအမြန် ချိန်ညှိခြင်း
+                    // TTS အသံကြာချိန်နှင့် ဗီဒီယိုပြကွက် အစ/အဆုံး ကွက်တိဖြစ်စေမည့် Speed တွက်ချက်ခြင်း
                     const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    const calculatedSpeed = Math.max(0.35, Math.min(2.0, vDuration / chunk.audioDur));
+                    const calculatedSpeed = Math.max(0.4, Math.min(2.0, vDuration / chunk.audioDur));
+                    const segmentRealDur = vDuration / calculatedSpeed;
+
                     syncTimeline.push({
                         type: 'narrate',
                         startReal: currentRealTime,
-                        endReal: currentRealTime + chunk.audioDur,
+                        endReal: currentRealTime + segmentRealDur,
                         vStart: chunk.vStart,
                         vEnd: chunk.vEnd,
                         vSpeed: calculatedSpeed,
                         text: chunk.text,
                         audioBuffer: chunk.audioBuffer,
-                        durationReal: chunk.audioDur
+                        durationReal: segmentRealDur
                     });
-                    currentRealTime += chunk.audioDur;
+
+                    currentRealTime += segmentRealDur;
                     currentVTime = chunk.vEnd;
                 }
 
@@ -1666,32 +1696,39 @@
                                 return;
                             }
 
-                            const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
-
-                            if (currentEvent) {
-                                activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
-                                // --- Realtime Smart Audio Ducking Control ---
+                            // --- ဗီဒီယို စက္ကန့်ပေါ် အခြေခံသည့် တိကျသော Smart Audio Ducking (မူရင်းအသံ လုံးဝ မပေါက်ကြားစေရန်) ---
                             if (currentView === 'recap' && preserveOriginalAudio && vidGainNode) {
-                                if (currentEvent && currentEvent.type === 'narrate') {
-                                    // စကားပြောခန်းတွင် မူရင်းအသံကို ၅% (0.05) သို့ ညင်သာစွာ လျှော့ချခြင်း
-                                    vidGainNode.gain.setTargetAtTime(0.05, playAudioCtx.currentTime, 0.05);
+                                const isDialogueNow = syncTimeline.some(e => 
+                                    e.type === 'narrate' && 
+                                    video.currentTime >= (e.vStart - 0.05) && 
+                                    video.currentTime <= (e.vEnd + 0.05)
+                                );
+
+                                if (isDialogueNow) {
+                                    // စကားပြောခန်းရောက်လျှင် မူရင်းအသံကို ၅% သို့ ချက်ချင်း ညှပ်ချမည်
+                                    vidGainNode.gain.setTargetAtTime(0.05, playAudioCtx.currentTime, 0.02);
                                 } else {
-                                    // စကားမပြောသော အခန်းများတွင် မူရင်း BGM/SFX ကို ၁၀၀% (1.0) အပြည့် ချက်ချင်း ပြန်တင်ခြင်း
+                                    // စကားမပြောသော အခန်းများတွင်သာ မူရင်းအသံကို ၁၀၀% ပြန်တင်မည်
                                     vidGainNode.gain.setTargetAtTime(1.0, playAudioCtx.currentTime, 0.05);
                                 }
                             }
+
+                            // --- Segment Speed & Lip-Sync တိကျစွာ ထိန်းချုပ်ခြင်း ---
+                            const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
+                            if (currentEvent) {
+                                activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
                                 if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
                                     currentEventIndex = syncTimeline.indexOf(currentEvent);
                                     video.playbackRate = currentEvent.vSpeed;
 
+                                    // Drift Tolerance ကို ၀.၀၈ စက္ကန့်ဖြင့် တိကျစွာ ညှိယူခြင်း
                                     const expectedVTime = currentEvent.vStart + ((elapsedSec - currentEvent.startReal) * currentEvent.vSpeed);
-                                    if (Math.abs(video.currentTime - expectedVTime) > 0.8) {
+                                    if (Math.abs(video.currentTime - expectedVTime) > 0.08) {
                                         video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
                                     }
                                 }
                             } else {
                                 activeText = "";
-                                if (vidGainNode) vidGainNode.gain.setTargetAtTime(1.0, playAudioCtx.currentTime, 0.05);
                             }
 
                             let zoom = 1.0;
