@@ -619,7 +619,8 @@
             const [ttsStyleObj, setTtsStyleObj] = useState(VOICE_STYLES[0]);
             const [isTtsGenerating, setIsTtsGenerating] = useState(false);
 
-            const [storeProducts, setStoreProducts] = useState([]);
+            const [storeProducts, setStoreProducts] = useState(() => getSafeStorage('cachedStoreProducts', []));
+            const [storeLoading, setStoreLoading] = useState(false);
             const [selectedProduct, setSelectedProduct] = useState(null);
             const [selectedVariant, setSelectedVariant] = useState(null);
             const [activeProductImageIndex, setActiveProductImageIndex] = useState({});
@@ -883,6 +884,7 @@
 
             useEffect(() => {
                 loadPublicSettings();
+                loadStore();
 
                 if (user && sessionToken) { 
                     fetchUserData(user.email); 
@@ -2600,7 +2602,20 @@ Format strictly as JSON ONLY:
                 }
             };
 
-            const loadStore = async () => { try { const r = await fetch('/api/products'); const d = await r.json(); setStoreProducts(d.products || []); } catch (e) {} };
+            const loadStore = async () => { 
+                try { 
+                    if (storeProducts.length === 0) setStoreLoading(true);
+                    const r = await fetch('/api/products'); 
+                    const d = await r.json(); 
+                    if (d.products) {
+                        setStoreProducts(d.products);
+                        setSafeStorage('cachedStoreProducts', d.products);
+                    }
+                } catch (e) {
+                } finally {
+                    setStoreLoading(false);
+                }
+            };
             const loadHistory = async () => { if (!user) return; try { const [h, c] = await Promise.all([apiFetch('/api/history/videos'), apiFetch('/api/credit-history')]); setHistoryItems((await h.json()).items || []); setCreditHistory((await c.json()).transactions || []); } catch (e) {} };
             const loadAdminData = async () => {
                 try {
@@ -4073,6 +4088,12 @@ Format strictly as JSON ONLY:
                             <div className="space-y-6">
                                 <h2 className="text-2xl font-bold flex items-center gap-3"><StoreIcon className="w-6 h-6 text-amber-500"/> Online & Game Store</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    {storeLoading && storeProducts.length === 0 && (
+                                    <div className="col-span-full py-16 text-center opacity-60">
+                                        <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-amber-500" />
+                                        <p className="text-xs">Product စာရင်းများ ရယူနေပါသည်...</p>
+                                    </div>
+                                )}
                                     {storeProducts.map(p => {
                                         const images = p.image_urls && p.image_urls.length > 0 ? p.image_urls : (p.image_url ? [p.image_url] : []);
                                         const activeIdx = activeProductImageIndex[p.id] || 0;
