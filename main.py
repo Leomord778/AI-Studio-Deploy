@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Any, List
 from pathlib import Path
 from contextlib import asynccontextmanager
+import urllib.parse
 from urllib.parse import unquote
 
 from fastapi import FastAPI, Request, BackgroundTasks, UploadFile, File, Form, Response, HTTPException
@@ -2052,6 +2053,8 @@ async def proxy_download_file(url: str, title: str = "TikTok_Video"):
 # --- SECURE & HIGH-SPEED TIKTOK DOWNLOADER ENGINE ---
 @app.post("/api/downloader/inspect")
 async def inspect_video(request: Request):
+    import urllib.parse
+
     try:
         body = await request.json()
         raw_url = (body.get("url") or "").strip()
@@ -2061,7 +2064,7 @@ async def inspect_video(request: Request):
     if not raw_url:
         raise HTTPException(status_code=400, detail="Video Link ထည့်သွင်းပေးပါ")
 
-    # ၁။ စာလုံးကြီး/စာလုံးသေး (Https://, HTTP://) နှင့် စာသားများကြားမှ URL အစစ်ကို ဆွဲထုတ်ခြင်း
+    # စာလုံးကြီး/စာလုံးသေး (Https://, HTTP://) နှင့် စာသားများကြားမှ URL အစစ်ကို ဆွဲထုတ်ခြင်း
     match = re.search(r'(https?://[^\s]+)', raw_url, re.IGNORECASE)
     video_url = match.group(1).rstrip(")]>,;\"'") if match else raw_url.strip()
 
@@ -2071,27 +2074,12 @@ async def inspect_video(request: Request):
     elif video_url.lower().startswith("http://"):
         video_url = "http://" + video_url[7:]
 
-    # ၂။ vt.tiktok.com / vm.tiktok.com ကဲ့သို့သော Link အတိုများကို Full URL အဖြစ် Redirect ဖြည်ယူခြင်း
-    if "vt.tiktok.com" in video_url.lower() or "vm.tiktok.com" in video_url.lower():
-        try:
-            redirect_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            }
-            async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as redirect_client:
-                r_resp = await redirect_client.get(video_url, headers=redirect_headers)
-                resolved_url = str(r_resp.url)
-                if "tiktok.com" in resolved_url:
-                    video_url = resolved_url.split("?")[0] # Tracking query parameters များကို ဖြုတ်ပစ်ခြင်း
-        except Exception as e:
-            print(f"[Short Link Expansion Warning]: {e}")
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-        "Accept": "*/*"
+        "Accept": "application/json, text/plain, */*"
     }
 
-    # အဆင့် ၁ - TikWM API (POST Method)
+    # အဆင့် ၁ - TikWM API (POST Method - vt.tiktok.com ကို တိုက်ရိုက်နားလည်သည်)
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.post("https://www.tikwm.com/api/", data={"url": video_url, "hd": 1}, headers=headers)
@@ -2101,6 +2089,7 @@ async def inspect_video(request: Request):
                     v_data = data["data"]
                     title = v_data.get("title") or "TikTok_Video"
 
+                    # Photo Slideshow ဖြစ်နေပါက
                     if v_data.get("images") and isinstance(v_data["images"], list) and len(v_data["images"]) > 0:
                         return {
                             "status": "picker",
@@ -2113,16 +2102,15 @@ async def inspect_video(request: Request):
                     if stream_url:
                         if stream_url.startswith("/"):
                             stream_url = f"https://www.tikwm.com{stream_url}"
-                        import urllib.parse
                         proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
                         return {"stream_url": proxied_dl, "title": f"{title[:50]}.mp4", "status": "success"}
     except Exception as e:
         print(f"[TikWM POST Error]: {e}")
 
-    # အဆင့် ၂ - TikWM API (GET Method ဖြင့် အရန်စစ်ဆေးခြင်း)
+    # အဆင့် ၂ - TikWM API (GET Method - Params ဖြင့် လုံခြုံစွာ ခေါ်ယူခြင်း)
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(f"https://www.tikwm.com/api/?url={urllib.parse.quote(video_url)}&hd=1", headers=headers)
+            resp = await client.get("https://www.tikwm.com/api/", params={"url": video_url, "hd": 1}, headers=headers)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("code") == 0 and "data" in data:
@@ -2132,7 +2120,6 @@ async def inspect_video(request: Request):
                     if stream_url:
                         if stream_url.startswith("/"):
                             stream_url = f"https://www.tikwm.com{stream_url}"
-                        import urllib.parse
                         proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
                         return {"stream_url": proxied_dl, "title": f"{title[:50]}.mp4", "status": "success"}
     except Exception as e:
@@ -2141,14 +2128,13 @@ async def inspect_video(request: Request):
     # အဆင့် ၃ - Tiklydown Fallback API
     try:
         async with httpx.AsyncClient(verify=False, timeout=15.0, follow_redirects=True) as client:
-            res = await client.get(f"https://api.tiklydown.eu.org/api/download?url={urllib.parse.quote(video_url)}", headers=headers)
+            res = await client.get("https://api.tiklydown.eu.org/api/download", params={"url": video_url}, headers=headers)
             if res.status_code == 200:
                 data = res.json()
                 video_obj = data.get("video", {})
                 stream_url = video_obj.get("noWatermark") or video_obj.get("watermark")
                 title = data.get("title") or "TikTok_Video"
                 if stream_url:
-                    import urllib.parse
                     proxied_dl = f"/api/downloader/proxy-file?url={urllib.parse.quote(stream_url)}&title={urllib.parse.quote(title)}"
                     return {"stream_url": proxied_dl, "title": f"{title[:50]}.mp4", "status": "success"}
     except Exception as e:
