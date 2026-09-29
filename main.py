@@ -1691,6 +1691,7 @@ async def translate_recap_segments(request: Request):
     batch = body.get("batch", [])
     mode = body.get("mode", "original")  # "own" သို့မဟုတ် "original"
     target_lang = body.get("target_lang", "မြန်မာ (Myanmar)")
+    user_gemini_key = (body.get("user_key") or "").strip()  # User ကိုယ်ပိုင် Key
 
     if not batch:
         return {"status": "success", "data": []}
@@ -1717,13 +1718,36 @@ async def translate_recap_segments(request: Request):
         user_msg = f"Translate this dialogue JSON array strictly into {target_lang}:\n" + json.dumps(batch, ensure_ascii=False)
         temperature = 0.2
 
-    messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": user_msg}
-    ]
+    reply_text = ""
 
-    # Universal AI (Codecraft / Chat B.ai / Groq / Gemini) ဆာဗာကီးများဖြင့် အလိုအလျောက် ခေါ်ယူခြင်း
-    reply_text = await call_universal_ai(messages, temperature=temperature)
+    # နည်းလမ်း ၁: User က ကိုယ်ပိုင် Key သုံးထားပါက User Key ဖြင့် လျှို့ဝှက် Prompt ကို ဆာဗာမှ ပေါင်းစပ်၍ တိုက်ရိုက် Run ခြင်း
+    if user_gemini_key:
+        try:
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={user_gemini_key}"
+            payload = {
+                "contents": [{"parts": [{"text": user_msg}]}],
+                "systemInstruction": {"parts": [{"text": sys_prompt}]},
+                "generationConfig": {"temperature": temperature, "responseMimeType": "application/json"}
+            }
+            async with httpx.AsyncClient(timeout=90.0) as client_http:
+                resp = await client_http.post(gemini_url, json=payload, headers={"Content-Type": "application/json"})
+                if resp.status_code == 200:
+                    res_data = resp.json()
+                    reply_text = res_data["candidates"][0]["content"]["parts"][0]["text"]
+                else:
+                    raise Exception(f"HTTP {resp.status_code}: {resp.text}")
+        except Exception as e:
+            print(f"[User Key Translate Error]: {e}")
+            raise HTTPException(status_code=400, detail=f"သင့် Gemini Key ဖြင့် ခေါ်ယူ၍ မရပါ: {str(e)}")
+
+    # နည်းလမ်း ၂: Server Key သုံးထားပါက ဆာဗာ၏ Universal AI ဖြင့် ခေါ်ယူခြင်း
+    if not reply_text:
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_msg}
+        ]
+        reply_text = await call_universal_ai(messages, temperature=temperature)
+
     clean_json_str = reply_text.strip()
     if clean_json_str.startswith("```"):
         clean_json_str = re.sub(r"^```(?:json)?\n?", "", clean_json_str, flags=re.IGNORECASE)
@@ -1765,13 +1789,15 @@ async def proxy_gemini(path: str, request: Request):
     client_key = query_params.get("key", "").strip()
     keys_to_try = []
     
+    # User ကိုယ်ပိုင် Key ထည့်သွင်းထားပါက User Key တစ်ခုတည်းကိုသာ သုံးမည် (Server Key များ လုံးဝမသုံးပါ)
     if client_key and not client_key.startswith("cc_"): 
-        keys_to_try.append(client_key)
-        
-    for _ in range(len(SERVER_GEMINI_KEYS)):
-        k = get_server_gemini_key()
-        if k and k not in keys_to_try and not k.startswith("cc_"): 
-            keys_to_try.append(k)
+        keys_to_try = [client_key]
+    else:
+        # User Key မပါမှသာ Server Key များဖြင့် fallback လုပ်မည်
+        for _ in range(len(SERVER_GEMINI_KEYS)):
+            k = get_server_gemini_key()
+            if k and k not in keys_to_try and not k.startswith("cc_"): 
+                keys_to_try.append(k)
 
     body_bytes = await request.body()
     last_res = None
@@ -1793,7 +1819,7 @@ async def proxy_gemini(path: str, request: Request):
 
     if last_res is not None:
         return Response(content=last_res.content, status_code=last_res.status_code, media_type="application/json")
-    return JSONResponse(status_code=500, content={"error": "Server Gemini API Error"})
+    return JSONResponse(status_code=500, content={"error": "Gemini API Error (Key အား စစ်ဆေးပေးပါ)"})
 
 def get_groq_pool_keys() -> list[str]:
     doc = settings_col.find_one({"key": "groq_api_keys_pool"})
