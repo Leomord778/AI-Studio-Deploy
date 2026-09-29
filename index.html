@@ -256,97 +256,6 @@
             audioCtx.close();
             return trimmedBuffer;
         }
-        // Pitch/Tone မပျက်စေဘဲ အသံ Speed ကို Studio အဆင့် တင်ပေးသည့် စနစ် (FFmpeg WASM atempo)
-        const changeAudioSpeedPitchPreserved = async (audioBuffer, speed = 1.0) => {
-            if (!audioBuffer || Math.abs(speed - 1.0) < 0.02) return audioBuffer;
-            try {
-                const ffmpeg = ffmpegRef.current;
-                const wavBlob = exportWAV(audioBuffer.getChannelData(0), audioBuffer.sampleRate);
-                const fileId = Math.random().toString(36).substring(7);
-                const inName = `speed_in_${fileId}.wav`;
-                const outName = `speed_out_${fileId}.wav`;
-
-                await ffmpeg.writeFile(inName, await window.FFmpegUtil.fetchFile(wavBlob));
-                const tempo = Math.max(0.5, Math.min(2.0, speed)).toFixed(2);
-                await runFFmpeg(['-i', inName, '-filter:a', `atempo=${tempo}`, outName]);
-
-                const outData = await ffmpeg.readFile(outName);
-                try { await ffmpeg.deleteFile(inName); } catch(e){}
-                try { await ffmpeg.deleteFile(outName); } catch(e){}
-
-                const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const bufferToDecode = outData.buffer.slice(outData.byteOffset, outData.byteOffset + outData.byteLength);
-                const spedUpBuffer = await tempCtx.decodeAudioData(bufferToDecode);
-                tempCtx.close();
-                return spedUpBuffer;
-            } catch (err) {
-                console.warn("Speed adjustment warning:", err);
-                return audioBuffer;
-            }
-        };
-        // Gemini အသံဖိုင်ကြီးမှ စာကြောင်းအလိုက် Silence/Pause ရှာဖွေပြီး သန့်ရှင်းစွာ ဖြတ်ပေးမည့် စနစ်
-        function sliceAudioBySentenceRatios(audioBuffer, blocks, tempAudioCtx) {
-            const totalDuration = audioBuffer.duration;
-            const sampleRate = audioBuffer.sampleRate;
-            const channelData = audioBuffer.getChannelData(0);
-            const totalSamples = channelData.length;
-
-            const textLengths = blocks.map(b => Math.max(1, (b.text || "").trim().length));
-            const totalLength = textLengths.reduce((a, b) => a + b, 0);
-            const weights = textLengths.map(l => l / totalLength);
-
-            let accumulatedWeight = 0;
-            const idealSplitTimes = [];
-            for (let i = 0; i < blocks.length - 1; i++) {
-                accumulatedWeight += weights[i];
-                idealSplitTimes.push(accumulatedWeight * totalDuration);
-            }
-
-            const splitSampleIndices = [0];
-            const searchWindowSec = 0.8;
-            const step = Math.floor(sampleRate * 0.02); // 20ms
-            const windowSize = Math.floor(sampleRate * 0.06); // 60ms
-
-            for (const splitTime of idealSplitTimes) {
-                const centerSample = Math.floor(splitTime * sampleRate);
-                const searchStart = Math.max(0, centerSample - Math.floor(searchWindowSec * sampleRate));
-                const searchEnd = Math.min(totalSamples - windowSize, centerSample + Math.floor(searchWindowSec * sampleRate));
-
-                let minEnergy = Infinity;
-                let bestSample = centerSample;
-
-                for (let s = searchStart; s < searchEnd; s += step) {
-                    let energy = 0;
-                    for (let k = 0; k < windowSize; k += 4) {
-                        energy += Math.abs(channelData[s + k]);
-                    }
-                    if (energy < minEnergy) {
-                        minEnergy = energy;
-                        bestSample = s + Math.floor(windowSize / 2);
-                    }
-                }
-                splitSampleIndices.push(bestSample);
-            }
-            splitSampleIndices.push(totalSamples);
-
-            const slices = [];
-            for (let i = 0; i < blocks.length; i++) {
-                const startS = splitSampleIndices[i];
-                const endS = Math.max(startS + 1, splitSampleIndices[i + 1]);
-                const len = endS - startS;
-
-                const sliceBuf = tempAudioCtx.createBuffer(
-                    audioBuffer.numberOfChannels,
-                    len,
-                    sampleRate
-                );
-                for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
-                    sliceBuf.copyToChannel(audioBuffer.getChannelData(c).subarray(startS, endS), c);
-                }
-                slices.push(sliceBuf);
-            }
-            return slices;
-        }
         function wrapMyanmarText(ctx, text, maxWidth) {
             const words = text.includes(' ') ? text.split(' ') : text.match(/.{1,10}/g) || [text];
             const lines = [];
@@ -1322,7 +1231,8 @@
                     return null;
                 }
             };
-            
+            // ၃ မိနစ် (180s) စာ Blocks များအား စုစည်းပြီး တစ်သုတ်စီ ဘာသာပြန်ခြင်း
+            // Prompt များကို Backend ထဲ ဝှက်သိမ်းထားပြီး User တိုင်း Server Key သုံးနိုင်စေမည့် စနစ်
             const performTranslation = async (originalSrt, modeOverride = null, forceOwnKey = false) => {
                 const activeMode = modeOverride || recapMode;
                 setProgressStage(activeMode === 'own' ? "ဇာတ်လမ်းပြော စတိုင် Script ထုတ်နေပါသည်" : "ဘာသာပြန် script ထုတ်နေပါသည်");
@@ -1347,39 +1257,51 @@
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
 
-                // User ၏ ကိုယ်ပိုင် Gemini Key (ရှိပါက လုံခြုံစွာ ယူဆောင်ခြင်း)
-                const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
-                const userKeyToSend = (videoKeyMode === 'own' || forceOwnKey) ? (validUserKeys[activeKeyIndex % (validUserKeys.length || 1)] || '') : '';
-
                 for (let i = 0; i < batches.length; i++) {
                     const batch = batches[i];
                     let translatedBatch = null;
 
-                    // ဆာဗာ Backend သို့ တိုက်ရိုက်ပို့ခြင်း (Prompt အားလုံး Backend တွင်သာ လုံခြုံစွာ ဝှက်ထားသည်)
-                    try {
-                        const sRes = await apiFetch('/api/engine/translate-recap', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                batch: batch,
-                                mode: activeMode,
-                                target_lang: selectedLang,
-                                user_key: userKeyToSend
-                            })
-                        });
-
-                        if (sRes.ok) {
-                            const sData = await sRes.json();
-                            if (sData.data && Array.isArray(sData.data)) {
-                                translatedBatch = sData.data;
+                    // ၁။ Server Key ဖြင့် ဆာဗာသို့ တိုက်ရိုက်လှမ်းခေါ်ခြင်း (User တိုင်း ၁၀၀% အောင်မြင်မည်၊ Prompt ကိုလည်း ဖုံးကွယ်ထားသည်)
+                    if (!forceOwnKey) {
+                        try {
+                            const sRes = await apiFetch('/api/engine/translate-recap', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    batch: batch,
+                                    mode: activeMode,
+                                    target_lang: selectedLang
+                                })
+                            });
+                            if (sRes.ok) {
+                                const sData = await sRes.json();
+                                if (sData.data && Array.isArray(sData.data)) {
+                                    translatedBatch = sData.data;
+                                }
+                            } else {
+                                throw new Error("Server AI Error");
                             }
-                        } else {
-                            const errData = await sRes.json();
-                            throw new Error(errData.detail || "Translation request failed");
+                        } catch (sErr) {
+                            addSysLog(`Server AI ချိတ်ဆက်မှု အဆင်မပြေပါ: ${sErr.message}`);
                         }
-                    } catch (sErr) {
-                        addSysLog(`ဘာသာပြန်မှု အဆင်မပြေပါ: ${sErr.message}`);
-                        throw sErr;
+                    }
+
+                    // ၂။ User က ကိုယ်ပိုင် Key ရွေးထားပါက သို့မဟုတ် Server မရတော့မှသာ User Gemini Key သို့ Fallback လုပ်မည်
+                    if (!translatedBatch) {
+                        translatedBatch = await executeWithApiLogic("Translation", async (apiKey) => {
+                            const fallbackSysPrompt = `Translate dialogue line by line into ${selectedLang}. Keep id, start, end identical. Return JSON array with keys: id, start, end, text.`;
+                            const payload = {
+                                contents: [{ parts: [{ text: JSON.stringify(batch) }] }],
+                                systemInstruction: { parts: [{ text: fallbackSysPrompt }] },
+                                generationConfig: { temperature: activeMode === 'own' ? 0.6 : 0.2, responseMimeType: "application/json" }
+                            };
+                            const url = apiKey 
+                                ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` 
+                                : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
+                            const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            const data = await res.json();
+                            return JSON.parse(parseGeminiCandidateText(data));
+                        });
                     }
 
                     for (let j = 0; j < batch.length; j++) {
@@ -1399,16 +1321,17 @@
                 return allTranslated;
             };
 
-            // Edge TTS နှင့် Gemini TTS (1-Min Window + Silence Slicing စနစ်ဖြင့် Quota အလွန်သက်သာစေခြင်း)
+            // Edge TTS (2 Parallel Chunks) နှင့် Gemini TTS (1-Min Window Slicing) + Silent Gaps ထိန်းသိမ်းခြင်း
             const performTTSGeneration = async (translatedBlocks) => {
                 setProgressStage("Voiceover ထုတ်နေပါသည်");
-                addSysLog(`${recapEngine === 'edge' ? 'Edge TTS' : 'Gemini Studio TTS (Quota-Saving Engine)'} ဖြင့် အသံဖိုင် ထုတ်ယူနေပါသည်...`);
+                addSysLog(`${recapEngine === 'edge' ? 'Edge TTS (2 Chunks Parallel)' : 'Gemini TTS (1-Min Window Slicing)'} ဖြင့် အသံထုတ်ယူနေပါသည်...`);
                 
                 const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 let processedChunks = [];
 
                 if (recapEngine === 'voice_clone') {
-                    if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် Reference Audio တင်ပေးပါခင်ဗျာ");
+                    if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် စံနမူနာ အသံဖိုင် (Reference Audio) တင်ပေးပါ သို့မဟုတ် Mic ဖြင့် အသံသွင်းပေးပါခင်ဗျာ");
+                    
                     for (let i = 0; i < translatedBlocks.length; i++) {
                         const block = translatedBlocks[i];
                         const fd = new FormData();
@@ -1416,10 +1339,12 @@
                         fd.append("reference_audio", cloneAudioFile);
 
                         const res = await apiFetch('/api/voice-clone/tts', { method: 'POST', body: fd });
-                        if (!res.ok) throw new Error("Voice Clone မအောင်မြင်ပါ");
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || "Colab Voice Clone အသံထုတ်မရပါ");
+                        }
                         const audioBlob = await res.blob();
-                        let audioBuffer = await tempAudioCtx.decodeAudioData(await audioBlob.arrayBuffer());
-                        audioBuffer = await changeAudioSpeedPitchPreserved(audioBuffer, voiceSpeed);
+                        const audioBuffer = await tempAudioCtx.decodeAudioData(await audioBlob.arrayBuffer());
 
                         processedChunks.push({
                             vStart: block.start,
@@ -1428,8 +1353,10 @@
                             audioBuffer: audioBuffer,
                             audioDur: audioBuffer.duration
                         });
+                        setRenderProgress(Math.min(60, Math.floor(45 + ((i + 1) / translatedBlocks.length) * 15)));
                     }
                 } else if (recapEngine === 'edge') {
+                    // Edge TTS: တစ်ကြိမ်လျှင် ၂ ခုစီ Parallel ပြိုင်တူထုတ်ယူခြင်း
                     for (let i = 0; i < translatedBlocks.length; i += 2) {
                         const pair = translatedBlocks.slice(i, i + 2);
                         const results = await Promise.all(pair.map(async (block) => {
@@ -1444,10 +1371,10 @@
                                     body: JSON.stringify({
                                         text: text,
                                         voice: recapVoice,
-                                        rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%`
+                                        rate: `${Math.round((voiceSpeed * 1.15 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.15 - 1.0) * 100)}%`
                                     })
                                 });
-                                if (!response.ok) throw new Error("Edge TTS error");
+                                if (!response.ok) throw new Error("TTS generation failed");
                                 const mp3Blob = await response.blob();
                                 const rawBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
                                 audioBuffer = trimAudioBuffer(rawBuffer);
@@ -1455,6 +1382,7 @@
                             } catch (e) {
                                 const offlineCtx = new OfflineAudioContext(1, 24000, 24000);
                                 audioBuffer = offlineCtx.createBuffer(1, 24000, 24000);
+                                actualDur = Math.max(0.5, block.end - block.start);
                             }
 
                             return {
@@ -1470,95 +1398,92 @@
                         setRenderProgress(Math.min(60, Math.floor(45 + ((i + pair.length) / translatedBlocks.length) * 15)));
                     }
                 } else {
-                    // Gemini TTS Engine (စက္ကန့် ၅၀ ~ ၆၀ စာ Window ဖြင့် စုထုတ်သဖြင့် Quota အလွန်သက်သာသည်)
-                    const ttsBatches = [];
-                    let curBatch = [];
-                    let curDur = 0;
+                    // Gemini TTS: ၀ မှ ၁ မိနစ် (၆၀ စက္ကန့်) Window Slicing ပုံစံ
+                    const timeGroups = [];
+                    let curGroup = [];
+                    let groupStartTime = translatedBlocks[0]?.start || 0;
 
                     for (const b of translatedBlocks) {
-                        const bDur = Math.max(1, b.end - b.start);
-                        if (curBatch.length > 0 && (curDur + bDur > 55 || curBatch.length >= 7)) {
-                            ttsBatches.push(curBatch);
-                            curBatch = [b];
-                            curDur = bDur;
+                        if (curGroup.length > 0 && (b.end - groupStartTime > 60)) {
+                            timeGroups.push(curGroup);
+                            curGroup = [b];
+                            groupStartTime = b.start;
                         } else {
-                            curBatch.push(b);
-                            curDur += bDur;
+                            if (curGroup.length === 0) groupStartTime = b.start;
+                            curGroup.push(b);
                         }
                     }
-                    if (curBatch.length > 0) ttsBatches.push(curBatch);
+                    if (curGroup.length > 0) timeGroups.push(curGroup);
 
-                    const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
-                    const currentOwnKey = validUserKeys[activeKeyIndex % (validUserKeys.length || 1)] || '';
+                    for (let g = 0; g < timeGroups.length; g++) {
+                        const group = timeGroups[g];
+                        const combinedText = group.map(b => b.text).join(" ... ");
 
-                    for (let bIdx = 0; bIdx < ttsBatches.length; bIdx++) {
-                        const batch = ttsBatches[bIdx];
-                        // စကားတစ်ကြောင်းနှင့် တစ်ကြောင်းကြား သဘာဝကျကျ အသက်ရှူရပ်နားရန် ပုဒ်ဖြတ်ပုဒ်ရပ် ထည့်သွင်းခြင်း
-                        const combinedBatchText = batch.map(b => b.text.trim().replace(/[။၊,.!?]+$/, '') + "။").join(" ");
-
-                        let batchRawBuffer = null;
+                        let groupBuffer = null;
                         try {
-                            const payload = {
-                                contents: [{ parts: [{ text: combinedBatchText }] }],
-                                generationConfig: { 
-                                    responseModalities: ["AUDIO"], 
-                                    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: recapVoice } } } 
+                            await executeWithApiLogic("Gemini 1-Min TTS", async (apiKey) => {
+                                const payload = {
+                                    contents: [{ parts: [{ text: combinedText }] }],
+                                    generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: recapVoice } } } }
+                                };
+                                const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
+                                const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                const data = await res.json();
+                                const pcmBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+                                if (!pcmBase64) throw new Error("Audio missing");
+
+                                const bin = atob(pcmBase64);
+                                const bytes = new Uint8Array(bin.length);
+                                for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+                                const count = Math.floor(bytes.length / 2);
+                                
+                                const offlineCtx = new OfflineAudioContext(1, count, 24000);
+                                groupBuffer = offlineCtx.createBuffer(1, count, 24000);
+                                const out = groupBuffer.getChannelData(0);
+                                for (let k = 0; k < count; k++) {
+                                    const idx = k * 2;
+                                    const int16 = (bytes[idx + 1] << 8) | bytes[idx];
+                                    out[k] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0;
                                 }
-                            };
-
-                            const keyQuery = (videoKeyMode === 'own' && currentOwnKey) ? `?key=${currentOwnKey}` : '';
-                            const url = `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent${keyQuery}`;
-
-                            const res = await apiFetch(url, { 
-                                method: 'POST', 
-                                headers: { 'Content-Type': 'application/json' }, 
-                                body: JSON.stringify(payload) 
                             });
-                            const data = await res.json();
-                            const pcmBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-                            if (!pcmBase64) throw new Error("Audio missing");
-
-                            const bin = atob(pcmBase64);
-                            const bytes = new Uint8Array(bin.length);
-                            for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
-                            const count = Math.floor(bytes.length / 2);
-
-                            const offlineCtx = new OfflineAudioContext(1, count, 24000);
-                            const gBuf = offlineCtx.createBuffer(1, count, 24000);
-                            const out = gBuf.getChannelData(0);
-                            for (let k = 0; k < count; k++) {
-                                const idx = k * 2;
-                                const int16 = (bytes[idx + 1] << 8) | bytes[idx];
-                                out[k] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0;
-                            }
-                            batchRawBuffer = gBuf;
                         } catch (e) {
-                            console.error("Gemini batch TTS error", e);
-                            const offlineCtx = new OfflineAudioContext(1, 24000 * 5, 24000);
-                            batchRawBuffer = offlineCtx.createBuffer(1, 24000 * 5, 24000);
+                            const offlineCtx = new OfflineAudioContext(1, 24000, 24000);
+                            groupBuffer = offlineCtx.createBuffer(1, 24000, 24000);
                         }
 
-                        // Pitch မပျက်ဘဲ Voice Speed တင်ခြင်း
-                        const spedBatchBuffer = await changeAudioSpeedPitchPreserved(batchRawBuffer, voiceSpeed);
-                        // အသံတိတ် Pause နေရာများကို ရှာဖွေပြီး စာကြောင်းအလိုက် တိကျစွာ ခွဲထုတ်ခြင်း
-                        const slices = sliceAudioBySentenceRatios(spedBatchBuffer, batch, tempAudioCtx);
+                        const totalChars = group.reduce((acc, b) => acc + (b.text?.length || 1), 0);
+                        let currentOffsetTime = 0;
 
-                        for (let k = 0; k < batch.length; k++) {
-                            const trimmedSlice = trimAudioBuffer(slices[k]);
+                        for (const b of group) {
+                            const ratio = (b.text?.length || 1) / totalChars;
+                            const segDur = Math.max(0.5, groupBuffer.duration * ratio);
+                            const sampleRate = groupBuffer.sampleRate;
+                            const startSample = Math.floor(currentOffsetTime * sampleRate);
+                            const endSample = Math.min(groupBuffer.length, Math.floor((currentOffsetTime + segDur) * sampleRate));
+                            const segSamples = Math.max(1, endSample - startSample);
+
+                            const segBuffer = tempAudioCtx.createBuffer(1, segSamples, sampleRate);
+                            const segData = segBuffer.getChannelData(0);
+                            const groupData = groupBuffer.getChannelData(0);
+                            for (let s = 0; s < segSamples; s++) {
+                                segData[s] = groupData[startSample + s] || 0;
+                            }
+
                             processedChunks.push({
-                                vStart: batch[k].start,
-                                vEnd: batch[k].end,
-                                text: batch[k].text,
-                                audioBuffer: trimmedSlice,
-                                audioDur: trimmedSlice.duration
+                                vStart: b.start,
+                                vEnd: b.end,
+                                text: b.text,
+                                audioBuffer: segBuffer,
+                                audioDur: segDur
                             });
+                            currentOffsetTime += segDur;
                         }
-
-                        setRenderProgress(Math.min(60, Math.floor(45 + ((bIdx + 1) / ttsBatches.length) * 15)));
+                        setRenderProgress(Math.min(60, Math.floor(45 + ((g + 1) / timeGroups.length) * 15)));
                     }
                 }
 
-                // --- အသံနှင့် ဗီဒီယိုကို လုံးဝမထပ်စေဘဲ စည်းချက်ညီစေမည့် Timeline ---
+                // --- Timestamp အတိုင်း အသံနှင့် ဗီဒီယို Speed တွက်ချက်သည့် Timeline စနစ် ---
+                // အသံမပါသော အပိုင်းများ (Silent Gaps) မပျောက်စေရန် Timeline ပြန်လည်တည်ဆောက်ခြင်း
                 processedChunks.sort((a, b) => a.vStart - b.vStart);
 
                 let currentRealTime = 0;
@@ -1568,8 +1493,8 @@
                 for (let i = 0; i < processedChunks.length; i++) {
                     const chunk = processedChunks[i];
 
-                    // စကားမပြောသော ကြားကာလ မူရင်းဗီဒီယိုအပိုင်းများ
-                    if (chunk.vStart > currentVTime + 0.05) {
+                    // စကားမပြောသော ကြားအပိုင်း (Gap) မပျောက်စေရန်
+                    if (chunk.vStart > currentVTime + 0.02) {
                         const gapDuration = chunk.vStart - currentVTime;
                         syncTimeline.push({
                             type: 'gap',
@@ -1586,13 +1511,10 @@
                         currentVTime = chunk.vStart;
                     }
 
+                    // TTS အသံကြာချိန်နှင့် ဗီဒီယိုပြကွက် အစ/အဆုံး ကွက်တိဖြစ်စေမည့် Speed တွက်ချက်ခြင်း
                     const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
-                    const audioDur = chunk.audioDur;
-
-                    // အသံမထပ်စေရန် စကားအဆုံး၌ သဘာဝကျသော အသက်ရှူရပ်နားချိန် (0.08s) ပေးခြင်း
-                    const segmentRealDur = Math.max(0.2, audioDur + 0.08);
-                    // ဗီဒီယိုသည် အသံကြာချိန်နှင့် အတိအကျ ကိုက်ညီအောင် အနှေး/အမြန် ညှိတင်မည်
-                    const calculatedSpeed = vDuration / segmentRealDur;
+                    const calculatedSpeed = Math.max(0.4, Math.min(2.0, vDuration / chunk.audioDur));
+                    const segmentRealDur = vDuration / calculatedSpeed;
 
                     syncTimeline.push({
                         type: 'narrate',
@@ -1614,7 +1536,6 @@
                 tempAudioCtx.close();
                 return { syncTimeline, totalAudioDur };
             };
-
             const renderToWebM = async (syncData, videoSrcUrl, meta) => {
                 return new Promise(async (resolve, reject) => {
                     let animFrameId = null;
@@ -1794,27 +1715,19 @@
                                 }
                             }
 
-                            // --- ဗီဒီယို မရပ်သွားစေဘဲ အသံနှင့် ကွက်တိ အနှေး/အမြန် ပြေးစေမည့် စနစ် ---
+                            // --- Segment Speed & Lip-Sync တိကျစွာ ထိန်းချုပ်ခြင်း ---
                             const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
                             if (currentEvent) {
                                 activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
                                 if (currentView === 'recap' && currentEventIndex !== syncTimeline.indexOf(currentEvent)) {
                                     currentEventIndex = syncTimeline.indexOf(currentEvent);
-                                    try {
-                                        video.playbackRate = Math.max(0.35, Math.min(2.5, currentEvent.vSpeed));
-                                    } catch(e){}
-                                }
+                                    video.playbackRate = currentEvent.vSpeed;
 
-                                
-                                const progressInEvent = Math.max(0, Math.min(1.0, (elapsedSec - currentEvent.startReal) / currentEvent.durationReal));
-                                const expectedVTime = currentEvent.vStart + (progressInEvent * (currentEvent.vEnd - currentEvent.vStart));
-
-                                if (Math.abs(video.currentTime - expectedVTime) > 0.12) {
-                                    video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
-                                }
-
-                                if (video.paused && !isFreezing) {
-                                    try { video.play(); } catch(e){}
+                                    // Drift Tolerance ကို ၀.၀၈ စက္ကန့်ဖြင့် တိကျစွာ ညှိယူခြင်း
+                                    const expectedVTime = currentEvent.vStart + ((elapsedSec - currentEvent.startReal) * currentEvent.vSpeed);
+                                    if (Math.abs(video.currentTime - expectedVTime) > 0.08) {
+                                        video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
+                                    }
                                 }
                             } else {
                                 activeText = "";
