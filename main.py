@@ -5,6 +5,7 @@ except Exception as e:
     print(f"[FFmpeg Setup Warning]: {e}")
 
 import os
+import re
 import httpx
 import math
 import tempfile
@@ -1683,19 +1684,26 @@ def parse_settings_keys(raw_val) -> list[str]:
             if raw_val.strip():
                 return [raw_val.strip()]
     return []
-# --- SECURE RECAP TRANSLATION ENGINE (HIDDEN PROMPTS IN BACKEND) ---
+
+# --- 🛡️ SECURE RECAP TRANSLATION ENGINE (MULTI-KEY ROTATION & HIDDEN PROMPTS) ---
 @app.post("/api/engine/translate-recap")
 async def translate_recap_segments(request: Request):
     get_request_email(request)  # 🔒 Login စစ်ဆေးခြင်း
     body = await request.json()
     batch = body.get("batch", [])
-    mode = body.get("mode", "original")  # "own" သို့မဟုတ် "original"
+    mode = body.get("mode", "original")  # "own" (Storytelling) သို့မဟုတ် "original"
     target_lang = body.get("target_lang", "မြန်မာ (Myanmar)")
+    
+    # User ထည့်ထားသော Keys များအားလုံးကို ဆွဲယူခြင်း
+    user_keys = body.get("user_keys") or []
+    single_key = (body.get("user_key") or "").strip()
+    if single_key and single_key not in user_keys:
+        user_keys.insert(0, single_key)
 
     if not batch:
         return {"status": "success", "data": []}
 
-    # 🛡️ AI Prompts များကို Backend ထဲတွင်သာ လုံခြုံစွာ ဝှက်သိမ်းထားခြင်း (Frontend တွင် လုံးဝမပေါ်ပါ)
+    # 🛡️ AI Prompts များကို Backend ထဲတွင်သာ လုံခြုံစွာ ဝှက်သိမ်းထားခြင်း
     if mode == "own":
         sys_prompt = (
             "You are a professional Movie Recap Narrator and captivating storyteller.\n"
@@ -1717,13 +1725,60 @@ async def translate_recap_segments(request: Request):
         user_msg = f"Translate this dialogue JSON array strictly into {target_lang}:\n" + json.dumps(batch, ensure_ascii=False)
         temperature = 0.2
 
-    messages = [
-        {"role": "system", "content": sys_prompt},
-        {"role": "user", "content": user_msg}
-    ]
+    reply_text = ""
 
-    # Universal AI (Codecraft / Chat B.ai / Groq / Gemini) ဆာဗာကီးများဖြင့် အလိုအလျောက် ခေါ်ယူခြင်း
-    reply_text = await call_universal_ai(messages, temperature=temperature)
+    # ၁။ User Keys များ ပါရှိပါက Key များကို တစ်ခုပြီးတစ်ခု Rotate ပြုလုပ်၍ ခေါ်ယူခြင်း
+    if user_keys:
+        MODELS_TO_TRY = ["gemini-2.5-flash", "gemini-2.0-flash"]
+        last_err = ""
+        success = False
+
+        for k_idx, current_key in enumerate(user_keys):
+            clean_k = current_key.strip()
+            if not clean_k:
+                continue
+
+            for model_name in MODELS_TO_TRY:
+                try:
+                    payload = {
+                        "contents": [{"parts": [{"text": user_msg}]}],
+                        "systemInstruction": {"parts": [{"text": sys_prompt}]},
+                        "generationConfig": {"temperature": temperature, "responseMimeType": "application/json"}
+                    }
+                    gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={clean_k}"
+                    async with httpx.AsyncClient(timeout=90.0) as client_http:
+                        resp = await client_http.post(
+                            gemini_url, 
+                            json=payload, 
+                            headers={"Content-Type": "application/json", "x-goog-api-key": clean_k}
+                        )
+                        if resp.status_code == 200:
+                            res_data = resp.json()
+                            reply_text = res_data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                            print(f"[User Key #{k_idx + 1} Success] Model: {model_name} ဖြင့် ဘာသာပြန် အောင်မြင်ပါသည်!")
+                            success = True
+                            break
+                        else:
+                            last_err = f"Key #{k_idx + 1} ({model_name}) HTTP {resp.status_code}: {resp.text}"
+                            print(f"[User Key #{k_idx + 1} {model_name} Warning]: {resp.status_code} -> နောက်တစ်ခုသို့ ကူးပါမည်...")
+                            continue
+                except Exception as e:
+                    last_err = str(e)
+                    continue
+
+            if success:
+                break
+
+        if not reply_text:
+            raise HTTPException(status_code=400, detail=f"User Keys အားလုံး မအောင်မြင်ပါ: {last_err}")
+    else:
+        # ၂။ Server Key ရွေးထားပါက Universal AI Pool (ဆာဗာကီးများ) ဖြင့်သာ ခေါ်ယူခြင်း
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_msg}
+        ]
+        reply_text = await call_universal_ai(messages, temperature=temperature)
+
     clean_json_str = reply_text.strip()
     if clean_json_str.startswith("```"):
         clean_json_str = re.sub(r"^```(?:json)?\n?", "", clean_json_str, flags=re.IGNORECASE)
@@ -1735,6 +1790,7 @@ async def translate_recap_segments(request: Request):
     except Exception as e:
         print(f"[Translate JSON Error]: {e} | Raw: {reply_text}")
         raise HTTPException(status_code=500, detail="AI အဖြေအား JSON format အဖြစ် ပြောင်းမရပါ")
+    
 @app.post("/api/engine/neural-compute")
 async def proxy_neural_compute(request: Request):
     get_request_email(request)
