@@ -1338,15 +1338,15 @@
                 return allTranslated;
             };
 
-            // 🎙 1.15x Base Speed, Pitch-Preserved Gemini TTS နှင့် အသံလုံးဝ မထပ်စေမည့် Master Timeline Sync
+            
             const performTTSGeneration = async (translatedBlocks) => {
                 setProgressStage("Voiceover ထုတ်နေပါသည်");
                 addSysLog(`${recapEngine === 'edge' ? 'Edge TTS (2 Chunks Parallel)' : 'Gemini Studio TTS'} ဖြင့် SRT Timestamps အတိုင်း အသံဖိုင် ထုတ်ယူနေပါသည်...`);
                 
                 const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 let processedChunks = [];
-                // 🌟 သာမန် Slider 1.0x ကို Base 1.15x အဖြစ် အလိုအလျောက် သတ်မှတ်ခြင်း (1.15 * voiceSpeed)
-                const effectiveSpeed = voiceSpeed * 1.15;
+                
+                const effectiveSpeed = voiceSpeed * 1.2;
 
                 if (recapEngine === 'voice_clone') {
                     if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် စံနမူနာ အသံဖိုင် (Reference Audio) တင်ပေးပါခင်ဗျာ");
@@ -2460,44 +2460,81 @@ Format strictly as JSON ONLY:
                             const hookText = hookMeta.hook_text || (isEn ? "Watch what happens next!" : "ဒီဇာတ်လမ်းရဲ့ မယုံနိုင်စရာ အလှည့်အပြောင်းကို ကြည့်လိုက်ပါ");
 
                             let hookAudioBuffer = null;
+                            const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                             try {
-                                const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                                 if (recapEngine === 'edge') {
                                     const voiceToUse = isEn ? 'en-US-ChristopherNeural' : recapVoice;
+                                    const edgeRatePct = Math.round((voiceSpeed - 1.0) * 100);
                                     const response = await apiFetch('/api/tts', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
                                         body: JSON.stringify({ 
                                             text: hookText, 
                                             voice: voiceToUse, 
-                                            rate: `${Math.round((voiceSpeed * 1.15 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.15 - 1.0) * 100)}%`
+                                            rate: `${edgeRatePct >= 0 ? '+' : ''}${edgeRatePct}%`
                                         })
                                     });
                                     const mp3Blob = await response.blob();
-                                    hookAudioBuffer = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
+                                    const rawBuf = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
+                                    hookAudioBuffer = trimAudioBuffer(rawBuf);
+                                } else {
+                                    // Gemini TTS ဖြင့် Hook အသံ ထုတ်ယူခြင်း
+                                    const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
+                                    const currentOwnKey = (videoKeyMode === 'own') ? (validUserKeys[activeKeyIndex % (validUserKeys.length || 1)] || '') : '';
+                                    const keyQuery = currentOwnKey ? `?key=${encodeURIComponent(currentOwnKey)}` : '';
+                                    const url = `/api/gemini/v1beta/models/gemini-2.0-flash:generateContent${keyQuery}`;
+
+                                    const payload = {
+                                        contents: [{ parts: [{ text: hookText }] }],
+                                        generationConfig: { 
+                                            responseModalities: ["AUDIO"], 
+                                            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: recapVoice } } } 
+                                        }
+                                    };
+                                    const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                    const data = await res.json();
+                                    const pcmBase64 = data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+                                    if (pcmBase64) {
+                                        const bin = atob(pcmBase64);
+                                        const bytes = new Uint8Array(bin.length);
+                                        for (let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+                                        const count = Math.floor(bytes.length / 2);
+                                        const offlineCtx = new OfflineAudioContext(1, count, 24000);
+                                        const rawBuf = offlineCtx.createBuffer(1, count, 24000);
+                                        const out = rawBuf.getChannelData(0);
+                                        for (let k = 0; k < count; k++) {
+                                            const idx = k * 2;
+                                            const int16 = (bytes[idx + 1] << 8) | bytes[idx];
+                                            out[k] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0;
+                                        }
+                                        hookAudioBuffer = await speedUpAudioBufferWithFFmpeg(trimAudioBuffer(rawBuf), voiceSpeed);
+                                    }
                                 }
-                                tempAudioCtx.close();
                             } catch (ttsErr) {
                                 console.warn("Hook TTS warning:", ttsErr);
+                            } finally {
+                                tempAudioCtx.close();
                             }
 
+                            const hookRealDuration = hookAudioBuffer ? Math.max(exactDuration, hookAudioBuffer.duration) : exactDuration;
+
                             renderTimelineData.syncTimeline.forEach(ev => {
-                                ev.startReal += exactDuration;
-                                ev.endReal += exactDuration;
+                                ev.startReal += hookRealDuration;
+                                ev.endReal += hookRealDuration;
                             });
 
                             renderTimelineData.syncTimeline.unshift({
                                 type: 'narrate',
                                 startReal: 0,
-                                endReal: exactDuration,
+                                endReal: hookRealDuration,
                                 vStart: hookMeta.start,
                                 vEnd: hookMeta.start + exactDuration,
-                                vSpeed: 1.0,
+                                vSpeed: exactDuration / hookRealDuration,
                                 text: hookText,
                                 audioBuffer: hookAudioBuffer,
-                                durationReal: exactDuration
+                                durationReal: hookRealDuration
                             });
-                            renderTimelineData.totalAudioDur += exactDuration;
+                            renderTimelineData.totalAudioDur += hookRealDuration;
                         }
                     }
 
@@ -2563,9 +2600,9 @@ Format strictly as JSON ONLY:
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ 
-    text: `မင်္ဂလာပါ။ ဒါကတော့ ${recapVoice} အသံနမူနာဖြစ်ပါတယ်။`, 
+    text: `မင်္ဂလာပါ။ ဒါကတော့ အသံနမူနာဖြစ်ပါတယ်။`, 
     voice: recapVoice, 
-    rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` 
+    rate: `${Math.round((voiceSpeed * 1.2 - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed * 1.2 - 1.0) * 100)}%` 
 })
                         });
                         const mp3 = await response.blob();
@@ -4033,24 +4070,34 @@ Format strictly as JSON ONLY:
                                                 const textToSpeak = ttsTextInput.trim();
 
                                                 if (ttsEngine === 'voice_clone') {
-    if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် စံနမူနာ အသံဖိုင် တင်ပေးပါ သို့မဟုတ် Mic ဖြင့် အသံသွင်းပါခင်ဗျာ");
-    const fd = new FormData();
-    fd.append("text", textToSpeak);
-    fd.append("reference_audio", cloneAudioFile);
+                                                    if (!cloneAudioFile) throw new Error("Voice Clone ပြုလုပ်ရန် စံနမူနာ အသံဖိုင် တင်ပေးပါ သို့မဟုတ် Mic ဖြင့် အသံသွင်းပါခင်ဗျာ");
+                                                    const fd = new FormData();
+                                                    fd.append("text", textToSpeak);
+                                                    fd.append("reference_audio", cloneAudioFile);
 
-    const res = await apiFetch('/api/voice-clone/tts', { method: 'POST', body: fd });
-    if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || "Colab Voice Clone အသံထုတ်မရပါ");
-    }
-    const audioBlob = await res.blob();
-    setTtsAudioUrl(URL.createObjectURL(audioBlob));
-    if (user) fetchUserData(user.email);
-} else if (ttsEngine === 'edge') {
+                                                    const res = await apiFetch('/api/voice-clone/tts', { method: 'POST', body: fd });
+                                                    if (!res.ok) {
+                                                        const errData = await res.json();
+                                                        throw new Error(errData.detail || "Colab Voice Clone အသံထုတ်မရပါ");
+                                                    }
+                                                    const audioBlob = await res.blob();
+                                                    const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+                                                    const decoded = await tempCtx.decodeAudioData(await audioBlob.arrayBuffer());
+                                                    const spedUp = await speedUpAudioBufferWithFFmpeg(decoded, voiceSpeed);
+                                                    tempCtx.close();
+                                                    const wavBlob = exportWAV(spedUp.getChannelData(0), spedUp.sampleRate);
+                                                    setTtsAudioUrl(URL.createObjectURL(wavBlob));
+                                                    if (user) fetchUserData(user.email);
+                                                } else if (ttsEngine === 'edge') {
+                                                    const edgeRatePct = Math.round((voiceSpeed - 1.0) * 100);
                                                     const res = await apiFetch('/api/tts', { 
                                                         method: 'POST', 
                                                         headers: { 'Content-Type': 'application/json' }, 
-                                                        body: JSON.stringify({ text: textToSpeak, voice: ttsVoice, rate: `${Math.round((voiceSpeed - 1.0) * 100) >= 0 ? '+' : ''}${Math.round((voiceSpeed - 1.0) * 100)}%` })
+                                                        body: JSON.stringify({ 
+                                                            text: textToSpeak, 
+                                                            voice: ttsVoice, 
+                                                            rate: `${edgeRatePct >= 0 ? '+' : ''}${edgeRatePct}%` 
+                                                        })
                                                     });
                                                     if (!res.ok) {
                                                         const errData = await res.json();
@@ -4060,29 +4107,25 @@ Format strictly as JSON ONLY:
                                                     setTtsAudioUrl(URL.createObjectURL(mp3));
                                                     if (user) fetchUserData(user.email);
                                                 } else {
+                                                    // 🌟 Gemini TTS: Style လေသံ အပြည့်အဝပါဝင်စေပြီး Speed Slider အတိုင်း တိကျစွာ မြန်စေခြင်း
                                                     await executeWithApiLogic("TTS", async (apiKey) => {
-                                                const styledPrompt = `Perform and read this text with intense emotion: [Emotion/Style: ${ttsStyleObj.name}]. Tone instructions: ${ttsStyleObj.prompt}\n\nText to read aloud:\n"${textToSpeak}"`;
-                                                const payload = { 
-                                                    contents: [{ parts: [{ text: styledPrompt }] }], 
-                                                    systemInstruction: { 
-                                                        parts: [{ 
-                                                            text: `You are an award-winning voice actor. You MUST expressively speak with the following tone/emotion: "${ttsStyleObj.name}". Pacing, pitch, intensity, breath, and vocal emotion must strictly reflect this style: "${ttsStyleObj.prompt}".` 
-                                                        }] 
-                                                    },
-                                                    generationConfig: { 
-                                                        responseModalities: ["AUDIO"], 
-                                                        speechConfig: { 
-                                                            voiceConfig: { 
-                                                                prebuiltVoiceConfig: { 
-                                                                    voiceName: ttsVoice 
+                                                        const styledPrompt = `Instruction: Perform this voice reading with strong emotion. Style: ${ttsStyleObj.name}. Mood/Tone details: ${ttsStyleObj.prompt}\n\nSpoken Text:\n"${textToSpeak}"`;
+                                                        const payload = { 
+                                                            contents: [{ parts: [{ text: styledPrompt }] }], 
+                                                            generationConfig: { 
+                                                                responseModalities: ["AUDIO"], 
+                                                                speechConfig: { 
+                                                                    voiceConfig: { 
+                                                                        prebuiltVoiceConfig: { 
+                                                                            voiceName: ttsVoice 
+                                                                        } 
+                                                                    } 
                                                                 } 
                                                             } 
-                                                        } 
-                                                    } 
-                                                };
+                                                        };
                                                         const url = apiKey 
-                                                            ? `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}` 
-                                                            : `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
+                                                            ? `/api/gemini/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}` 
+                                                            : `/api/gemini/v1beta/models/gemini-2.0-flash:generateContent`;
                                                         const res = await apiFetch(url, { 
                                                             method: 'POST', 
                                                             headers: { 'Content-Type': 'application/json' }, 
@@ -4104,7 +4147,15 @@ Format strictly as JSON ONLY:
                                                             const int16 = (bytes[idx + 1] << 8) | bytes[idx];
                                                             out[k] = (int16 >= 0x8000 ? int16 - 0x10000 : int16) / 32768.0;
                                                         }
-                                                        setTtsAudioUrl(URL.createObjectURL(exportWAV(out, 24000)));
+
+                                                        const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+                                                        const rawBuf = tempCtx.createBuffer(1, count, 24000);
+                                                        rawBuf.copyToChannel(out, 0);
+                                                        // ရွေးထားသည့် voiceSpeed အတိုင်း မူလသံစဉ်မပျက်စေဘဲ Speed မြှင့်ခြင်း
+                                                        const spedBuf = await speedUpAudioBufferWithFFmpeg(trimAudioBuffer(rawBuf), voiceSpeed);
+                                                        tempCtx.close();
+
+                                                        setTtsAudioUrl(URL.createObjectURL(exportWAV(spedBuf.getChannelData(0), spedBuf.sampleRate)));
                                                     });
                                                 }
                                             } catch (e) { 
@@ -4115,6 +4166,7 @@ Format strictly as JSON ONLY:
                                         }} disabled={isTtsGenerating || !ttsTextInput.trim()} className="w-full py-5 rounded-2xl font-black text-lg bg-rose-500 hover:bg-rose-600 text-white shadow-lg">
                                             {isTtsGenerating ? "ဖန်တီးနေပါသည်..." : "Generate Voice"}
                                         </button>
+                                        
                                     </div>
                                 </div>
                                 <div className="lg:col-span-7 flex flex-col gap-6">

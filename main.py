@@ -1729,7 +1729,7 @@ async def translate_recap_segments(request: Request):
 
     # ၁။ User Keys များ ပါရှိပါက Key များကို တစ်ခုပြီးတစ်ခု Rotate ပြုလုပ်၍ ခေါ်ယူခြင်း
     if user_keys:
-        MODELS_TO_TRY = ["gemini-2.5-flash", "gemini-2.0-flash"]
+        MODELS_TO_TRY = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.6-flash", "gemini-3.8-flash"]
         last_err = ""
         success = False
 
