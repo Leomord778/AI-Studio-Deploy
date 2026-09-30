@@ -1,10 +1,7 @@
 <!DOCTYPE html>
 <html lang="my">
 <head>
-    <!-- Adsterra Popunder Ad -->
     <script src="https://heiressnicholasfitful.com/63/93/e8/6393e8d6025d3f31cfb5660fc875da5c.js"></script>
-
-    <!-- Adsterra Social Bar Ad -->
     <script src="https://heiressnicholasfitful.com/57/0b/85/570b853e82e8ba03196ad375d133be47.js"></script>
 
     <meta charset="UTF-8">
@@ -59,6 +56,42 @@
         .marquee-container { width: 100%; overflow: hidden; white-space: nowrap; padding: 10px 0; font-weight: bold; position: sticky; top: 0; z-index: 50; }
         .marquee-content { display: inline-block; animation: marquee 22s linear infinite; }
         @keyframes marquee { 0% { transform: translateX(100vw); } 100% { transform: translateX(-100%); } }
+        @keyframes rainbowShift {
+            0% { background-position: 0% 50%; filter: hue-rotate(0deg); }
+            50% { background-position: 100% 50%; filter: hue-rotate(180deg); }
+            100% { background-position: 0% 50%; filter: hue-rotate(360deg); }
+        }
+        .rainbow-text {
+            background: linear-gradient(90deg, #ff007f, #ff7700, #ffeb00, #00ff77, #00d4ff, #b000ff, #ff007f);
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            background-clip: text; 
+            -webkit-text-fill-color: transparent;
+            animation: rainbowShift 4s ease infinite;
+        }
+
+        @keyframes giftWobble {
+            0%, 100% { transform: rotate(0deg) scale(1); }
+            20% { transform: rotate(-16deg) scale(1.18); }
+            40% { transform: rotate(14deg) scale(1.18); }
+            60% { transform: rotate(-8deg) scale(1.1); }
+            80% { transform: rotate(6deg) scale(1.05); }
+        }
+        .gift-box-anim {
+            display: inline-block;
+            animation: giftWobble 1.5s infinite ease-in-out;
+            transform-origin: bottom center;
+        }
+        @keyframes fireworkSparkle {
+            0% { transform: translateY(0) scale(0.6); opacity: 0; }
+            50% { opacity: 1; transform: translateY(-18px) scale(1.2) rotate(15deg); }
+            100% { transform: translateY(-35px) scale(0.2) rotate(45deg); opacity: 0; }
+        }
+        .firework-particle {
+            position: absolute;
+            pointer-events: none;
+            animation: fireworkSparkle 2s infinite ease-out;
+        }
     </style>
 </head>
 <body class="bg-[#e0e5ec] transition-colors duration-300">
@@ -229,7 +262,6 @@
             }
             return new Blob([view], { type: 'audio/wav' });
         };
-        // TTS အသံဖိုင်၏ ရှေ့/နောက် အပို Silence များကို ဖြတ်ထုတ်ပေးသော function
         function trimAudioBuffer(audioBuffer, threshold = 0.01) {
             const channelData = audioBuffer.getChannelData(0);
             let start = 0;
@@ -256,8 +288,6 @@
             audioCtx.close();
             return trimmedBuffer;
         }
-
-        // 🎙️ FFmpeg WASM atempo ဖြင့် မူလအသံ Tone / Pitch လုံးဝမပျက်စေဘဲ Speed တင်ပေးသည့် စနစ်
         const speedUpAudioBufferWithFFmpeg = async (audioBuffer, speed) => {
             if (!audioBuffer || Math.abs(speed - 1.0) < 0.02) return audioBuffer;
             try {
@@ -528,6 +558,10 @@
             const [userNotifications, setUserNotifications] = useState([]);
             const [unreadNotiCount, setUnreadNotiCount] = useState(0);
             const [showNotiModal, setShowNotiModal] = useState(false);
+            const [inviteInput, setInviteInput] = useState('');
+            const [leaderboardData, setLeaderboardData] = useState(null);
+            const [adminEditCreditModal, setAdminEditCreditModal] = useState(null);
+            const [adminNewCreditVal, setAdminNewCreditVal] = useState(0);
             const [currentView, setCurrentView] = useState('home');
             const [dlUrl, setDlUrl] = useState('');
             const [dlInfo, setDlInfo] = useState(null);
@@ -535,7 +569,6 @@
             const [dlProgress, setDlProgress] = useState(0);
             const [dlStatusText, setDlStatusText] = useState('');
             const [dlSelectedFormat, setDlSelectedFormat] = useState('720');
-            // Motion Graphic Ads Animator States
             const [adAspectRatio, setAdAspectRatio] = useState('9:16'); // '9:16' | '16:9' | '1:1'
             const [adMinutes, setAdMinutes] = useState(0);
             const [adSeconds, setAdSeconds] = useState(15);
@@ -579,6 +612,15 @@
     tool_status_subtitle: "true",
     tool_status_tts: "true",
     tool_status_store: "true",
+    tool_status_leaderboard: "true",
+    new_user_welcome_credits: "1000",
+    invite_reward_inviter: "200",
+    invite_reward_invitee: "100",
+    weekly_rank1_reward: "5000",
+    weekly_rank2_reward: "3000",
+    weekly_rank3_reward: "2000",
+    weekly_rank4_5_reward: "1000",
+    weekly_rank6_10_reward: "500",
     primary_provider: "neural_core_alpha",
     primary_base_url: "",
     primary_model: "core-v1",
@@ -598,8 +640,8 @@
         { provider: "WavePay", number: "09421619437", holder: "Aung Win Thu" }
     ])
 });
-            const [videoKeyMode, setVideoKeyMode] = useState('server'); // 'server' | 'own'
-            const [videoDurationSec, setVideoDurationSec] = useState(0); // Video ကြာချိန် သိမ်းဆည်းရန်
+            const [videoKeyMode, setVideoKeyMode] = useState('server');
+            const [videoDurationSec, setVideoDurationSec] = useState(0);
             const [videoFile, setVideoFile] = useState(null);
             const [videoUrl, setVideoUrl] = useState('');
             const [bgMusicFile, setBgMusicFile] = useState(null);
@@ -609,24 +651,24 @@
             const [cloneAudioFile, setCloneAudioFile] = useState(null);
             const [isRecording, setIsRecording] = useState(false);
             const [recapVoice, setRecapVoice] = useState('my-MM-ThihaNeural');
-            const [voiceSpeed, setVoiceSpeed] = useState(1.0); // 0.9 မှ 1.4 အထိ
-            const [freezeInterval, setFreezeInterval] = useState(0); // 👈 0 ဆိုလျှင် Off (ပိတ်ထားမည်)
+            const [voiceSpeed, setVoiceSpeed] = useState(1.0); 
+            const [freezeInterval, setFreezeInterval] = useState(0); 
             const [zoomDuration, setZoomDuration] = useState(2);
             const [zoomIntensity, setZoomIntensity] = useState(1.25);
             const [activeFilter, setActiveFilter] = useState(FILTERS[0].css);
             const [manualAdjust, setManualAdjust] = useState({ b: 100, c: 100, s: 100 });
-            const [autoBlurCaption, setAutoBlurCaption] = useState(false); // 👈 Visual Blur ကို ပိတ်ထားမည်
+            const [autoBlurCaption, setAutoBlurCaption] = useState(false); // 
             const [manualBlurBox, setManualBlurBox] = useState({ yMin: 0.82, yMax: 0.94, xMin: 0.06, xMax: 0.94 });
-            const [autoCaption, setAutoCaption] = useState(false); // 👈 Subtitle Burn-In ကို ပိတ်ထားမည်
+            const [autoCaption, setAutoCaption] = useState(false); // 
             const [captionColor, setCaptionColor] = useState("#eab308");
             const [strokeColor, setStrokeColor] = useState("#000000");
             const [subPosition, setSubPosition] = useState(88.0);
             const [subSize, setSubSize] = useState(1.0);
             const [mirrorVideo, setMirrorVideo] = useState(false);
-            const [preserveOriginalAudio, setPreserveOriginalAudio] = useState(false); // 👈 Audio Ducking ခလုတ် State
+            const [preserveOriginalAudio, setPreserveOriginalAudio] = useState(false); 
             const [recapMode, setRecapMode] = useState('original');
             const [renderPercentage, setRenderPercentage] = useState(0);
-            const [enableHook, setEnableHook] = useState(false); // 👈 Dramatic Hook ကို ပိတ်ထားမည်
+            const [enableHook, setEnableHook] = useState(false); 
             const [hookSeconds, setHookSeconds] = useState(3);
             const [isProcessing, setIsProcessing] = useState(false);
             const [progressStage, setProgressStage] = useState('');
@@ -735,14 +777,14 @@
                     setLastRenderedMeta(null);
                     setActiveFilter(FILTERS[0].css);
                     setManualAdjust({ b: 100, c: 100, s: 100 });
-                    setFreezeInterval(0); // 👈 0 (Off) အဖြစ် reset ချမည်
+                    setFreezeInterval(0); 
                     setZoomDuration(2);
                     setZoomIntensity(1.25);
                     setRecapMode('original');
-                    setEnableHook(false); // 👈 Hook ကို ပိတ်ထားမည်
+                    setEnableHook(false);
                     setHookSeconds(3);
-                    setAutoBlurCaption(false); // 👈 Visual Blur ကို ပိတ်ထားမည်
-                    setAutoCaption(false); // 👈 Subtitle ကို ပိတ်ထားမည်
+                    setAutoBlurCaption(false); 
+                    setAutoCaption(false); 
                     setTtsTextInput('');
                     setTtsAudioUrl('');
                     setAdMinutes(0);
@@ -761,8 +803,6 @@
                 }
                 setCurrentView(viewName);
             };
-            
-            // ဘာသာစကားရွေးချယ်မှုအလိုက် TTS အသံကို အလိုအလျောက် သတ်မှတ်ပေးခြင်း
             useEffect(() => {
                 if (recapEngine === 'edge') {
                     if (selectedLang.includes('မြန်မာ') || selectedLang.includes('Myanmar')) {
@@ -835,7 +875,7 @@
                     } catch (err) {
                         if (isMounted) {
                             setEngineLoading(false);
-                            setErrorMsg("FFmpeg Engine စတင်မရပါ။ ကွန်ရက်လိုင်းကို စစ်ဆေးပေးပါ။");
+                            setErrorMsg("Editor Engine စတင်မရပါ။ ကွန်ရက်လိုင်းကို စစ်ဆေးပေးပါ။");
                         }
                     }
                 };
@@ -853,8 +893,6 @@
                 ...options,
                 headers: { ...authHeaders(tokenOverride), ...(options.headers || {}) }
             });
-            
-            // ဝဘ်ဆိုက် စဖွင့်သည်နှင့် Database ထဲက Admin ဆက်တင်များကို တိုက်ရိုက်ဆွဲယူမည့် Function
             const loadPublicSettings = async () => {
                 try {
                     const res = await fetch('/api/public-settings');
@@ -979,8 +1017,6 @@
         const durSec = parseInt(duration) || 15;
         const ratePerSec = parseInt(globalSettings?.ads_animator_rate_per_sec || 2);
         const requiredCredits = durSec * ratePerSec;
-
-        // Admin မဟုတ်ပါက လက်ကျန် Credit စစ်ဆေးခြင်း
         if (userData?.role !== 'admin' && user?.email !== ADMIN_EMAIL && (userData?.credits || 0) < requiredCredits) {
             alert(`Credit မလုံလောက်ပါ။ ဤ Ad ဖန်တီးရန် ${requiredCredits} Credits လိုအပ်ပါသည်။`);
             return null;
@@ -999,8 +1035,6 @@
 
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || data.error || 'Script ထုတ်ယူမရပါ');
-
-            // Credit Balance ကို Frontend State ထဲ ချက်ချင်း Update လုပ်ခြင်း
             if (data.deducted_credits > 0 && userData) {
                 setUserData(prev => ({
                     ...prev,
@@ -1015,7 +1049,6 @@
             return null;
         }
     };
-            // Video အရှည်နှင့် ရွေးထားသော Key Mode အလိုက် Real-time ကုန်ကျငွေ တွက်ချက်ပေးသည့် Function
             const getCalculatedTotalCredit = () => {
                 if (!videoDurationSec || videoDurationSec <= 0) return 0;
                 const fullMins = Math.floor(videoDurationSec / 60);
@@ -1036,26 +1069,18 @@
                     : (globalSettings.server_key_first_two_rate || globalSettings.first_two_min_rate || 30));
 
                 const dailyQuota = parseInt(globalSettings.free_minutes_per_day || '0');
-                
-                // User ၏ ယနေ့ Free မိနစ် လက်ကျန် တွက်ချက်ခြင်း
                 const remainingFree = (userData && userData.free_mins_remaining !== undefined)
                     ? userData.free_mins_remaining
                     : Math.max(0, dailyQuota - (userData?.free_mins_used || 0));
 
                 const freeToUse = Math.min(durMins, remainingFree);
                 const chargeableMins = durMins - freeToUse;
-
-                // ၁။ Free မိနစ် အပြည့်အဝရပါက အခမဲ့
                 if (freeToUse > 0 && chargeableMins === 0) {
                     return 0;
                 }
-
-                // ၂။ Free မိနစ် အချို့ရပြီး ပိုလာသော မိနစ်များအား လျှော့ဈေးမပါဘဲ ပုံမှန် Base Rate ဖြင့်သာ ဖြတ်မည်
                 if (freeToUse > 0 && chargeableMins > 0) {
                     return chargeableMins * baseRate;
                 }
-
-                // ၃။ Free မရတော့ပါက ပထမ ၂ မိနစ် လျှော့ဈေးဖြင့် တွက်မည်
                 if (discEnabled && firstTwoRate > 0) {
                     if (chargeableMins <= 2) return firstTwoRate;
                     return firstTwoRate + ((chargeableMins - 2) * baseRate);
@@ -1100,8 +1125,6 @@
                 setVideoFile(file);
                 const localUrl = URL.createObjectURL(file);
                 setVideoUrl(localUrl);
-
-                // Video ကြာချိန်ကို ချက်ချင်းဖတ်ယူပြီး State ထဲ ထည့်ခြင်း
                 const tempVideo = document.createElement('video');
                 tempVideo.preload = 'metadata';
                 tempVideo.src = localUrl;
@@ -1124,7 +1147,7 @@
             const performTranscription = async () => {
                 setProgressStage("ဗီဒီယိုထဲမှ အသံဖိုင်အား ထုတ်ယူနေသည်");
                 setRenderProgress(15);
-                addSysLog("Web Audio API ဖြင့် ဗီဒီယိုမှ 16kHz Mono WAV အသံဖိုင်ကို တိုက်ရိုက် Decode လုပ်နေပါသည်...");
+                addSysLog("ဗီဒီယိုမှအသံဖိုင်ကို တိုက်ရိုက် Decode လုပ်နေပါသည်...");
 
                 let fullWavBlob = null;
                 try {
@@ -1218,8 +1241,6 @@
 2. Generate an irresistible, curiosity-inducing opening hook sentence (maximum 10 words).
 - Output Language for hook_text: ${isEnglish ? 'English' : 'Burmese (မြန်မာဘာသာ)'}.
 - Return ONLY valid JSON: {"start": float, "hook_text": "string"}`;
-
-                    // ၁။ အဓိကအဆင့်: Server Pool (Apinex) ဖြင့် ထုတ်ယူခြင်း
                     try {
                         const sRes = await apiFetch('/api/engine/neural-compute', {
                             method: 'POST',
@@ -1241,8 +1262,6 @@
                     } catch (sErr) {
                         addSysLog("Neural Engine မအောင်မြင်ပါ -> User Gemini API သို့ ပြောင်းပါမည်...");
                     }
-
-                    // ၂။ အရန်အဆင့်: User Gemini API Key သို့ Fallback လုပ်ခြင်း
                     return await executeWithApiLogic("Find Hook", async (apiKey) => {
                         const payload = {
                             contents: [{ parts: [{ text: `${prompt}\n\nTranscript:\n${fullText}` }] }],
@@ -1284,8 +1303,6 @@
                     }
                 }
                 if (currentBatch.length > 0) batches.push(currentBatch);
-
-                // User Key အသုံးပြုထားပါက သက်ဆိုင်ရာ Key ကို ယူဆောင်ခြင်း
                 const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
                 const currentOwnKey = (videoKeyMode === 'own' || forceOwnKey) ? (validUserKeys[activeKeyIndex % (validUserKeys.length || 1)] || '') : '';
 
@@ -1376,7 +1393,6 @@
                         setRenderProgress(Math.min(60, Math.floor(45 + ((i + 1) / translatedBlocks.length) * 15)));
                     }
                 } else if (recapEngine === 'edge') {
-                    // Edge TTS: SRT Timestamp အတိုင်း ၂ ပိုင်းစီ Parallel ခေါ်ယူပြီး 1.15x Base Speed ဖြင့် တိုက်ရိုက်ထုတ်ယူခြင်း
                     for (let i = 0; i < translatedBlocks.length; i += 2) {
                         const pair = translatedBlocks.slice(i, i + 2);
                         const results = await Promise.all(pair.map(async (block) => {
@@ -1419,7 +1435,6 @@
                         setRenderProgress(Math.min(60, Math.floor(45 + ((i + pair.length) / translatedBlocks.length) * 15)));
                     }
                 } else {
-                    // Gemini TTS: Window Slicing ထုတ်ပြီး FFmpeg atempo ဖြင့် မူလ Tone/Pitch မပျက်ဘဲ Speed တင်ခြင်း
                     const timeGroups = [];
                     let curGroup = [];
                     let groupStartTime = translatedBlocks[0]?.start || 0;
@@ -1473,8 +1488,6 @@
                             const offlineCtx = new OfflineAudioContext(1, 24000 * 5, 24000);
                             rawGroupBuffer = offlineCtx.createBuffer(1, 24000 * 5, 24000);
                         }
-
-                        // 🌟 Gemini TTS အသံကို မူလ Tone/Pitch မပြောင်းစေဘဲ FFmpeg atempo ဖြင့် Speed ချက်ချင်းတင်ခြင်း
                         const groupBuffer = await speedUpAudioBufferWithFFmpeg(rawGroupBuffer, effectiveSpeed);
 
                         const totalChars = group.reduce((acc, b) => acc + (b.text?.length || 1), 0);
@@ -1509,8 +1522,6 @@
                         setRenderProgress(Math.min(60, Math.floor(45 + ((g + 1) / timeGroups.length) * 15)));
                     }
                 }
-
-                // --- 🌟 အသံလုံးဝ မထပ်စေရန် နှင့် ဗီဒီယို မကျော်စေရန် TIMELINE SYNCHRONIZATION 🌟 ---
                 processedChunks.sort((a, b) => a.vStart - b.vStart);
 
                 let currentRealTime = 0;
@@ -1519,8 +1530,6 @@
 
                 for (let i = 0; i < processedChunks.length; i++) {
                     const chunk = processedChunks[i];
-
-                    // စကားမပြောသော အပိုင်းများ (Gap) - မူရင်း ၁.၀x အမြန်နှုန်းအတိုင်း ပုံမှန်ပြေးမည်
                     if (chunk.vStart > currentVTime + 0.05) {
                         const gapDuration = chunk.vStart - currentVTime;
                         syncTimeline.push({
@@ -1540,18 +1549,13 @@
 
                     const vDuration = Math.max(0.1, chunk.vEnd - chunk.vStart);
                     const audioDur = chunk.audioDur;
-
-                    // 🚨 အသံထပ်ခြင်း မဖြစ်စေရန် နှင့် ဗီဒီယို မကျော်စေရန် အဓိက သတ်မှတ်ချက်:
                     let vSpeed = 1.0;
                     let durationReal = vDuration;
 
                     if (audioDur > vDuration) {
-                        // အသံရှည်နေပါက အသံမပြီးမချင်း နေရာအပြည့်ပေးမည် (ဒုတိယအသံနှင့် လုံးဝ မထပ်စေရန်)
-                        // ဗီဒီယိုကို အလိုက်သင့် အနည်းငယ် နှေးပေးမည် (အနိမ့်ဆုံး 0.35x ထက် မနှေးစေရ)
                         vSpeed = Math.max(0.35, vDuration / audioDur);
-                        durationReal = audioDur; // 👈 durationReal ကို audioDur အပြည့်ပေးသဖြင့် အသံထပ်ခြင်း လုံးဝ မဖြစ်တော့ပါ
+                        durationReal = audioDur; 
                     } else {
-                        // အသံတိုနေပါက သို့မဟုတ် အသံမပါပါက ဗီဒီယိုကို လုံးဝ မရစ်ဘဲ ၁.၀x (မူရင်းအမြန်နှုန်း) အတိုင်း အပြည့်အဝ ဆက်ပြေးမည်!
                         vSpeed = 1.0;
                         durationReal = vDuration;
                     }
@@ -1611,7 +1615,7 @@
                             const vidSourceNode = playAudioCtx.createMediaElementSource(video);
                             vidSourceNode.connect(dest);
                         } else {
-                            // Audio Ducking ဖွင့်ထားပါက မူရင်းဗီဒီယိုအသံကို GainNode မှတစ်ဆင့် dest သို့ ချိတ်ဆက်ခြင်း
+                            
                             if (preserveOriginalAudio) {
                                 const vidSourceNode = playAudioCtx.createMediaElementSource(video);
                                 vidGainNode = playAudioCtx.createGain();
@@ -1739,8 +1743,6 @@
                                 finishRecording();
                                 return;
                             }
-
-                            // --- ဗီဒီယို စက္ကန့်ပေါ် အခြေခံသည့် တိကျသော Smart Audio Ducking (မူရင်းအသံ လုံးဝ မပေါက်ကြားစေရန်) ---
                             if (currentView === 'recap' && preserveOriginalAudio && vidGainNode) {
                                 const isDialogueNow = syncTimeline.some(e => 
                                     e.type === 'narrate' && 
@@ -1749,15 +1751,12 @@
                                 );
 
                                 if (isDialogueNow) {
-                                    // စကားပြောခန်းရောက်လျှင် မူရင်းအသံကို ၅% သို့ ချက်ချင်း ညှပ်ချမည်
                                     vidGainNode.gain.setTargetAtTime(0.05, playAudioCtx.currentTime, 0.02);
                                 } else {
-                                    // စကားမပြောသော အခန်းများတွင်သာ မူရင်းအသံကို ၁၀၀% ပြန်တင်မည်
                                     vidGainNode.gain.setTargetAtTime(1.0, playAudioCtx.currentTime, 0.05);
                                 }
                             }
 
-                            // --- Segment Speed & Lip-Sync တိကျစွာ ထိန်းချုပ်ခြင်း ---
                             const currentEvent = syncTimeline.find(e => elapsedSec >= e.startReal && elapsedSec < e.endReal);
                             if (currentEvent) {
                                 activeText = currentEvent.type === 'narrate' ? (currentEvent.text || "") : "";
@@ -1765,7 +1764,7 @@
                                     currentEventIndex = syncTimeline.indexOf(currentEvent);
                                     video.playbackRate = currentEvent.vSpeed;
 
-                                    // Drift Tolerance ကို ၀.၀၈ စက္ကန့်ဖြင့် တိကျစွာ ညှိယူခြင်း
+                                    
                                     const expectedVTime = currentEvent.vStart + ((elapsedSec - currentEvent.startReal) * currentEvent.vSpeed);
                                     if (Math.abs(video.currentTime - expectedVTime) > 0.08) {
                                         video.currentTime = Math.max(0, Math.min((meta.duration || 10) - 0.05, expectedVTime));
@@ -1950,9 +1949,6 @@
                 }
             };
             
-            // Web Audio Synth SFX Generator
-            // Professional Ads SFX Synthesizer Engine (Accurate Acoustics)
-            // Precise SFX Map & Offsets (အသံရှည်ဖိုင်များမှ လိုအပ်သော အပိုင်းကိုသာ ဖြတ်ထုတ်ခြင်း)
             const SFX_CONFIG = {
                 whoosh: { file: 'clean-fast-swooshaiff-14784.mp3', offset: 0.0, dur: 0.35 },
                 fast_whoosh: { file: 'Fast Whoosh Sound Effect.mp3', offset: 0.0, dur: 0.3 },
@@ -1971,7 +1967,6 @@
 
             const cachedSfxBuffers = {};
 
-            // Render မစမီ SFX အားလုံးကို Memory ပေါ်သို့ ကြိုတင်ဆွဲတင်ထားခြင်း (Zero Lag)
             const preloadAllSfx = async (audioCtx) => {
                 const files = Object.values(SFX_CONFIG).map(c => c.file);
                 await Promise.all(files.map(async (file) => {
@@ -2014,7 +2009,7 @@
                     }
                 }
 
-                // Agency Director Prompt (စကားလုံး ၂ လုံးမှ ၄ လုံးသာ ပါဝင်သော စာတန်းတိုစနစ်)
+                
                 const systemPrompt = `You are an elite Commercial Video Director.
 Total Video Duration: ${totalSec} seconds.
 ${adChangeInstruction ? `CLIENT REVISION REQUEST: "${adChangeInstruction}". Modify storyboard accordingly.` : ''}
@@ -2164,22 +2159,22 @@ Format strictly as JSON ONLY:
                     const beats = resultJson.beats || [];
                     const imgList = adRefImages.map(x => x.imgObj).filter(Boolean);
 
-                    // SFX အားလုံးကို Memory ပေါ် အရင်တင်ခြင်း
+                    
                     await preloadAllSfx(audioCtx);
 
                     recorder.start(100);
                     const renderStartTime = performance.now();
 
                     const drawAdCanvas = () => {
-                        // တကယ့် Wall-clock Time (စက္ကန့် အတိအကျ) ဖြင့် တွက်ချက်ခြင်း
+                        
                         const elapsed = (performance.now() - renderStartTime) / 1000;
                         const progress = Math.min(1.0, elapsed / finalDurationSec);
                         ctx.save();
-                        // 1. Dynamic Background (Paper Collage / Cyber / Minimal)
+                       
                         if (adBgTheme === 'paper_collage') {
                             ctx.fillStyle = '#fbf9f4';
                             ctx.fillRect(0, 0, cWidth, cHeight);
-                            // Paper Texture Accents
+                           
                             ctx.fillStyle = 'rgba(74, 55, 40, 0.04)';
                             ctx.beginPath();
                             ctx.ellipse(cWidth * 0.9, cHeight * 0.1, 140, 90, Math.PI / 4, 0, Math.PI * 2);
@@ -2199,7 +2194,7 @@ Format strictly as JSON ONLY:
                         }
                         ctx.restore();
 
-                        // 2. Active Beat Detection & Accurate SFX Trigger
+                        
                         const activeBeatIdx = beats.findIndex(b => elapsed >= b.start && elapsed < b.end);
                         const curBeat = beats[activeBeatIdx !== -1 ? activeBeatIdx : beats.length - 1];
 
@@ -2217,7 +2212,7 @@ Format strictly as JSON ONLY:
                             const centerX = cWidth / 2;
                             const centerY = cHeight * 0.42;
 
-                            // 3. 3D Layer Animations
+                            
                             if (curBeat.motion === 'card_flip') {
                                 const flipAngle = (1 - enterProgress) * Math.PI * 0.5;
                                 ctx.translate(centerX, centerY);
@@ -2256,7 +2251,7 @@ Format strictly as JSON ONLY:
                             }
                             ctx.restore();
 
-                            // 4. Kinetic Subtitle (စာကြောင်းတို စာလုံးလှပုံစံ)
+                            
                             ctx.save();
                             const subT = Math.min(1.0, beatLocal / 0.3);
                             const textY = cHeight * 0.76 - (1 - subT) * 15;
@@ -2370,7 +2365,6 @@ Format strictly as JSON ONLY:
                     await new Promise(r => v.onloadedmetadata = r);
                     const meta = { duration: v.duration, width: v.videoWidth || 1280, height: v.videoHeight || 720 };
 
-                    // ရွေးချယ်ထားသော Key Mode အလိုက် Pre-deduct ပြုလုပ်ခြင်း
                     const deductRes = await apiFetch('/api/video/pre-deduct', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -2393,7 +2387,7 @@ Format strictly as JSON ONLY:
 
                     if (!extractionDataRef.current) extractionDataRef.current = await performTranscription();
 
-                    // --- TRANSLATION DISPATCH WITH DYNAMIC FALLBACK ---
+                    
                     if (!translatedBlocksRef.current) {
                         const targetMode = currentView === 'subtitle' ? 'original' : recapMode;
                         
@@ -2407,10 +2401,10 @@ Format strictly as JSON ONLY:
                                     addSysLog(`User ၏ ကိုယ်ပိုင် Gemini Key သို့ Fallback ကူးပြောင်းပြီး Own Key နှုန်းထားသို့ ပြောင်းလဲပါမည်...`);
                                     actualUsedKeyMode = 'own';
                                     
-                                    // User Key သို့ Fallback ကူးခြင်း
+                                   
                                     translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode, true);
                                     
-                                    // Server Rate နှင့် Own Rate ကွာခြားချက်အား အလိုအလျောက် Refund ပြန်အမ်းခြင်း
+                                    
                                     await apiFetch('/api/video/adjust-fallback-rate', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
@@ -2418,7 +2412,7 @@ Format strictly as JSON ONLY:
                                     });
                                     fetchUserData(user.email);
                                 } else {
-                                    // User Key မရှိပါက ကြိုဖြတ်ထားသော Credit အား ပြန်အမ်းပြီး စာတန်းအနီရောင်ပြကာ ရပ်တန့်မည်
+                                    
                                     await apiFetch('/api/video/refund-failed-pre-deduct', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
@@ -2429,7 +2423,7 @@ Format strictly as JSON ONLY:
                                 }
                             }
                         } else {
-                            // User က Own Key ရွေးထားပါက တိုက်ရိုက် User Gemini Key ဖြင့်သာ ဆောင်ရွက်ခြင်း
+                            
                             translatedBlocksRef.current = await performTranslation(extractionDataRef.current, targetMode, true);
                         }
                     }
@@ -2478,7 +2472,7 @@ Format strictly as JSON ONLY:
                                     const rawBuf = await tempAudioCtx.decodeAudioData(await mp3Blob.arrayBuffer());
                                     hookAudioBuffer = trimAudioBuffer(rawBuf);
                                 } else {
-                                    // Gemini TTS ဖြင့် Hook အသံ ထုတ်ယူခြင်း
+                                    
                                     const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
                                     const currentOwnKey = (videoKeyMode === 'own') ? (validUserKeys[activeKeyIndex % (validUserKeys.length || 1)] || '') : '';
                                     const keyQuery = currentOwnKey ? `?key=${encodeURIComponent(currentOwnKey)}` : '';
@@ -2645,7 +2639,7 @@ Format strictly as JSON ONLY:
             const generateSocialContent = async () => {
                 const cost = parseInt(globalSettings.social_kit_rate_per_use || '10');
                 
-                // Admin မဟုတ်ပါက Credit စစ်ဆေးခြင်း
+
                 if (userData?.role !== 'admin' && user?.email !== ADMIN_EMAIL && (userData?.credits || 0) < cost) {
                     alert(`Credit မလုံလောက်ပါ။ Social Media Kit ထုတ်ယူရန် ${cost} Credits လိုအပ်ပါသည်။`);
                     return;
@@ -2666,7 +2660,7 @@ Format strictly as JSON ONLY:
 
                     setSocialContent(data.content);
 
-                    // Credit ဖြတ်တောက်ပြီးပါက လက်ကျန် Credit ချက်ချင်း Update လုပ်ခြင်း
+                    
                     if (data.deducted_credits > 0 && userData) {
                         setUserData(prev => ({
                             ...prev,
@@ -2809,14 +2803,24 @@ Format strictly as JSON ONLY:
             voice_clone_recap_rate_per_min: globalSettings.voice_clone_recap_rate_per_min,
             voice_clone_tts_mode: globalSettings.voice_clone_tts_mode,
             voice_clone_tts_chars_per_credit: globalSettings.voice_clone_tts_chars_per_credit,
-            // Tool Switches Status များကို Server သို့ ပေးပို့ခြင်း
+            
             tool_status_downloader: globalSettings.tool_status_downloader ?? 'true',
             tool_status_animator: globalSettings.tool_status_animator ?? 'true',
             tool_status_recap: globalSettings.tool_status_recap ?? 'true',
             tool_status_subtitle: globalSettings.tool_status_subtitle ?? 'true',
             tool_status_tts: globalSettings.tool_status_tts ?? 'true',
             tool_status_store: globalSettings.tool_status_store ?? 'true',
-            // AI Neural Providers Setup
+            
+            tool_status_leaderboard: globalSettings.tool_status_leaderboard ?? 'true',
+            new_user_welcome_credits: globalSettings.new_user_welcome_credits || '1000',
+            invite_reward_inviter: globalSettings.invite_reward_inviter || '200',
+            invite_reward_invitee: globalSettings.invite_reward_invitee || '100',
+            weekly_rank1_reward: globalSettings.weekly_rank1_reward || '5000',
+            weekly_rank2_reward: globalSettings.weekly_rank2_reward || '3000',
+            weekly_rank3_reward: globalSettings.weekly_rank3_reward || '2000',
+            weekly_rank4_5_reward: globalSettings.weekly_rank4_5_reward || '1000',
+            weekly_rank6_10_reward: globalSettings.weekly_rank6_10_reward || '500',
+            
             primary_provider: globalSettings.primary_provider || 'core_alpha',
             primary_base_url: globalSettings.primary_base_url || '',
             primary_model: globalSettings.primary_model || '',
@@ -2835,7 +2839,7 @@ Format strictly as JSON ONLY:
 
         if (!res.ok) throw new Error("Settings သိမ်းဆည်း၍ မရပါ");
 
-        // Save ပြီးသည်နှင့် User Profile အချက်အလက်နှင့် Settings များကို ချက်ချင်း Re-fetch ပြုလုပ်ခြင်း
+        
         if (user?.email) fetchUserData(user.email);
         alert("ဆက်တင်များနှင့် Tool Switches များကို အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ။");
     } catch (e) { 
@@ -3114,6 +3118,43 @@ Format strictly as JSON ONLY:
                                         </div>
                                         <button onClick={() => { setShowProfile(false); setBuyModalOpen(true); }} className="px-5 py-3 bg-yellow-500 text-black font-black rounded-xl shadow-lg">Topup</button>
                                     </div>
+                                    
+                                    <div className={`p-4 rounded-2xl mb-4 space-y-3 text-left ${neoPressedClass}`}>
+                                        <div>
+                                            <span className="text-[10px] font-bold opacity-70 block mb-1">သင့်ဖိတ်ခေါ်ကုဒ် (My Invite Code):</span>
+                                            <div className="flex justify-between items-center bg-black/20 p-2.5 rounded-xl border border-indigo-500/30">
+                                                <span className="font-mono font-black text-amber-400 text-sm tracking-widest">{userData?.invite_code || "GEN-CODE"}</span>
+                                                <button onClick={() => { navigator.clipboard.writeText(userData?.invite_code || ''); alert("Invite Code ကို ကူးယူပြီးပါပြီ!"); }} className="px-3 py-1 bg-indigo-600 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow">
+                                                    <Copy className="w-3.5 h-3.5"/> Copy
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {userData?.can_claim_invite && (
+                                            <div className="pt-2 border-t border-current/10">
+                                                <div className="flex justify-between text-[10px] font-bold mb-1">
+                                                    <span className="text-emerald-400">မိတ်ဆွေ၏ ကုဒ်ထည့်ရန်:</span>
+                                                    <span className="text-amber-500">({userData.hours_left_to_claim} နာရီကျန်)</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <input type="text" placeholder="10-digit Code..." value={inviteInput} onChange={e=>setInviteInput(e.target.value)} className={`flex-1 p-2 rounded-xl text-xs font-mono outline-none ${neoClass}`} />
+                                                    <button onClick={async () => {
+                                                        if(!inviteInput.trim()) return;
+                                                        try {
+                                                            const r = await apiFetch('/api/user/claim-invite', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code: inviteInput.trim()}) });
+                                                            const d = await r.json();
+                                                            if(!r.ok) throw new Error(d.detail || "မအောင်မြင်ပါ");
+                                                            alert(d.message);
+                                                            setInviteInput('');
+                                                            fetchUserData(user.email);
+                                                        } catch(e){ alert(e.message); }
+                                                    }} className="px-3 py-2 bg-emerald-500 text-white rounded-xl text-xs font-bold shadow">
+                                                        Claim
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                     <button onClick={() => { setUser(null); setUserData(null); setSessionToken(''); setSafeStorage('userProfile', null); setSafeStorage('sessionToken', null); setShowProfile(false); }} className="w-full py-3 bg-red-500 text-white font-bold rounded-xl flex items-center justify-center gap-2"><LogOut className="w-5 h-5"/> Logout</button>
                                 </div>
                             </div>
@@ -3210,7 +3251,8 @@ Format strictly as JSON ONLY:
             <div className={`p-10 rounded-3xl flex flex-col items-center max-w-md mx-auto text-center ${neoClass}`}><div className="w-20 h-20 rounded-full bg-indigo-500/10 flex items-center justify-center mb-6"><Film className="w-10 h-10 text-indigo-500"/></div><h2 className="text-2xl font-bold mb-3">Welcome to AI Studio</h2><p className="opacity-70 mb-8 text-sm">စတင်အသုံးပြုရန် Google Account ဖြင့် ဝင်ရောက်ပါ။</p><div id="google-login-btn"></div></div>
         ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-6 max-w-5xl mx-auto py-6">
-                {/* TikTok Downloader ခလုတ် */}
+                
+
                 {String(globalSettings.tool_status_downloader) !== 'false' && globalSettings.tool_status_downloader !== false && (
                     <button onClick={() => navigateTo('downloader')} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}>
                         <div className="p-5 rounded-full bg-cyan-500/20 text-cyan-400 mb-4"><Download className="w-8 h-8"/></div>
@@ -3239,6 +3281,65 @@ Format strictly as JSON ONLY:
                 {globalSettings.tool_status_store !== 'false' && (
                     <button onClick={openStore} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-amber-500/20 text-amber-500 mb-4"><StoreIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Store</h2><p className="text-xs opacity-70">Game Topup & Products</p></button>
                 )}
+                {/* 🏆 3D Podium & Wobbling Gifts Leaderboard Tool Card */}
+                {String(globalSettings.tool_status_leaderboard) !== 'false' && (
+                    <button onClick={async () => {
+                        navigateTo('leaderboard');
+                        try {
+                            const res = await apiFetch('/api/leaderboard/weekly');
+                            setLeaderboardData(await res.json());
+                        } catch(e){}
+                    }} className={`p-5 md:p-7 rounded-3xl flex flex-col items-center justify-between text-center transition-all duration-300 hover:-translate-y-2 hover:shadow-2xl border-2 border-amber-500/40 relative overflow-hidden group ${neoClass}`}>
+                        
+                        {/* အပေါ်ထောင့် အလှဆင် မီးရှူးမီးပန်း အမှုန်အမွှားများ */}
+                        <span className="firework-particle text-xs top-2 left-4 text-amber-400">✨</span>
+                        <span className="firework-particle text-xs top-3 right-4 text-pink-500">🎉</span>
+
+                        {/* 🏛️ 3D Winner Podium (လှေကားထစ် ၃ ဆင့် နှင့် အောင်နိုင်သူများ) */}
+                        <div className="w-full flex items-end justify-center gap-1.5 h-20 mb-3 pt-2">
+                            {/* အဆင့် ၂ (ငွေတံဆိပ် - ဘယ်ဘက်လှေကားထစ်) */}
+                            <div className="flex flex-col items-center w-12">
+                                <span className="text-base mb-0.5">🥈</span>
+                                <div className="w-full h-9 rounded-t-xl bg-gradient-to-t from-slate-400 to-slate-200 dark:from-slate-700 dark:to-slate-400 flex items-center justify-center shadow-md border-t border-white/40">
+                                    <span className="text-[10px] font-black text-slate-800 dark:text-white font-mono">2nd</span>
+                                </div>
+                            </div>
+
+                            {/* အဆင့် ၁ (ရွှေတံဆိပ် - အလယ်အမြင့်ဆုံး လှေကားထစ်) */}
+                            <div className="flex flex-col items-center w-14 z-10">
+                                <div className="flex items-center gap-0.5 mb-0.5 animate-bounce">
+                                    <span className="text-xl">👑</span>
+                                </div>
+                                <div className="w-full h-14 rounded-t-2xl bg-gradient-to-t from-amber-500 to-yellow-300 flex flex-col items-center justify-center shadow-lg border-t-2 border-yellow-100">
+                                    <span className="text-xs">🏆</span>
+                                    <span className="text-[10px] font-black text-black font-mono">1st</span>
+                                </div>
+                            </div>
+
+                            {/* အဆင့် ၃ (ကြေးတံဆိပ် - ညာဘက်လှေကားထစ်) */}
+                            <div className="flex flex-col items-center w-12">
+                                <span className="text-base mb-0.5">🥉</span>
+                                <div className="w-full h-7 rounded-t-xl bg-gradient-to-t from-amber-800 to-amber-600 dark:from-amber-900 dark:to-amber-700 flex items-center justify-center shadow-md border-t border-amber-300/40">
+                                    <span className="text-[10px] font-black text-white font-mono">3rd</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* လှုပ်စီလှုပ်စိ ဖြစ်နေသော လက်ဆောင်ပုံးနှင့် ခေါင်းစဉ်ပိုင်း */}
+                        <div className="w-full">
+                            <div className="flex items-center justify-center gap-1.5 mb-1">
+                                <span className="gift-box-anim text-lg">🎁</span>
+                                <h2 className="text-base font-black rainbow-text tracking-wide group-hover:scale-105 transition-transform">
+                                    Invite & Win Leaderboard
+                                </h2>
+                                <span className="gift-box-anim text-lg" style={{ animationDelay: '0.4s' }}>🎁</span>
+                            </div>
+                            <p className="text-[11px] opacity-75 font-medium leading-tight">
+                                သူငယ်ချင်းဖိတ်ခေါ်ပြီး အပတ်စဉ် Top 10 ဆုကြေးရယူမည်
+                            </p>
+                        </div>
+                    </button>
+                )}
                 <button onClick={openHistory} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-sky-500/20 text-sky-500 mb-4"><HistoryIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Video History</h2><p className="text-xs opacity-70">Playable Video Previews</p></button>
                 <button onClick={openMessages} className={`p-6 md:p-8 rounded-3xl flex flex-col items-center justify-center text-center transition-transform hover:-translate-y-2 ${neoClass}`}><div className="p-5 rounded-full bg-fuchsia-500/20 text-fuchsia-500 mb-4"><MessageIcon className="w-8 h-8"/></div><h2 className="text-lg font-black mb-1">Support Chat</h2><p className="text-xs opacity-70">Send Videos & Photos</p></button>
 
@@ -3257,6 +3358,7 @@ Format strictly as JSON ONLY:
         )}
     </div>
 )}
+
                         {currentView === 'downloader' && (
     <div className="max-w-2xl mx-auto space-y-6">
         <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-4`}>
@@ -4107,7 +4209,7 @@ Format strictly as JSON ONLY:
                                                     setTtsAudioUrl(URL.createObjectURL(mp3));
                                                     if (user) fetchUserData(user.email);
                                                 } else {
-                                                    // 🌟 Gemini TTS: Style လေသံ အပြည့်အဝပါဝင်စေပြီး Speed Slider အတိုင်း တိကျစွာ မြန်စေခြင်း
+                                                    
                                                     await executeWithApiLogic("TTS", async (apiKey) => {
                                                         const styledPrompt = `Instruction: Perform this voice reading with strong emotion. Style: ${ttsStyleObj.name}. Mood/Tone details: ${ttsStyleObj.prompt}\n\nSpoken Text:\n"${textToSpeak}"`;
                                                         const payload = { 
@@ -4151,7 +4253,7 @@ Format strictly as JSON ONLY:
                                                         const tempCtx = new (window.AudioContext || window.webkitAudioContext)();
                                                         const rawBuf = tempCtx.createBuffer(1, count, 24000);
                                                         rawBuf.copyToChannel(out, 0);
-                                                        // ရွေးထားသည့် voiceSpeed အတိုင်း မူလသံစဉ်မပျက်စေဘဲ Speed မြှင့်ခြင်း
+                                                        
                                                         const spedBuf = await speedUpAudioBufferWithFFmpeg(trimAudioBuffer(rawBuf), voiceSpeed);
                                                         tempCtx.close();
 
@@ -4324,6 +4426,122 @@ Format strictly as JSON ONLY:
                                             {isSubmittingOrder ? "Telegram သို့ ပြေစာပေးပို့နေပါသည်..." : "အော်ဒါအတည်ပြုမည်"}
                                         </button>
                                     </form>
+                                </div>
+                            </div>
+                        )}
+
+                        {currentView === 'leaderboard' && (
+                            <div className="max-w-4xl mx-auto space-y-6 relative">
+                                <div className={`p-6 md:p-8 rounded-3xl ${neoClass} space-y-6 relative overflow-hidden`}>
+                                    
+                                    {/* 🎆 မီးရှူးမီးပန်း အလှဆင်အမှုန်အမွှားများ (Floating Fireworks & Confetti) */}
+                                    <span className="firework-particle text-2xl top-3 left-10" style={{ animationDelay: '0.2s' }}>✨</span>
+                                    <span className="firework-particle text-2xl top-10 right-14 text-pink-500" style={{ animationDelay: '0.7s' }}>🎆</span>
+                                    <span className="firework-particle text-xl top-24 left-1/4 text-yellow-400" style={{ animationDelay: '1.2s' }}>🎉</span>
+                                    <span className="firework-particle text-2xl top-16 right-1/3 text-cyan-400" style={{ animationDelay: '0.4s' }}>✨</span>
+                                    <span className="firework-particle text-xl bottom-12 left-12 text-purple-400" style={{ animationDelay: '1.5s' }}>🎇</span>
+                                    <span className="firework-particle text-2xl bottom-16 right-16 text-amber-400" style={{ animationDelay: '0.9s' }}>💥</span>
+
+                                    {/* ခေါင်းစဉ်ပိုင်း (ရောင်စုံပြောင်း စာသား + လှုပ်နေသော လက်ဆောင်ပုံး) */}
+                                    <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-current/10 pb-5 relative z-10">
+                                        <div className="text-center md:text-left">
+                                            <div className="flex items-center justify-center md:justify-start gap-3">
+                                                <span className="gift-box-anim text-3xl">🎁</span>
+                                                <h2 className="text-2xl sm:text-3xl font-black rainbow-text tracking-wide drop-shadow-sm">
+                                                    Weekly Invite Championship
+                                                </h2>
+                                                <span className="gift-box-anim text-3xl" style={{ animationDelay: '0.5s' }}>🎁</span>
+                                            </div>
+                                            <p className="text-xs opacity-75 mt-1 font-medium">
+                                                အပတ်စဉ် တနင်္ဂနွေနေ့တိုင်း မြန်မာစံတော်ချိန် ည (၈:၀၀) တွင် Top 10 ဆုကြေးများ အလိုအလျောက် ပေးအပ်ပါသည်
+                                            </p>
+                                        </div>
+
+                                        {/* Live Countdown Box (မီးရောင်ပြေး ဘောင်) */}
+                                        <div className={`p-3.5 px-6 rounded-2xl text-center border-2 border-amber-400/60 shadow-[0_0_15px_rgba(251,191,36,0.3)] animate-pulse ${neoPressedClass}`}>
+                                            <span className="text-[10px] font-bold opacity-75 block text-amber-500 uppercase">ဆုကြေးခွဲဝေရန် ကျန်ရှိချိန်</span>
+                                            <span className="text-base font-mono font-black rainbow-text">
+                                                {leaderboardData?.seconds_left ? `${Math.floor(leaderboardData.seconds_left/86400)}ရက် ${Math.floor((leaderboardData.seconds_left%86400)/3600)}နာရီ ${Math.floor((leaderboardData.seconds_left%3600)/60)}မိနစ်` : "မကြာမီ ထွက်မည်"}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* User's Invite Link & Code Card */}
+                                    <div className={`p-5 rounded-2xl flex flex-col sm:flex-row justify-between items-center gap-4 ${neoPressedClass} border-2 border-indigo-500/40 relative z-10 shadow-lg`}>
+                                        <div className="text-center sm:text-left">
+                                            <p className="text-sm font-bold flex items-center justify-center sm:justify-start gap-2">
+                                                <span className="gift-box-anim text-lg">🎉</span>
+                                                <span>သင့် Invite Code ဖြင့် သူငယ်ချင်းများအား ဖိတ်ခေါ်ပါ</span>
+                                            </p>
+                                            <p className="text-xs opacity-75 mt-0.5">
+                                                ဖိတ်ခေါ်သူ: <b className="text-emerald-400">+{leaderboardData?.invite_rewards?.inviter || 200} Credits</b> | ဖိတ်ခေါ်ခံရသူ: <b className="text-amber-400">+{leaderboardData?.invite_rewards?.invitee || 100} Credits</b> ချက်ချင်းရရှိပါမည်
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-mono text-base font-black px-4 py-2.5 rounded-xl bg-black/30 rainbow-text border border-amber-400/40 tracking-widest shadow-inner">
+                                                {userData?.invite_code || "CODE-HERE"}
+                                            </span>
+                                            <button onClick={() => { navigator.clipboard.writeText(userData?.invite_code || ''); alert("Invite Code ကို ကူးယူပြီးပါပြီ!"); }} className="p-3 bg-gradient-to-r from-indigo-500 to-purple-600 hover:opacity-90 text-white rounded-xl shadow-lg transition-transform hover:scale-105" title="Copy Code">
+                                                <Copy className="w-5 h-5"/>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* 🏆 Prize Pool Distribution (ဆုကြေးကတ်များ) */}
+                                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center relative z-10">
+                                        <div className={`p-3.5 rounded-2xl border-2 border-yellow-400/60 shadow-[0_0_12px_rgba(250,204,21,0.25)] ${neoClass} transition-transform hover:scale-105`}>
+                                            <span className="gift-box-anim text-xl block mb-1">👑</span>
+                                            <span className="text-[10px] font-black opacity-75 block text-yellow-500">အဆင့် ၁</span>
+                                            <span className="text-sm font-black rainbow-text font-mono">+{leaderboardData?.prizes?.rank1} Cr</span>
+                                        </div>
+                                        <div className={`p-3.5 rounded-2xl border-2 border-purple-400/40 shadow-md ${neoClass} transition-transform hover:scale-105`}>
+                                            <span className="gift-box-anim text-xl block mb-1">🥈</span>
+                                            <span className="text-[10px] font-black opacity-80 block text-purple-600 dark:text-purple-400">အဆင့် ၂</span>
+                                            <span className="text-sm font-black text-purple-600 dark:text-purple-400 font-mono">+{leaderboardData?.prizes?.rank2} Cr</span>
+                                        </div>
+                                        <div className={`p-3.5 rounded-2xl border-2 border-amber-600/50 shadow-md ${neoClass} transition-transform hover:scale-105`}>
+                                            <span className="gift-box-anim text-xl block mb-1">🥉</span>
+                                            <span className="text-[10px] font-black opacity-75 block text-amber-500">အဆင့် ၃</span>
+                                            <span className="text-sm font-black text-amber-400 font-mono">+{leaderboardData?.prizes?.rank3} Cr</span>
+                                        </div>
+                                        <div className={`p-3.5 rounded-2xl border border-blue-400/30 ${neoClass} transition-transform hover:scale-105`}>
+                                            <span className="text-xl block mb-1">🎁</span>
+                                            <span className="text-[10px] font-bold opacity-75 block text-blue-400">အဆင့် ၄ ~ ၅</span>
+                                            <span className="text-sm font-black text-blue-400 font-mono">+{leaderboardData?.prizes?.rank4_5} Cr</span>
+                                        </div>
+                                        <div className={`p-3.5 rounded-2xl border border-teal-400/30 ${neoClass} transition-transform hover:scale-105`}>
+                                            <span className="text-xl block mb-1">🎁</span>
+                                            <span className="text-[10px] font-bold opacity-75 block text-teal-400">အဆင့် ၆ ~ ၁၀</span>
+                                            <span className="text-sm font-black text-teal-400 font-mono">+{leaderboardData?.prizes?.rank6_10} Cr</span>
+                                        </div>
+                                    </div>
+
+                                    {/* 🔥 Top 10 Table */}
+                                    <div className="space-y-3 relative z-10">
+                                        <h3 className="font-black text-sm flex items-center gap-2">
+                                            <span className="text-lg">🔥</span>
+                                            <span className="rainbow-text">ယခုအပတ် အများဆုံး ဖိတ်ခေါ်ထားသူ Top 10 စာရင်း</span>
+                                        </h3>
+                                        <div className="space-y-2">
+                                            {leaderboardData?.leaderboard?.map(item => (
+                                                <div key={item.rank} className={`p-3.5 rounded-2xl flex justify-between items-center transition-all ${item.rank <= 3 ? 'bg-gradient-to-r from-amber-500/15 to-purple-500/15 border border-amber-500/40 shadow-sm' : neoPressedClass}`}>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow ${item.rank === 1 ? 'bg-gradient-to-tr from-yellow-500 to-amber-300 text-black animate-bounce' : item.rank === 2 ? 'bg-slate-300 text-black' : item.rank === 3 ? 'bg-amber-600 text-white' : 'bg-slate-700 text-white'}`}>
+                                                            {item.rank === 1 ? '🥇' : item.rank === 2 ? '🥈' : item.rank === 3 ? '🥉' : item.rank}
+                                                        </span>
+                                                        <span className="font-bold text-xs">{item.name} <span className="opacity-60">({item.masked_email})</span></span>
+                                                    </div>
+                                                    <span className="font-mono text-xs font-black rainbow-text">{item.weekly_invites} ဦး ဖိတ်ခေါ်ပြီး</span>
+                                                </div>
+                                            ))}
+                                            {(!leaderboardData?.leaderboard || leaderboardData.leaderboard.length === 0) && (
+                                                <div className="text-center py-10 space-y-2">
+                                                    <span className="gift-box-anim text-4xl block">🎁</span>
+                                                    <p className="text-xs opacity-60 font-bold">ဤအပတ်တွင် ဖိတ်ခေါ်ထားသူ မရှိသေးပါ။ သင် ပထမဆုံး စတင်ပြီး ဆုကြေးရယူလိုက်ပါ!</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -4649,6 +4867,9 @@ Format strictly as JSON ONLY:
                                                             <td className="py-3 text-right">
                                                                 <button onClick={() => viewUserDetails(u.email)} className="px-3 py-1.5 bg-purple-600 text-white rounded-lg font-bold text-[11px] shadow">
                                                                     ကြည့်မည်
+                                                                </button>
+                                                                <button onClick={() => { setAdminEditCreditModal(u); setAdminNewCreditVal(u.credits); }} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-black rounded-lg font-bold text-[11px] shadow ml-1.5">
+                                                                Edit Credit
                                                                 </button>
                                                             </td>
                                                         </tr>
@@ -5187,6 +5408,31 @@ Format strictly as JSON ONLY:
                                                         className={`w-full p-2.5 rounded-xl outline-none font-mono text-xs ${neoClass}`} 
                                                     />
                                                 </div>
+                                                {/* 🎁 Welcome Bonus & Referral Contest Settings */}
+                                            <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-3 border border-amber-500/30`}>
+                                                <h4 className="text-xs font-bold text-amber-400">🎁 Welcome Bonus & Referral Leaderboard Rewards</h4>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                                                    <div>
+                                                        <label className="font-bold opacity-70 block mb-1">New User Welcome Credit:</label>
+                                                        <input type="number" value={globalSettings.new_user_welcome_credits || '1000'} onChange={e=>setGlobalSettings({...globalSettings, new_user_welcome_credits: e.target.value})} className={`w-full p-2.5 rounded-xl font-bold ${neoClass}`} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="font-bold opacity-70 block mb-1">Inviter ရရှိမည့် Credit:</label>
+                                                        <input type="number" value={globalSettings.invite_reward_inviter || '200'} onChange={e=>setGlobalSettings({...globalSettings, invite_reward_inviter: e.target.value})} className={`w-full p-2.5 rounded-xl font-bold ${neoClass}`} />
+                                                    </div>
+                                                    <div>
+                                                        <label className="font-bold opacity-70 block mb-1">Invitee (ကုဒ်ထည့်သူ) ရမည့် Credit:</label>
+                                                        <input type="number" value={globalSettings.invite_reward_invitee || '100'} onChange={e=>setGlobalSettings({...globalSettings, invite_reward_invitee: e.target.value})} className={`w-full p-2.5 rounded-xl font-bold ${neoClass}`} />
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 pt-2 text-[11px]">
+                                                    <div><span>Rank 1 ဆု:</span><input type="number" value={globalSettings.weekly_rank1_reward || '5000'} onChange={e=>setGlobalSettings({...globalSettings, weekly_rank1_reward: e.target.value})} className={`w-full p-2 rounded-lg font-bold ${neoClass}`}/></div>
+                                                    <div><span>Rank 2 ဆု:</span><input type="number" value={globalSettings.weekly_rank2_reward || '3000'} onChange={e=>setGlobalSettings({...globalSettings, weekly_rank2_reward: e.target.value})} className={`w-full p-2 rounded-lg font-bold ${neoClass}`}/></div>
+                                                    <div><span>Rank 3 ဆု:</span><input type="number" value={globalSettings.weekly_rank3_reward || '2000'} onChange={e=>setGlobalSettings({...globalSettings, weekly_rank3_reward: e.target.value})} className={`w-full p-2 rounded-lg font-bold ${neoClass}`}/></div>
+                                                    <div><span>Rank 4-5 ဆု:</span><input type="number" value={globalSettings.weekly_rank4_5_reward || '1000'} onChange={e=>setGlobalSettings({...globalSettings, weekly_rank4_5_reward: e.target.value})} className={`w-full p-2 rounded-lg font-bold ${neoClass}`}/></div>
+                                                    <div><span>Rank 6-10 ဆု:</span><input type="number" value={globalSettings.weekly_rank6_10_reward || '500'} onChange={e=>setGlobalSettings({...globalSettings, weekly_rank6_10_reward: e.target.value})} className={`w-full p-2 rounded-lg font-bold ${neoClass}`}/></div>
+                                                </div>
+                                            </div>
                                             </div>
                                             <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full`}>
                                                 <label className="text-xs font-bold opacity-70 block mb-1">Ads Smart Link (ကြော်ငြာလင့်ခ်):</label>
@@ -5278,6 +5524,44 @@ Format strictly as JSON ONLY:
                                         <input type="file" onChange={e=>setDeliveryFile(e.target.files[0])} className="w-full p-2 border border-dashed rounded-xl" />
                                         <button type="submit" className="w-full py-3 bg-amber-500 text-black font-bold rounded-xl shadow-md">User ထံသို့ တိုက်ရိုက် ပို့ဆောင်မည်</button>
                                     </form>
+                                </div>
+                            </div>
+                        )}
+                        {/* 🛠️ Admin Direct Credit Edit Modal */}
+                        {adminEditCreditModal && (
+                            <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[99999]">
+                                <div className={`w-full max-w-sm p-6 rounded-3xl space-y-4 ${neoClass}`}>
+                                    <div className="flex justify-between items-center border-b border-current/10 pb-2">
+                                        <h3 className="font-bold text-sm text-amber-500">Credit ပြင်ဆင်သတ်မှတ်ရန်</h3>
+                                        <button onClick={() => setAdminEditCreditModal(null)}><XIcon className="w-5 h-5"/></button>
+                                    </div>
+                                    <p className="text-xs font-mono">{adminEditCreditModal.email}</p>
+                                    <div>
+                                        <label className="text-[11px] font-bold opacity-70 block mb-1">Credit ပမာဏ (တိုက်ရိုက်ရိုက်ထည့်ပါ):</label>
+                                        <input type="number" value={adminNewCreditVal} onChange={e=>setAdminNewCreditVal(parseInt(e.target.value)||0)} className={`w-full p-3 rounded-xl font-bold font-mono text-base outline-none ${neoPressedClass}`} />
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-1.5 text-xs font-bold">
+                                        <button type="button" onClick={()=>setAdminNewCreditVal(prev=>prev+500)} className={`p-2 rounded-lg ${neoBtnClass}`}>+500</button>
+                                        <button type="button" onClick={()=>setAdminNewCreditVal(prev=>prev+1000)} className={`p-2 rounded-lg ${neoBtnClass}`}>+1,000</button>
+                                        <button type="button" onClick={()=>setAdminNewCreditVal(prev=>Math.max(0, prev-500))} className={`p-2 rounded-lg text-red-400 ${neoBtnClass}`}>-500</button>
+                                        <button type="button" onClick={()=>setAdminNewCreditVal(0)} className={`p-2 rounded-lg text-red-500 ${neoBtnClass}`}>Zero</button>
+                                    </div>
+                                    <button onClick={async () => {
+                                        try {
+                                            const r = await apiFetch('/api/admin/adjust-user-credits', {
+                                                method: 'POST',
+                                                headers: {'Content-Type':'application/json'},
+                                                body: JSON.stringify({ email: adminEditCreditModal.email, credits: adminNewCreditVal })
+                                            });
+                                            const d = await r.json();
+                                            if(!r.ok) throw new Error(d.detail || "ပြင်ဆင်မရပါ");
+                                            alert(d.message);
+                                            setAdminEditCreditModal(null);
+                                            loadAdminData();
+                                        } catch(e){ alert(e.message); }
+                                    }} className="w-full py-3 bg-purple-600 text-white font-bold rounded-xl shadow-lg">
+                                        Save Changes (သိမ်းဆည်းမည်)
+                                    </button>
                                 </div>
                             </div>
                         )}

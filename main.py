@@ -98,6 +98,16 @@ def current_utc():
 
 def init_db():
     defaults = {
+        "new_user_welcome_credits": "1000",
+     "invite_reward_inviter": "200",
+     "invite_reward_invitee": "100",
+     "weekly_rank1_reward": "5000",
+     "weekly_rank2_reward": "3000",
+     "weekly_rank3_reward": "2000",
+     "weekly_rank4_5_reward": "1000",
+     "weekly_rank6_10_reward": "500",
+     "last_weekly_payout": "",
+     "tool_status_leaderboard": "true",
         "deduction_rate_per_min": "50", 
         "first_two_min_rate": "30",
         "free_minutes_per_day": "0",
@@ -231,7 +241,70 @@ def refund_and_cleanup():
             "Credit သက်တမ်းကုန်ဆုံးပါပြီ", 
             "ဝယ်ယူထားသော Credit များ သက်တမ်းကုန်ဆုံးသွားပါပြီခင်ဗျာ။ ဆက်လက်အသုံးပြုလိုပါက ပြန်လည်ဖြည့်သွင်းပေးပါရန် မေတ္တာရပ်ခံအပ်ပါသည်။"
         )
+import string
 
+# 🎲 ၁၀ လုံးပါ Random Invite Code Generator (အင်္ဂလိပ်စာလုံး + ဂဏန်း 1-9 + Symbol များ)
+def generate_unique_invite_code() -> str:
+    symbols = "!@#*$"
+    chars = string.ascii_letters + "123456789" + symbols
+    while True:
+        # စာလုံး၊ ဂဏန်း၊ symbol အားလုံးပါဝင်စေရန် အနည်းဆုံး တစ်ခုစီပါအောင် ရွေးချယ်ခြင်း
+        code = [
+            random.choice(string.ascii_letters),
+            random.choice("123456789"),
+            random.choice(symbols)
+        ] + [random.choice(chars) for _ in range(7)]
+        random.shuffle(code)
+        final_code = "".join(code)
+        if not users_col.find_one({"invite_code": final_code}):
+            return final_code
+
+# 🏆 တနင်္ဂနွေနေ့တိုင်း မြန်မာစံတော်ချိန် ည ၈:၀၀ (MMT 20:00 = UTC 13:30) တွင် Top 10 စစ်ဆေးပြီး ဆုချီးမြှင့်မည့် Loop
+async def weekly_leaderboard_payout_loop():
+    while True:
+        await asyncio.sleep(60) # ၁ မိနစ်တစ်ခါ စစ်ဆေးမည်
+        now_utc = current_utc()
+        # MMT = UTC + 6:30 -> တနင်္ဂနွေ ည ၈:၀၀ (20:00) MMT ဆိုသည်မှာ UTC တနင်္ဂနွေနေ့ 13:30 ဖြစ်သည်
+        now_mmt = now_utc + timedelta(hours=6, minutes=30)
+        
+        # တနင်္ဂနွေနေ့ (weekday == 6) ဖြစ်ပြီး ည ၈ နာရီ ၀ မိနစ် မှ ၅ မိနစ်အတွင်း စစ်ဆေးခြင်း
+        if now_mmt.weekday() == 6 and now_mmt.hour == 20 and now_mmt.minute == 0:
+            week_key = now_mmt.strftime("%Y_week_%U")
+            already_paid = settings_col.find_one({"key": "last_weekly_payout"})
+            if already_paid and already_paid.get("value") == week_key:
+                continue
+
+            settings_doc = {doc["key"]: doc["value"] for doc in settings_col.find()}
+            r1 = int(settings_doc.get("weekly_rank1_reward", 5000))
+            r2 = int(settings_doc.get("weekly_rank2_reward", 3000))
+            r3 = int(settings_doc.get("weekly_rank3_reward", 2000))
+            r4_5 = int(settings_doc.get("weekly_rank4_5_reward", 1000))
+            r6_10 = int(settings_doc.get("weekly_rank6_10_reward", 500))
+
+            # ဖိတ်ခေါ်မှုအများဆုံး Top 10 ဆွဲယူခြင်း
+            top_users = list(users_col.find({"weekly_invite_count": {"$gt": 0}}).sort("weekly_invite_count", DESCENDING).limit(10))
+            
+            for rank_idx, u in enumerate(top_users):
+                rank = rank_idx + 1
+                prize = 0
+                if rank == 1: prize = r1
+                elif rank == 2: prize = r2
+                elif rank == 3: prize = r3
+                elif 4 <= rank <= 5: prize = r4_5
+                elif 6 <= rank <= 10: prize = r6_10
+
+                if prize > 0:
+                    users_col.update_one({"_id": u["_id"]}, {"$inc": {"credits": prize}})
+                    create_notification(
+                        u["email"],
+                        "🏆 အပတ်စဉ် Invite ပြိုင်ပွဲ ဆုလက်ဆောင် ရရှိပါသည်!",
+                        f"ဂုဏ်ယူပါသည်ခင်ဗျာ! သင်သည် ဤအပတ် ဖိတ်ခေါ်မှုပြိုင်ပွဲတွင် အဆင့် ({rank}) ဝင်ရောက်ခဲ့သဖြင့် ဆုကြေးငွေ {prize} Credits ကို အကောင့်ထဲသို့ ထည့်သွင်းပေးလိုက်ပါပြီ။"
+                    )
+
+            # အပတ်စဉ် ရေတွက်မှု ပြန်လည် Reset ချခြင်း
+            users_col.update_many({}, {"$set": {"weekly_invite_count": 0}})
+            settings_col.update_one({"key": "last_weekly_payout"}, {"$set": {"value": week_key}}, upsert=True)
+            print(f"[Weekly Payout Completed] {week_key} အတွက် Top 10 အား ဆုကြေးများ ပေးအပ်ပြီးပါပြီ။")
 async def cleanup_loop():
     while True:
         await asyncio.sleep(1800)
@@ -242,8 +315,10 @@ async def lifespan(app: FastAPI):
     init_db()
     refund_and_cleanup()
     task = asyncio.create_task(cleanup_loop())
+    task_leaderboard = asyncio.create_task(weekly_leaderboard_payout_loop())
     yield
     task.cancel()
+    task_leaderboard.cancel()
 
 app = FastAPI(title="AI Studio Pro", lifespan=lifespan)
 
@@ -544,19 +619,34 @@ async def login(request: Request, data: dict = {}):
 
     user = users_col.find_one({"email": email})
     role = "admin" if email == ADMIN_EMAIL else "user"
-    
+
+    # Admin Panel မှ သတ်မှတ်ထားသော Welcome Bonus Credit ဆွဲယူခြင်း
+    welcome_doc = settings_col.find_one({"key": "new_user_welcome_credits"})
+    welcome_credits = int(welcome_doc.get("value", 1000)) if welcome_doc else 1000
+
     if not user:
+        unique_code = generate_unique_invite_code()
         user = { 
             "email": email, 
             "name": name or email.split("@")[0], 
             "picture": picture or "", 
             "role": role, 
-            "credits": 1000, 
+            "credits": welcome_credits if role != "admin" else 999999, 
             "credits_expire_at": None,
             "tts_count": 0,
+            "invite_code": unique_code,
+            "invited_by": None,
+            "invite_count": 0,
+            "weekly_invite_count": 0,
             "created_at": current_utc() 
         }
         users_col.insert_one(user)
+    else:
+        # အကောင့်ဖွင့်ပြီးသား User များတွင် Invite Code မရှိသေးပါက အလိုအလျောက် ထုတ်ပေးခြင်း
+        if not user.get("invite_code"):
+            code = generate_unique_invite_code()
+            users_col.update_one({"_id": user["_id"]}, {"$set": {"invite_code": code}})
+            user["invite_code"] = code
 
     if user.get("role") != "admin" and user.get("credits_expire_at"):
         exp_at = user["credits_expire_at"]
@@ -600,7 +690,17 @@ async def login(request: Request, data: dict = {}):
         diff = exp_date - current_utc()
         remaining_days = max(0, diff.days + 1)
         user["credits_expire_at"] = exp_date.strftime("%Y-%m-%d")
+    # ၂၄ နာရီအတွင်း ကုဒ်ထည့်ခွင့် ရှိ/မရှိ စစ်ဆေးခြင်း
+    c_time = user.get("created_at")
+    if isinstance(c_time, datetime):
+        if c_time.tzinfo is None: c_time = c_time.replace(tzinfo=timezone.utc)
+        hours_elapsed = (current_utc() - c_time).total_seconds() / 3600.0
+    else:
+        hours_elapsed = 999.0
 
+    can_claim_invite = (hours_elapsed <= 24.0) and (not user.get("invited_by"))
+    user["can_claim_invite"] = can_claim_invite
+    user["hours_left_to_claim"] = max(0, round(24.0 - hours_elapsed, 1))
     return { 
         **user, 
         "remaining_days": remaining_days,
@@ -2356,6 +2456,142 @@ async def generate_social_kit(request: Request, data: dict):
         "content": kit_result,
         "deducted_credits": cost if email != ADMIN_EMAIL else 0
     }
+# --- 🎁 USER INVITE CODE REDEEM API (၂၄ နာရီအတွင်းသာ အကျုံးဝင်သည်) ---
+@app.post("/api/user/claim-invite")
+async def claim_invite_code(request: Request, data: dict):
+    email = get_request_email(request)
+    code = (data.get("code") or "").strip()
+
+    if not code:
+        raise HTTPException(status_code=400, detail="Invite Code ထည့်သွင်းပေးပါ")
+
+    user = users_col.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User ရှာမတွေ့ပါ")
+
+    # ၁။ ၂၄ နာရီ စစ်ဆေးခြင်း
+    c_time = user.get("created_at")
+    if isinstance(c_time, datetime):
+        if c_time.tzinfo is None: c_time = c_time.replace(tzinfo=timezone.utc)
+        hours_elapsed = (current_utc() - c_time).total_seconds() / 3600.0
+    else:
+        hours_elapsed = 999.0
+
+    if hours_elapsed > 24.0:
+        raise HTTPException(status_code=400, detail="အကောင့်ဖွင့်ပြီး ၂၄ နာရီကျော်လွန်သွားပါသဖြင့် Invite Code ထည့်ခွင့် မရှိတော့ပါခင်ဗျာ။")
+
+    if user.get("invited_by"):
+        raise HTTPException(status_code=400, detail="သင်သည် Invite Code ထည့်သွင်းပြီးဖြစ်ပါသည်")
+
+    # ၂။ ကိုယ့်ကုဒ်ကိုယ် ပြန်ထည့်ခြင်း စစ်ဆေးခြင်း
+    if user.get("invite_code") == code:
+        raise HTTPException(status_code=400, detail="မိမိ၏ Invite Code အား ပြန်လည်အသုံးပြု၍ မရပါ")
+
+    inviter = users_col.find_one({"invite_code": code})
+    if not inviter:
+        raise HTTPException(status_code=404, detail="မှားယွင်းနေသော Invite Code ဖြစ်ပါသည်")
+
+    settings_doc = {doc["key"]: doc["value"] for doc in settings_col.find()}
+    inviter_reward = int(settings_doc.get("invite_reward_inviter", 200))
+    invitee_reward = int(settings_doc.get("invite_reward_invitee", 100))
+
+    # နှစ်ဦးစလုံးအား Credit ပေးအပ်ခြင်းနှင့် Inviter ၏ Weekly Count တိုးခြင်း
+    users_col.update_one({"_id": user["_id"]}, {
+        "$inc": {"credits": invitee_reward},
+        "$set": {"invited_by": inviter["email"]}
+    })
+
+    users_col.update_one({"_id": inviter["_id"]}, {
+        "$inc": {
+            "credits": inviter_reward,
+            "invite_count": 1,
+            "weekly_invite_count": 1
+        }
+    })
+
+    create_notification(
+        email,
+        "Invite Bonus Credit ရရှိပါသည်",
+        f"ဖိတ်ခေါ်ကုဒ် အောင်မြင်စွာ ထည့်သွင်းပြီးသဖြင့် {invitee_reward} Credits လက်ဆောင်ရရှိပါသည်ခင်ဗျာ။"
+    )
+    create_notification(
+        inviter["email"],
+        "မိတ်ဆွေသစ် ဖိတ်ခေါ်မှု အောင်မြင်ပါသည်",
+        f"မိတ်ဆွေအသစ် ({email}) မှ သင့်ဖိတ်ခေါ်ကုဒ်အား အသုံးပြုလိုက်သဖြင့် {inviter_reward} Credits လက်ဆောင် ရရှိပါသည်ခင်ဗျာ။"
+    )
+
+    return {"status": "success", "message": f"အောင်မြင်ပါသည်! သင်သည် {invitee_reward} Credits လက်ဆောင် ရရှိပါပြီခင်ဗျာ။"}
+
+
+# --- 🏆 WEEKLY LEADERBOARD API (တနင်္ဂနွေ ည ၈ နာရီ အထိ အချိန်ကျန် စာရင်း) ---
+@app.get("/api/leaderboard/weekly")
+async def get_weekly_leaderboard():
+    settings_doc = {doc["key"]: doc["value"] for doc in settings_col.find()}
+    
+    top_inviters = list(users_col.find(
+        {"weekly_invite_count": {"$gt": 0}},
+        {"name": 1, "email": 1, "weekly_invite_count": 1, "invite_count": 1, "picture": 1}
+    ).sort("weekly_invite_count", DESCENDING).limit(10))
+
+    safe_list = []
+    for idx, u in enumerate(top_inviters):
+        em = u.get("email", "")
+        masked_email = em[:2] + "***" + em[em.find("@")-1:] if "@" in em else "User"
+        safe_list.append({
+            "rank": idx + 1,
+            "name": u.get("name") or masked_email,
+            "masked_email": masked_email,
+            "weekly_invites": u.get("weekly_invite_count", 0),
+            "picture": u.get("picture", "")
+        })
+
+    # တနင်္ဂနွေ ည ၈:၀၀ (MMT) အထိ ကျန်ရှိချိန် တွက်ချက်ခြင်း
+    now_utc = current_utc()
+    now_mmt = now_utc + timedelta(hours=6, minutes=30)
+    days_ahead = (6 - now_mmt.weekday()) % 7
+    target_sunday = now_mmt.replace(hour=20, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+    if target_sunday <= now_mmt:
+        target_sunday += timedelta(days=7)
+    diff_sec = max(0, int((target_sunday - now_mmt).total_seconds()))
+
+    return {
+        "leaderboard": safe_list,
+        "seconds_left": diff_sec,
+        "prizes": {
+            "rank1": int(settings_doc.get("weekly_rank1_reward", 5000)),
+            "rank2": int(settings_doc.get("weekly_rank2_reward", 3000)),
+            "rank3": int(settings_doc.get("weekly_rank3_reward", 2000)),
+            "rank4_5": int(settings_doc.get("weekly_rank4_5_reward", 1000)),
+            "rank6_10": int(settings_doc.get("weekly_rank6_10_reward", 500))
+        },
+        "invite_rewards": {
+            "inviter": int(settings_doc.get("invite_reward_inviter", 200)),
+            "invitee": int(settings_doc.get("invite_reward_invitee", 100))
+        }
+    }
+
+
+# --- 🛠️ ADMIN DIRECT USER CREDIT ADJUSTMENT API ---
+@app.post("/api/admin/adjust-user-credits")
+async def admin_adjust_user_credits(request: Request, data: dict):
+    require_admin(request)
+    target_email = (data.get("email") or "").strip().lower()
+    new_credits = int(data.get("credits", 0))
+
+    if not target_email:
+        raise HTTPException(status_code=400, detail="User Email လိုအပ်ပါသည်")
+
+    target_user = users_col.find_one({"email": target_email})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User ရှာမတွေ့ပါ")
+
+    users_col.update_one({"email": target_email}, {"$set": {"credits": max(0, new_credits)}})
+    create_notification(
+        target_email,
+        "Credit လက်ကျန် ပြင်ဆင်ပြီးပါပြီ",
+        f"Admin မှ သင့်အကောင့်၏ လက်ကျန် Credit အား {new_credits} Credits သို့ ပြင်ဆင်သတ်မှတ်ပေးလိုက်ပါပြီခင်ဗျာ။"
+    )
+    return {"status": "success", "message": f"{target_email} ၏ Credit အား {new_credits} သို့ ပြင်ဆင်ပြီးပါပြီ။"}
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 10000))
