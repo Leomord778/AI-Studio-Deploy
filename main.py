@@ -150,7 +150,12 @@ def init_db():
         "secondary_base_url": "https://chat.b.ai/v1",
         "secondary_model": "gpt-4o",
         "secondary_api_keys": json.dumps([]),
-        "groq_api_keys_pool": json.dumps([])
+        "groq_api_keys_pool": json.dumps([]),
+        "pixeldrain_api_keys": json.dumps([
+            "6727ef80-0b35-4e30-bc3d-a4fd3860fff3",
+            "4c72e4b8-eed9-46dd-90fe-77f2668ec846",
+            "2a1bfa65-c9f9-4de0-a21d-d5e82ed32412"
+        ])
     }
     for key, value in defaults.items(): 
         settings_col.update_one({"key": key}, {"$setOnInsert": {"value": value}}, upsert=True)
@@ -188,9 +193,59 @@ async def send_telegram_notification(caption: str, photo_path: Optional[Path] = 
     except Exception as e:
         print(f"[Telegram Notification Error] {e}")
 
+def get_pixeldrain_keys() -> list[str]:
+    """Database ထဲမှ Pixeldrain Keys များကို ရယူခြင်း"""
+    doc = settings_col.find_one({"key": "pixeldrain_api_keys"})
+    if doc and doc.get("value"):
+        try: return [k.strip() for k in json.loads(doc["value"]) if k.strip()]
+        except Exception: return []
+    return []
+
+async def upload_to_pixeldrain_pool(file_path: Path, filename: str = "video.mp4") -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Pixeldrain Keys များကို အလှည့်ကျ စစ်ဆေးပြီး တစ်ခုပြည့်/မရပါက နောက်တစ်ခုသို့ ကူးတင်ပေးမည့် စနစ်"""
+    if not file_path.exists():
+        return None, None, None
+
+    keys = get_pixeldrain_keys()
+    keys_to_try = keys if keys else [""]
+
+    for idx, key in enumerate(keys_to_try):
+        try:
+            auth = ("", key) if key else None
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                with open(file_path, "rb") as f:
+                    upload_url = f"https://pixeldrain.com/api/file/{urllib.parse.quote(filename)}"
+                    resp = await client.put(upload_url, content=f.read(), auth=auth)
+                    
+                if resp.status_code in [200, 201]:
+                    res_json = resp.json()
+                    if res_json.get("success"):
+                        file_id = res_json.get("id")
+                        direct_url = f"https://pixeldrain.com/api/file/{file_id}"
+                        print(f"[Pixeldrain Success] Key #{idx+1} ဖြင့် အောင်မြင်စွာ တင်ပြီးပါပြီ: {direct_url}")
+                        return direct_url, file_id, key
+            print(f"[Pixeldrain Warning] Key #{idx+1} မရပါ (Status: {resp.status_code}) -> နောက် Key သို့ ကူးပါမည်...")
+        except Exception as e:
+            print(f"[Pixeldrain Error with Key #{idx+1}]: {e}")
+            continue
+
+    return None, None, None
+
+def delete_from_pixeldrain(file_id: str, api_key: str):
+    """၄၈ နာရီပြည့်ပါက Pixeldrain ပေါ်မှ ဖိုင်ကို အပြီးပိုင် ဖျက်ထုတ်ပြီး Storage နေရာလွတ် ပြန်ရှင်းခြင်း"""
+    if not file_id:
+        return
+    try:
+        auth = ("", api_key) if api_key else None
+        with httpx.Client(timeout=15.0) as client:
+            client.delete(f"https://pixeldrain.com/api/file/{file_id}", auth=auth)
+            print(f"[Pixeldrain Cleanup] File {file_id} ကို Storage ပေါ်မှ ဖျက်ပြီးပါပြီ။")
+    except Exception as e:
+        print(f"[Pixeldrain Delete Warning]: {e}")
+
 def refund_and_cleanup():
     now = current_utc()
-    # ဖိုင်မဖျက်ရသေးသော သက်တမ်းကုန် ဗီဒီယိုများကိုသာ ရှာဖွေခြင်း
+    # ၄၈ နာရီကျော်သွားသော ဗီဒီယိုများကို စစ်ဆေးခြင်း
     expired_videos = list(video_history_col.find({
         "expires_at": {"$lte": now},
         "status": {"$ne": "expired"}
@@ -202,7 +257,7 @@ def refund_and_cleanup():
         downloaded = item.get("downloaded", False)
         created_time_str = item.get("created_at").strftime("%Y-%m-%d %H:%M") if item.get("created_at") else "ယခင်"
 
-        # Download မဆွဲခဲ့ပါက Credit ပြန်အမ်းခြင်း
+        # User က ၄၈ နာရီအတွင်း Download မဆွဲခဲ့ပါက Credit ပြန်အမ်းပေးခြင်း
         if not downloaded and cost > 0 and u_email != ADMIN_EMAIL:
             users_col.update_one({"email": u_email}, {"$inc": {"credits": cost}})
             create_notification(
@@ -216,10 +271,10 @@ def refund_and_cleanup():
                 f"User ({u_email}) မှ {created_time_str} တွင် လုပ်ခဲ့သော ဗီဒီယိုအား Download မဆွဲခဲ့သဖြင့် {cost} Credits အား စနစ်မှ အလိုအလျောက် Refund ပေးလိုက်ပါသည်။"
             )
             
-        # Storage မပြည့်စေရန် Media ဖိုင်ကိုသာ Disk ပေါ်မှ ဖျက်ခြင်း
+        # Render Local Disk တွင် ဖိုင်ကျန်နေပါက ဖျက်ခြင်း (Telegram Channel ထဲမှ ဗီဒီယိုကိုမူ Backup အဖြစ် မဖျက်ဘဲ ချန်ထားမည်)
         delete_media(item.get("media_key"))
         
-        # Database Record ကို လုံးဝမဖျက်ဘဲ status ကို expired ဟုသာ မှတ်သားထားခြင်း (Stats မပျောက်စေရန်)
+        # Website တွင် သက်တမ်းကုန်အဖြစ် သတ်မှတ်ပြီး User ဒေါင်းလုဒ်/ကြည့်ရှုခွင့် ပိတ်ခြင်း
         video_history_col.update_one(
             {"_id": item["_id"]},
             {"$set": {"status": "expired", "media_key": None}}
@@ -321,6 +376,8 @@ async def lifespan(app: FastAPI):
     task_leaderboard.cancel()
 
 app = FastAPI(title="AI Studio Pro", lifespan=lifespan)
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.middleware("http")
 async def add_cross_origin_isolation_headers(request: Request, call_next):
@@ -553,6 +610,7 @@ SECRET_SETTINGS_KEYS = {
     "primary_api_keys",
     "secondary_api_keys",
     "groq_api_keys_pool",
+    "pixeldrain_api_keys",
     "voice_clone_colab_urls",
     "primary_base_url",
     "secondary_base_url",
@@ -923,9 +981,18 @@ async def save_client_rendered(
 
     upload_res = await save_upload(file, "rendered_videos")
     final_key = upload_res["key"]
+    local_path = (MEDIA_ROOT / final_key).resolve()
+
+    # 🚀 Pixeldrain Multi-Key Pool သို့ တင်ပြီး Direct Link ရယူခြင်း
+    filename = f"{tool}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    pd_url, pd_id, pd_used_key = await upload_to_pixeldrain_pool(local_path, filename=filename)
+
+    # Pixeldrain ပေါ် ရောက်သွားပါက Render Local Disk မပြည့်စေရန် ဒစ်ခ်ပေါ်က ဖိုင်ကို ချက်ချင်း ဖျက်ပစ်ပါမည်
+    if pd_url:
+        delete_media(final_key)
 
     video_doc = {
-        "email": email,
+        "email": email, # 🔒 အခြားသူ လုံးဝကြည့်မရအောင် User Email ဖြင့် သီးသန့်ချုပ်ဆိုခြင်း
         "title": f"{'Recap' if tool=='recap' else 'Subtitle'} Video ({datetime.now().strftime('%d/%m %H:%M')})",
         "tool": tool,
         "duration": duration,
@@ -933,13 +1000,19 @@ async def save_client_rendered(
         "cost": cost if email != ADMIN_EMAIL else 0,
         "status": "completed",
         "downloaded": False,
-        "media_key": final_key,
+        "direct_url": pd_url,
+        "pixeldrain_id": pd_id,
+        "pixeldrain_key": pd_used_key,
+        "media_key": final_key if not pd_url else None,
         "content_type": "video/mp4",
         "created_at": current_utc(),
         "expires_at": current_utc() + timedelta(hours=48)
     }
     inserted = video_history_col.insert_one(video_doc)
-    return {"status": "success", "result_url": f"/media/{final_key}", "video_id": str(inserted.inserted_id), "media_key": final_key}
+    video_id_str = str(inserted.inserted_id)
+
+    stream_url = f"/api/video/stream/{video_id_str}" if pd_url else f"/media/{final_key}"
+    return {"status": "success", "result_url": stream_url, "video_id": video_id_str, "media_key": final_key}
 
 @app.post("/api/video/consume-download")
 async def consume_download(request: Request, data: dict):
@@ -955,19 +1028,61 @@ async def consume_download(request: Request, data: dict):
     video_history_col.update_one({"_id": video["_id"]}, {"$set": {"downloaded": True}})
     return {"status": "success"}
 
+@app.get("/api/video/stream/{video_id}")
+async def stream_pixeldrain_video(video_id: str, request: Request):
+    """Render Bandwidth = 0 ဖြစ်စေရန် Pixeldrain CDN သို့ တိုက်ရိုက် လွှဲပြောင်းပေးခြင်း"""
+    email = get_request_email(request)
+    try:
+        # 🔒 အခြားသူများ လင့်ခ်ရရုံဖြင့် ဝင်ကြည့်မရအောင် Login Email နှင့် ဗီဒီယိုပိုင်ရှင် ကိုက်ညီမှု စစ်ဆေးခြင်း
+        v_doc = video_history_col.find_one({"_id": ObjectId(video_id), "email": email})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Video ID")
+
+    if not v_doc:
+        raise HTTPException(status_code=404, detail="ဗီဒီယို ရှာမတွေ့ပါ သို့မဟုတ် ကြည့်ရှုခွင့်မရှိပါ")
+
+    # ၄၈ နာရီကျော်သွားပါက ကြည့်ရှုခွင့် ပိတ်ပင်ခြင်း
+    now = current_utc()
+    exp_at = v_doc.get("expires_at")
+    if exp_at:
+        if exp_at.tzinfo is None: exp_at = exp_at.replace(tzinfo=timezone.utc)
+        if exp_at <= now or v_doc.get("status") == "expired":
+            raise HTTPException(status_code=410, detail="၄၈ နာရီပြည့်သဖြင့် ဖိုင်သက်တမ်း ကုန်ဆုံးသွားပါပြီ")
+
+    pd_url = v_doc.get("direct_url")
+    if pd_url:
+        return RedirectResponse(url=pd_url)
+
+    if v_doc.get("media_key"):
+        return RedirectResponse(url=f"/media/{v_doc['media_key']}")
+    raise HTTPException(status_code=404, detail="ဗီဒီယိုဖိုင် မရှိတော့ပါ")
+
 @app.get("/api/history/videos")
 async def get_video_history(request: Request):
     email = get_request_email(request)
-    return {
-        "items": [{
-            "id": str(d["_id"]), 
-            "title": d.get("title", "Video"), 
-            "tool": d.get("tool"), 
-            "url": f"/media/{d.get('media_key')}", 
+    now = current_utc()
+    docs = list(video_history_col.find({"email": email}).sort("created_at", DESCENDING))
+    
+    items = []
+    for d in docs:
+        exp_at = d.get("expires_at")
+        is_expired = False
+        if exp_at:
+            if exp_at.tzinfo is None: exp_at = exp_at.replace(tzinfo=timezone.utc)
+            if exp_at <= now or d.get("status") == "expired":
+                is_expired = True
+
+        items.append({
+            "id": str(d["_id"]),
+            "title": d.get("title", "Video"),
+            "tool": d.get("tool"),
+            "url": None if is_expired else f"/api/video/stream/{str(d['_id'])}",
+            "status": "expired" if is_expired else "completed",
             "expires_at": d.get("expires_at").strftime("%Y-%m-%d %H:%M") if d.get("expires_at") else "",
             "created_at": d.get("created_at").isoformat() if d.get("created_at") else ""
-        } for d in video_history_col.find({"email": email}).sort("created_at", DESCENDING)]
-    }
+        })
+        
+    return {"items": items}
 
 @app.get("/api/products")
 async def get_products():
@@ -1970,16 +2085,14 @@ async def proxy_groq(request: Request):
         file_bytes = await file.read()
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
         
-        custom_groq_key = request.headers.get("x-groq-key", "").strip()
+        # 🛡️ User Key မသုံးတော့ဘဲ Admin Panel Key Pool ကိုသာ အဓိက ဦးစားပေး သုံးစွဲမည်
         keys_to_try = []
-        if custom_groq_key: 
-            keys_to_try.append(custom_groq_key)
-        for k in DEFAULT_GROQ_KEYS:
-            if k and k not in keys_to_try: 
-                keys_to_try.append(k)
-        
         admin_groq_pool = get_groq_pool_keys()
         for k in admin_groq_pool:
+            if k and k not in keys_to_try: 
+                keys_to_try.append(k)
+
+        for k in DEFAULT_GROQ_KEYS:
             if k and k not in keys_to_try: 
                 keys_to_try.append(k)
         if not keys_to_try: 
@@ -2171,40 +2284,14 @@ def extract_with_ytdlp(url: str, output_dir: str):
         "title": info.get('title', 'Downloaded_Video'),
         "filepath": target_filepath
     } 
+from fastapi.responses import RedirectResponse
+
 @app.get("/api/downloader/proxy-file")
 async def proxy_download_file(url: str, title: str = "TikTok_Video"):
-    """TikTok Video ကို Max MB (Content-Length) အတိအကျဖြင့် Direct Download ဆွဲစေသည့် Proxy Engine"""
-    safe_title = "".join(c for c in title if c.isalnum() or c in " _-")[:50].strip() or "TikTok_Video"
-    filename = f"{safe_title}.mp4"
-
-    client = httpx.AsyncClient(timeout=60.0, follow_redirects=True)
-    req = client.build_request("GET", url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
-        "Referer": "https://www.tiktok.com/"
-    })
-    resp = await client.send(req, stream=True)
-
-    # TikTok CDN မှ ပြန်လာသော File အရွယ်အစား (Bytes) အား ဖတ်ယူခြင်း
-    content_length = resp.headers.get("content-length")
-
-    async def file_iterator():
-        try:
-            async for chunk in resp.aiter_bytes(chunk_size=1024 * 64):
-                yield chunk
-        finally:
-            await resp.aclose()
-            await client.aclose()
-
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Content-Type": resp.headers.get("content-type", "video/mp4")
-    }
-
-    # Browser က Max MB အတိအကျ သိရှိစေရန် Content-Length ထည့်ပေးခြင်း
-    if content_length:
-        headers["Content-Length"] = content_length
-
-    return StreamingResponse(file_iterator(), headers=headers)
+    """Render Bandwidth မကုန်စေရန် TikTok CDN သို့ တိုက်ရိုက် Redirect လုပ်ပေးခြင်း"""
+    if not url:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+    return RedirectResponse(url=url)
 
 # --- SECURE & HIGH-SPEED TIKTOK DOWNLOADER ENGINE ---
 @app.post("/api/downloader/inspect")

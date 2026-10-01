@@ -625,6 +625,8 @@
     primary_base_url: "",
     primary_model: "core-v1",
     primary_api_keys: "[]",
+    groq_api_keys_pool: "[]",
+    pixeldrain_api_keys: "[]",
     secondary_provider: "neural_core_beta",
     secondary_base_url: "",
     secondary_model: "core-v2",
@@ -1145,89 +1147,120 @@
             };
 
             const performTranscription = async () => {
-                setProgressStage("ဗီဒီယိုထဲမှ အသံဖိုင်အား ထုတ်ယူနေသည်");
-                setRenderProgress(15);
-                addSysLog("ဗီဒီယိုမှအသံဖိုင်ကို တိုက်ရိုက် Decode လုပ်နေပါသည်...");
+                setProgressStage("ဗီဒီယိုထဲမှ အသံဖိုင်အား စစ်ဆေးနေပါသည်");
+                setRenderProgress(12);
+                addSysLog("ဗီဒီယိုမှ အသံဖိုင်ကို Decode ပြုလုပ်နေပါသည်...");
 
-                let fullWavBlob = null;
+                let decodedBuffer = null;
                 try {
                     const arrayBuffer = await videoFile.arrayBuffer();
                     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-                    const offlineCtx = new OfflineAudioContext(1, Math.ceil(decodedBuffer.duration * 16000), 16000);
-                    const srcNode = offlineCtx.createBufferSource();
-                    srcNode.buffer = decodedBuffer;
-                    srcNode.connect(offlineCtx.destination);
-                    srcNode.start(0);
-
-                    const renderedBuffer = await offlineCtx.startRendering();
-                    fullWavBlob = exportWAV(renderedBuffer.getChannelData(0), 16000);
+                    decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
                     audioCtx.close();
                 } catch (decodeErr) {
-                    addSysLog(`Native Audio decode အဆင်မပြေသဖြင့် FFmpeg ဖြင့် အရန်ထုတ်ယူပါမည်...`);
+                    addSysLog("WebAudio Decode အဆင်မပြေသဖြင့် FFmpeg ဖြင့် အရန်ထုတ်ယူနေပါသည်...");
                     const ffmpeg = ffmpegRef.current;
-                    await ffmpeg.writeFile('audio_src.mp4', await window.FFmpegUtil.fetchFile(videoFile));
-                    await runFFmpeg(['-i', 'audio_src.mp4', '-ac', '1', '-ar', '16000', 'out_audio.wav']);
-                    const wavData = await ffmpeg.readFile('out_audio.wav');
-                    fullWavBlob = new Blob([wavData.buffer], { type: 'audio/wav' });
-                    try { await ffmpeg.deleteFile('audio_src.mp4'); } catch(e){}
-                    try { await ffmpeg.deleteFile('out_audio.wav'); } catch(e){}
+                    await ffmpeg.writeFile('temp_src.mp4', await window.FFmpegUtil.fetchFile(videoFile));
+                    await runFFmpeg(['-i', 'temp_src.mp4', '-vn', '-ac', '1', '-ar', '16000', 'temp_audio.wav']);
+                    const wavData = await ffmpeg.readFile('temp_audio.wav');
+                    const tempAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    decodedBuffer = await tempAudioCtx.decodeAudioData(wavData.buffer);
+                    tempAudioCtx.close();
+                    try { await ffmpeg.deleteFile('temp_src.mp4'); } catch(e){}
+                    try { await ffmpeg.deleteFile('temp_audio.wav'); } catch(e){}
                 }
 
-                setProgressStage("Transcript ထုတ်ယူနေသည်");
-                setRenderProgress(25);
-                addSysLog("Groq Whisper API သို့ အသံဖိုင် ပေးပို့နေပါသည်...");
+                if (!decodedBuffer) {
+                    throw new Error("အသံဖိုင် Decode ပြုလုပ်၍ မရပါ");
+                }
 
-                const formData = new FormData();
-                formData.append('file', new File([fullWavBlob], 'audio.wav', { type: 'audio/wav' }));
-                formData.append('model', 'whisper-large-v3-turbo');
-                formData.append('response_format', 'verbose_json');
+                const totalDuration = decodedBuffer.duration;
+                const CHUNK_DURATION = 300; 
+                const totalChunks = Math.ceil(totalDuration / CHUNK_DURATION);
+                
+                addSysLog(`ဗီဒီယိုကြာချိန်: ${Math.round(totalDuration)}s -> ${totalChunks} ပိုင်း ခွဲ၍ Groq Whisper ဖြင့် ဖတ်ပါမည်။`);
 
-                try {
-                    const res = await apiFetch('/api/groq/transcriptions', { method: 'POST', body: formData });
-                    const data = await res.json();
+                let allSegments = [];
 
-                    if (res.ok && Array.isArray(data.segments) && data.segments.length > 0) {
-                        addSysLog(`Groq Whisper မှ Segments (${data.segments.length}) ခု အောင်မြင်စွာ ရယူပြီးပါပြီ။`);
-                        return jsonToSrt(data.segments.map(seg => ({
-                            start: Number(seg.start),
-                            end: Number(seg.end),
-                            text: seg.text || ""
-                        })));
-                    } else {
-                        throw new Error(data.error || "Groq STT အဖြေ မရရှိပါ");
-                    }
-                } catch (groqErr) {
-                    addSysLog(`[သတိပေးချက်] Groq Whisper Error (${groqErr.message}) - Gemini Proxy ဖြင့် အရန်ပြောင်းလဲ ဖတ်ယူနေပါသည်...`);
-                    const base64Audio = await blobToBase64(fullWavBlob);
-                    const fallbackSegments = await executeWithApiLogic("Gemini Transcription Fallback", async (apiKey) => {
-                        const payload = {
-                            contents: [{
-                                parts: [
-                                    { text: "Transcribe this audio accurately. Output ONLY a valid JSON array of objects with keys: 'start' (float seconds), 'end' (float seconds), 'text' (transcribed text string)." },
-                                    { inlineData: { mimeType: "audio/wav", data: base64Audio } }
-                                ]
-                            }],
-                            generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
-                        };
-                        const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
-                        const r = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-                        const d = await r.json();
-                        return JSON.parse(parseGeminiCandidateText(d));
-                    });
+                for (let i = 0; i < totalChunks; i++) {
+                    const startSec = i * CHUNK_DURATION;
+                    const endSec = Math.min(totalDuration, (i + 1) * CHUNK_DURATION);
+                    const chunkLengthSec = endSec - startSec;
 
-                    if (Array.isArray(fallbackSegments) && fallbackSegments.length > 0) {
-                        addSysLog(`Gemini မှ Segments (${fallbackSegments.length}) ခု အောင်မြင်စွာ ရယူပြီးပါပြီ။`);
-                        return jsonToSrt(fallbackSegments.map(seg => ({
-                            start: Number(seg.start),
-                            end: Number(seg.end),
-                            text: seg.text || ""
-                        })));
-                    } else {
-                        throw new Error("စာသား ထုတ်ယူမရပါ။ Groq API Key သို့မဟုတ် ကွန်ရက်လိုင်းကို စစ်ဆေးပေးပါ။");
+                    setProgressStage(`စာသားဖတ်ယူနေသည် (အပိုင်း ${i + 1}/${totalChunks})`);
+                    const chunkPct = Math.min(25, Math.floor(12 + ((i + 1) / totalChunks) * 13));
+                    setRenderProgress(chunkPct);
+                    addSysLog(`အပိုင်း #${i + 1} (${Math.round(startSec)}s - ${Math.round(endSec)}s) အား 16kHz WAV ထုတ်လုပ်နေပါသည်...`);
+
+                    
+                    const offlineCtx = new OfflineAudioContext(1, Math.ceil(chunkLengthSec * 16000), 16000);
+                    const srcNode = offlineCtx.createBufferSource();
+                    srcNode.buffer = decodedBuffer;
+                    srcNode.start(0, startSec, chunkLengthSec);
+                    srcNode.connect(offlineCtx.destination);
+
+                    const renderedChunkBuffer = await offlineCtx.startRendering();
+                    const chunkWavBlob = exportWAV(renderedChunkBuffer.getChannelData(0), 16000);
+
+                    const formData = new FormData();
+                    formData.append('file', new File([chunkWavBlob], `audio_part_${i}.wav`, { type: 'audio/wav' }));
+                    formData.append('model', 'whisper-large-v3-turbo');
+                    formData.append('response_format', 'verbose_json');
+
+                    try {
+                        const res = await apiFetch('/api/groq/transcriptions', { method: 'POST', body: formData });
+                        const data = await res.json();
+
+                        if (res.ok && Array.isArray(data.segments) && data.segments.length > 0) {
+                            
+                            const adjusted = data.segments.map(seg => ({
+                                start: Number(seg.start) + startSec,
+                                end: Number(seg.end) + startSec,
+                                text: seg.text || ""
+                            }));
+                            allSegments.push(...adjusted);
+                            addSysLog(`အပိုင်း #${i + 1} မှ စာကြောင်း (${adjusted.length}) ကြောင်း အောင်မြင်စွာ ဖတ်ပြီးပါပြီ။`);
+                        } else {
+                            throw new Error(data.error || "Groq STT မအောင်မြင်ပါ");
+                        }
+                    } catch (groqErr) {
+                        addSysLog(`[Warning] Chunk #${i + 1} Groq Error (${groqErr.message}) -> Gemini Proxy သို့ ကူးပါမည်...`);
+                        const base64Audio = await blobToBase64(chunkWavBlob);
+                        const fallbackSegments = await executeWithApiLogic("Gemini Fallback STT", async (apiKey) => {
+                            const payload = {
+                                contents: [{
+                                    parts: [
+                                        { text: "Transcribe this audio accurately. Output ONLY a valid JSON array of objects with keys: 'start' (float seconds), 'end' (float seconds), 'text' (transcribed string)." },
+                                        { inlineData: { mimeType: "audio/wav", data: base64Audio } }
+                                    ]
+                                }],
+                                generationConfig: { temperature: 0.1, responseMimeType: "application/json" }
+                            };
+                            const url = apiKey ? `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}` : `/api/gemini/v1beta/models/gemini-2.5-flash:generateContent`;
+                            const r = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                            const d = await r.json();
+                            return JSON.parse(parseGeminiCandidateText(d));
+                        });
+
+                        if (Array.isArray(fallbackSegments) && fallbackSegments.length > 0) {
+                            const adjusted = fallbackSegments.map(seg => ({
+                                start: Number(seg.start) + startSec,
+                                end: Number(seg.end) + startSec,
+                                text: seg.text || ""
+                            }));
+                            allSegments.push(...adjusted);
+                        } else {
+                            throw new Error(`အပိုင်း #${i + 1} စာသားထုတ်မရပါ။ API Key သို့မဟုတ် လိုင်းကို စစ်ဆေးပါ`);
+                        }
                     }
                 }
+
+                if (allSegments.length === 0) {
+                    throw new Error("ဗီဒီယိုထဲမှ စကားသံများကို ဖတ်ယူ၍ မရရှိပါ");
+                }
+
+                allSegments.sort((a, b) => a.start - b.start);
+                return jsonToSrt(allSegments);
             };
 
             const findHookHighlight = async (blocks, durationSec = 3, targetLang = 'my') => {
@@ -2797,6 +2830,7 @@ Format strictly as JSON ONLY:
             ads_animator_rate_per_sec: globalSettings.ads_animator_rate_per_sec,
             ads_animator_free_revisions: globalSettings.ads_animator_free_revisions,
             groq_api_keys_pool: globalSettings.groq_api_keys_pool,
+            pixeldrain_api_keys: globalSettings.pixeldrain_api_keys,
             admin_payment_accounts: globalSettings.admin_payment_accounts,
             voice_clone_enabled: globalSettings.voice_clone_enabled,
             voice_clone_colab_urls: globalSettings.voice_clone_colab_urls,
@@ -3076,10 +3110,6 @@ Format strictly as JSON ONLY:
                                 <h2 className="text-xl font-bold mb-4 flex items-center gap-2"><SettingsIcon className="w-6 h-6 text-indigo-500"/> Custom API Keys Management (Optional)</h2>
                                 <p className="text-xs opacity-70 mb-4">ဆာဗာ backend key များ မသုံးဘဲ ကိုယ်ပိုင် key များဖြင့် သီးသန့် အသုံးပြုလိုပါက ဤနေရာတွင် ထည့်သွင်းနိုင်ပါသည်။</p>
                                 <form onSubmit={(e) => { e.preventDefault(); setShowSettings(false); setSafeStorage('geminiKeys', geminiKeys); setSafeStorage('groqKey', groqKey); }} className="space-y-4">
-                                    <div>
-                                        <label className="text-xs font-bold opacity-70 mb-1 block">Groq API Key (Custom Whisper STT):</label>
-                                        <input type="password" value={groqKey} onChange={(e) => setGroqKey(e.target.value)} placeholder="gsk_... (Blank ထားပါက Backend Server Keys အလိုအလျောက် သုံးပါမည်)" className={`w-full p-4 rounded-xl outline-none ${neoClass}`} />
-                                    </div>
                                     <div className="pt-2">
                                         <label className="text-xs font-bold opacity-70 mb-1 block">Gemini API Keys (Multi-Key Rotation):</label>
                                         {geminiKeys.map((k, idx) => (
@@ -4567,7 +4597,7 @@ Format strictly as JSON ONLY:
                                         <video 
                                             src={h.url} 
                                             controls 
-                                            preload="metadata"
+                                            preload="none"
                                             playsInline
                                             onError={(e) => {
                                                 e.target.style.display = 'none';
@@ -5210,20 +5240,73 @@ Format strictly as JSON ONLY:
                                     <div className={`p-6 rounded-3xl space-y-6 ${neoClass}`}>
                                         <h3 className="text-lg font-bold">Credit သတ်မှတ်ချက်၊ ငွေလက်ခံအကောင့်နှင့် ကြော်ငြာ (Ads) ဆက်တင်များ</h3>
                                         <div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-3 border border-indigo-500/30`}>
-    <h4 className="text-sm font-bold text-indigo-400">🛡️ Backend Groq Whisper API Key Pool (Zero-Leakage)</h4>
-    <p className="text-[11px] opacity-70">အသံမှ စာသားဖတ်ယူရန် Groq API Key များကို ဆာဗာတွင် လုံခြုံစွာ သိမ်းဆည်းထားပြီး အလှည့်ကျ သုံးပေးပါမည်။</p>
+    <div className="flex justify-between items-center">
+        <div>
+            <h4 className="text-sm font-bold text-indigo-400">🛡️ Backend Groq Whisper API Key Pool</h4>
+            <p className="text-[11px] opacity-70">အသံမှ စာသားဖတ်ယူရန် Groq API Key များကို Multi-Key Rotation ဖြင့် အလှည့်ကျ သုံးပေးပါမည်။</p>
+        </div>
+        <button 
+            type="button" 
+            onClick={() => {
+                let keys = [];
+                try { keys = JSON.parse(globalSettings.groq_api_keys_pool || '[]'); } catch(e){}
+                setGlobalSettings({...globalSettings, groq_api_keys_pool: JSON.stringify([...keys, ''])});
+            }} 
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow transition-all"
+        >
+            + Add Groq Key
+        </button>
+    </div>
+
+    <div className="space-y-2 pt-2">
+        {(() => {
+            let keys = [];
+            try { keys = JSON.parse(globalSettings.groq_api_keys_pool || '[]'); } catch(e){}
+            if (keys.length === 0) keys = [''];
+            return keys.map((k, idx) => (
+                <div key={idx} className="flex gap-2">
+                    <input 
+                        type="password" 
+                        value={k} 
+                        placeholder={`Groq API Key ${idx + 1} (gsk_...)`} 
+                        onChange={e => {
+                            const newKeys = [...keys];
+                            newKeys[idx] = e.target.value.trim();
+                            setGlobalSettings({...globalSettings, groq_api_keys_pool: JSON.stringify(newKeys)});
+                        }} 
+                        className={`flex-1 p-2.5 rounded-xl text-xs font-mono outline-none ${neoClass}`} 
+                    />
+                    {keys.length > 1 && (
+                        <button 
+                            type="button" 
+                            onClick={() => {
+                                const newKeys = keys.filter((_, i) => i !== idx);
+                                setGlobalSettings({...globalSettings, groq_api_keys_pool: JSON.stringify(newKeys)});
+                            }} 
+                            className="p-2 text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                        >
+                            <Trash2 className="w-4 h-4"/>
+                        </button>
+                    )}
+                </div>
+            ));
+        })()}
+    </div>
+</div>
+<div className={`p-4 rounded-2xl ${neoPressedClass} col-span-full space-y-3 border border-sky-500/30 mt-4`}>
+    <h4 className="text-sm font-bold text-sky-400">☁️ Pixeldrain Storage API Keys (Multi-Key Pool)</h4>
+    <p className="text-[11px] opacity-70">ဗီဒီယိုများကို Cloud ပေါ်သိမ်းဆည်းရန် Pixeldrain Key များကို အလှည့်ကျ သုံးပေးပါမည်။ (တစ်ကြောင်းလျှင် Key တစ်ခုစီ ထည့်ပါ)</p>
     <div>
-        <label className="text-xs font-bold block mb-1 text-amber-400">Groq Whisper API Key Pool (တစ်ကြောင်းလျှင် တစ်ခုစီ ထည့်ပါ):</label>
         <textarea 
-            rows="3" 
-            placeholder="gsk_1...&#10;gsk_2..."
+            rows="4" 
+            placeholder="key_1...&#10;key_2..."
             value={(() => {
-                try { return JSON.parse(globalSettings.groq_api_keys_pool || '[]').join('\n'); }
+                try { return JSON.parse(globalSettings.pixeldrain_api_keys || '[]').join('\n'); }
                 catch(e) { return ''; }
             })()} 
             onChange={e => {
                 const keys = e.target.value.split('\n').map(x => x.trim()).filter(Boolean);
-                setGlobalSettings({ ...globalSettings, groq_api_keys_pool: JSON.stringify(keys) });
+                setGlobalSettings({ ...globalSettings, pixeldrain_api_keys: JSON.stringify(keys) });
             }} 
             className={`w-full p-3 rounded-xl outline-none font-mono text-xs ${neoClass}`}
         />
