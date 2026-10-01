@@ -9,5 +9,3 @@ pydantic
 yt-dlp
 google-auth
 requests
-static-ffmpeg
-imageio-ffmpeg
