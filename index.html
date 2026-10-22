@@ -4256,8 +4256,8 @@ Format strictly as JSON ONLY:
                                                             } 
                                                         };
                                                         const url = apiKey 
-                                                            ? `/api/gemini/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}` 
-                                                            : `/api/gemini/v1beta/models/gemini-2.0-flash:generateContent`;
+                                                            ? `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}` 
+                                                            : `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent`;
                                                         const res = await apiFetch(url, { 
                                                             method: 'POST', 
                                                             headers: { 'Content-Type': 'application/json' }, 
