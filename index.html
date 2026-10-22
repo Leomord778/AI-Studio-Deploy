@@ -2509,7 +2509,7 @@ Format strictly as JSON ONLY:
                                     const validUserKeys = geminiKeys.filter(k => k && k.trim() !== '');
                                     const currentOwnKey = (videoKeyMode === 'own') ? (validUserKeys[activeKeyIndex % (validUserKeys.length || 1)] || '') : '';
                                     const keyQuery = currentOwnKey ? `?key=${encodeURIComponent(currentOwnKey)}` : '';
-                                    const url = `/api/gemini/v1beta/models/gemini-2.0-flash:generateContent${keyQuery}`;
+                                    const url = `/api/gemini/v1beta/models/gemini-2.5-flash-preview-tts:generateContent${keyQuery}`;
 
                                     const payload = {
                                         contents: [{ parts: [{ text: hookText }] }],
